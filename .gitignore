@@ -41,8 +41,9 @@ grid_BC/**/output_para.out
 cases/couple_porous/scratch/flux_debug.txt
 checkpoint_*.tar.gz
 
-# 说明（2026-10-06 瘦身）：上述 208 个文件 / 748.6 MB 曾被跟踪，
-# 现已用 `git filter-branch` 从**全部历史**移除并加此规则挡住。
+# 说明（2026-10-06 瘦身）：上述 212 个文件 / 761.8 MB 曾被跟踪，
+# 现已用 `git filter-branch` 从**全部历史**移除并加此规则挡住
+# （跟踪文件 536 → 324，另 +1 = 本节点新增的 1 个诊断脚本）。
 # 例外：`regress/m6wing/baseline/*.dat`（含 flow3d.dat / SA3d.dat /
 # mesh-quality.dat …）是位级回归 oracle，**必须继续跟踪**，
 # 故上面只对 cases/ 与 grid_BC/ 写 `*.dat` 规则，不写全局 `*.dat`。
