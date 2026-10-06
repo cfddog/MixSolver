@@ -30,6 +30,10 @@
 > **2026-10-06 起本仓库已纳入 git**：`git init -b main`，首个提交 `97f247f`
 > （= 本节点快照；536 文件、`.git` ≈119 MB、分支 main、工作区干净）；
 > 单文件回退 `git checkout 97f247f -- <path>`，未提交改动 `git stash`。
+> **工作流（2026-10-06 起，已固化进规则）**：每完成一个**小节点**即自动
+> `git add -A && git commit -F -`（**无需询问**），与 memory-bank 更新同批提交，
+> 一个节点一个提交；验证未通过/半成品不提交。规则：
+> `.trae/rules/project_rules.md`「版本控制约定」。
 > 复验命令见下节 C2 与 `cases/couple_porous/README.md` §6。）
 
 ## 阶段 11（2026-10-06）：C2 可压缩–多孔跨组界面 ✅（完成并验证）

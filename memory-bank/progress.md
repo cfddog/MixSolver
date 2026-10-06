@@ -246,6 +246,10 @@
       说明：`cases/` 下生成产物（`*.vtu`、日志等）按原待办**未**忽略，一并入库；
       日后若要瘦身可 `git rm --cached` ＋ `commit --amend`（本地无远端，安全）。
       身份仅设仓库本地 `sundong <sundong@localhost>`（全局 user.name/email 为空）。
+      **工作流已固化（2026-10-06）**：每完成一个小节点 → 跑验证 → 更新 memory-bank →
+      自动 `git add -A && git commit -F -`（**无需询问**），一个节点一个提交；
+      验证未通过/半成品不提交（保留脏工作区或 `git stash`）。规则：
+      `.trae/rules/project_rules.md`「版本控制约定」。
 
 ## 待办
 

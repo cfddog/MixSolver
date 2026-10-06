@@ -26,6 +26,8 @@
 - memory-bank/activeContext.md：当前任务、最近决策、下一步
 - memory-bank/progress.md：已完成 / 待办
 - memory-bank/worklog.md：追加一条简要记录
+- **git 提交（自动，无需询问）**：`git add -A && git commit -F -`，与上面三项同批提交，
+  见下「版本控制约定」。
 
 ## 程序说明文档（LaTeX）维护规则
 程序每新增/修改一个功能，必须同步更新 `docs/程序使用手册.tex：
@@ -55,8 +57,18 @@
   `zone 2 is not the x<100 mm half!`。
 
 ## 版本控制约定（2026-10-06 起，仓库已 `git init`）
-- 分支 `main`；改完一个**可验证的节点**就提交一次，提交前先跑该节点对应的验证脚本
-  （或位级回归 `regress/m6wing/run_regression.sh`）。
+- 分支 `main`。
+- **自动提交（默认行为，不必再问我）**：每完成一个**小节点**（一次可验证的改动 /
+  缺陷修复 / 文档收尾）就走完「验证 → 更新 memory-bank → 提交」三步，直接执行
+  `git add -A && git commit -F -`。**一个节点 = 一个提交**：不把互不相关的改动塞进
+  同一提交，也不攒多个节点一次性提交。
+  - 验证：跑该节点对应的验证脚本；动过解算器/耦合/网格代码时加跑位级回归
+    `regress/m6wing/run_regression.sh`。
+  - 记账：`memory-bank/{activeContext,progress,worklog}.md` 的更新与提交**同批**。
+  - 只有「验证通过且状态可复现」才提交；验证未通过或半成品**不提交**，
+    保持脏工作区或 `git stash` 并在 worklog 写明停在哪一步。
+  - 算例的重算产物（`flow3d.dat`、`unMesh_coupled.vtu` 等）默认落在运行目录，
+    提交前确认没有把一次性产物误加入仓库。
 - `.gitignore` 只忽略构建/中间产物：`build/`、`bin/`、`*.o`、`*.mod`、
   `__pycache__/`、`*.pyc`、编辑器临时文件。**不得**忽略 `lib/*/*.a`
   （vendored METIS/ParMETIS/Tecplot 预编译库，链接必需且不可重建）与
