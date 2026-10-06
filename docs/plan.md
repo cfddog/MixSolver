@@ -557,6 +557,15 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
    - 非结构网格：使用 METIS/ParMETIS 分块
    - 交界面交换在对应的进程间直接进行
 
+5. **运行产物不入库**（2026-10-06 瘦身，硬规则）：`.vtu / *.log / *.dat / *.out /
+   *.tmp / *.part.map / __pycache__` 等求解器写出文件一律不提交，无论大小
+   （`.trae/rules/project_rules.md`「版本控制约定」）。算例目录只保留输入件
+   （`*.cas/*.neu/*.cgns/*.x/*.control/mix.control/bc3d.*`）、工具脚本、`README.md`
+   与 `images/*.png`；阶段验收的**定值与命令**写进 `cases/*/README.md`，
+   靠重算复现，而非靠入库产物。历史剥离用了 `git filter-branch`（本机无
+   `git-filter-repo`），安全网为 `backup/pre-slim-2026-10-06` + 98 MB bundle
+   （`/home/sundong/mixsolver_pre_slim_backup/`）。
+
 ## 实施优先级
 
 | 优先级 | 阶段 | 预计工作量 | 依赖 |

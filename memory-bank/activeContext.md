@@ -24,6 +24,12 @@
 > 下一步：① 可压缩–多孔跨组界面 ② 界面分派表 ③ 远期 NEU/SST/Liao。
 > （2026-10-06 更新：① 已完成并验证，见下节 C2；下一步 = ② 界面分派表 ＋
 > ③′ 新登记待办：uns 绝对压力 ≈−250 Pa 偏置机理（plan 阶段 11 第 3 条）。
+> **仓库瘦身（2026-10-06）**：212 个运行产物 / 761.8 MB 脱离跟踪并重写历史，
+> 跟踪 536 → 324 文件；安全网 `backup/pre-slim-2026-10-06` +
+> `/home/sundong/mixsolver_pre_slim_backup/`（98 MB bundle）；工作树产物留在磁盘
+> 且被 `.gitignore` 忽略。规则见 `.trae/rules/project_rules.md`「运行产物不入库」。
+> **清单收口（同日）**：勾销 9 条已完成但未勾销的旧条目 + 删 1 条陈旧残留；
+> 新登记 `cases/couple_channel/README.md` 缺失。
 > **本节点已保存**：`docs/plan.md`、`memory-bank/*.md`、`.trae/rules/project_rules.md`
 > （新增「验证/诊断硬规则」5 条）、`cases/couple_porous/*`（README ＋ 5 个脚本）、
 > `cases/couple_channel/{gen_meshes.py, uns_full/gen_full.py}`。

@@ -22,3 +22,27 @@ __pycache__/
 
 # 注意：lib/{metis,parmetis,tecplot}/*.a 为 vendored 预编译第三方库，
 #       链接必需且不可由本仓库重建，故 **不** 忽略 *.a。
+
+# ─────────────────────────────────────────────────────────────
+# 算例 / 验证运行产物：**一律不入库**（可重算；生成命令见各
+# cases/*/README.md 的"复现"小节与 docs/plan.md 对应阶段）
+# 仍然跟踪的输入件：*.cas / *.neu / *.cgns / *.x / *.control /
+# mix.control / bc3d.* / 工具 *.py / README.md / images/*.png
+# ─────────────────────────────────────────────────────────────
+*.vtu
+*.log
+*.part.map
+*.tmp
+cases/**/*.dat
+grid_BC/**/*.dat
+/*.out
+cases/**/output_para.out
+grid_BC/**/output_para.out
+cases/couple_porous/scratch/flux_debug.txt
+checkpoint_*.tar.gz
+
+# 说明（2026-10-06 瘦身）：上述 208 个文件 / 748.6 MB 曾被跟踪，
+# 现已用 `git filter-branch` 从**全部历史**移除并加此规则挡住。
+# 例外：`regress/m6wing/baseline/*.dat`（含 flow3d.dat / SA3d.dat /
+# mesh-quality.dat …）是位级回归 oracle，**必须继续跟踪**，
+# 故上面只对 cases/ 与 grid_BC/ 写 `*.dat` 规则，不写全局 `*.dat`。

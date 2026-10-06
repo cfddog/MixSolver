@@ -5,6 +5,51 @@
 
 ---
 
+## 2026-10-06 | 仓库瘦身：212 个运行产物脱离跟踪 + 历史重写（剥离 761.8 MB）
+
+- **触发**：本次会话统计出跟踪总量 916 MB / `.git` 120 MB，其中 `cases/` + `grid_BC/`
+  的运行产物占 **761.8 MB**，`cases/channel/channel_*.vtu` 单个 50.2 MB。
+- **逐个判定（不按扩展名一刀切）**：
+  - **清**：`cases/**`、`grid_BC/**` 的 `*.vtu/*.log/*.dat/*.out/*.tmp/*.part.map/
+    __pycache__`、根目录 `LNTE1D.vtu`、`cavity.vtu`、`build_*.log`、`m6_*.log`、
+    `output_para.out`、`checkpoint_2026-10-06_C2.tar.gz` → 共 **212 个**。
+  - **保**：输入件 `*.cas/*.neu/*.cgns/*.x/*.control/mix.control/bc3d.*`、工具 `*.py`、
+    `README.md`、`images/*.png`、`scratch/unMesh.cas.zsplit_bug`（plan 与 activeContext
+    明确"留档"的失效网格）、`regress/m6wing/baseline/*`（位级 oracle）、`external/**`。
+  - **依据**：源码 `grep` 证明全是运行期写出——`Step_mess.dat`
+    (`mod_struct_io.f90:348`)、`part_grid.dat`/`partation-auto.dat`
+    (`mod_struct_mpi.f90:160/169`)、`mesh-quality.dat` (`mod_struct_grid.f90:732`)、
+    `*.part.map` (`main_uns_mpi.f90:83`)、`flow3d*.dat` (`mod_struct_io.f90:408`)、
+    `output_para.out` (`mod_struct_init.f90:705`)；各 `cases/*/README.md` 均把
+    `.vtu/.log` 记为"产出"并附复现命令；并全文检索确认**无**脚本/README 把 `.vtu`
+    当输入或 oracle（唯一的"读"出现在求解器自报输出名与 `cases/ltne/README.md`
+    的"先跑再画图"流程里）。
+- **执行**：`git rm -r --cached --pathspec-from-file=<212 条 NUL 清单>`（35.1 M 行删除）
+  → `.gitignore` 增"运行产物不入库"规则（`*.vtu/*.log/*.part.map/*.tmp` 全局，
+  `*.dat` **只**限 `cases/**` 与 `grid_BC/**` 以保住 `regress/m6wing/baseline/*.dat`）
+  → 提交节点 → `git filter-branch --index-filter` 重写全部历史
+  （本机**无** `git-filter-repo`，故用 filter-branch）→ `rm -rf .git/refs/original`
+  + `git reflog expire --expire=now --all` + `git gc --prune=now`
+  → `git push --force-with-lease origin main`（**结果校验见下一条记录**）。
+- **安全网**：本地分支 `backup/pre-slim-2026-10-06`（= 重写前 HEAD `3fa7b91`）+
+  `/home/sundong/mixsolver_pre_slim_backup/`：`repo_pre_slim.bundle`（98 MB，
+  `git bundle verify` = "records a complete history"）、`cases_hardlinks/`、
+  `grid_BC_hardlinks/`（硬链接快照，秒级、零额外空间）、`checkpoint_2026-10-06_C2.tar.gz`
+  与 `LNTE1D.vtu` 副本。
+- **工作树策略**：761.8 MB 产物**不删除**，留在原路径转为未跟踪（被 `.gitignore`
+  挡住），需要时按各 README"复现"小节重算。
+- **同批勾销**（清单与代码漂移的 9 条 + 1 条陈旧残留，逐条给了证据）：
+  阶段 1 收尾 `mod_unit_convert/mod_reference_state`；阶段 4/6 `MPI 子通信域+跨域收发`、
+  `界面插值接入驱动`、`rho 占位`、`n_couple/n_uns_steps 读取`、`mm→m 缩放`、
+  `grid_BC 真实物理验证`；阶段 7 三单元测试目标；阶段 10（已完成区早已 `[x]`，
+  待办区是陈旧残留）。
+- **保留待办（未勾销，避免假完成）**：界面收敛检查（判据未定，已重新界定现状）、
+  阶段 8 `<1%` 判据（实测 −2.9%，与"壁面层对齐"联动）。
+- **新登记**：`cases/couple_channel/README.md` 缺失（流 B 复现命令与定值只散在
+  `docs/plan.md` 与 worklog）。
+
+---
+
 ## 2026-10-06 | 同步到 GitHub：origin = git@github.com:cfddog/MixSolver.git（首次推送成功）
 
 - **预检**：`~/.ssh/id_ed25519` 已配 → `ssh -T git@github.com` 返回

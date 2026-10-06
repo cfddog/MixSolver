@@ -69,10 +69,20 @@
     保持脏工作区或 `git stash` 并在 worklog 写明停在哪一步。
   - 算例的重算产物（`flow3d.dat`、`unMesh_coupled.vtu` 等）默认落在运行目录，
     提交前确认没有把一次性产物误加入仓库。
-- `.gitignore` 只忽略构建/中间产物：`build/`、`bin/`、`*.o`、`*.mod`、
-  `__pycache__/`、`*.pyc`、编辑器临时文件。**不得**忽略 `lib/*/*.a`
-  （vendored METIS/ParMETIS/Tecplot 预编译库，链接必需且不可重建）与
-  `regress/m6wing/baseline/*`（位级回归 oracle）。
+- `.gitignore`：忽略构建/中间产物（`build/`、`bin/`、`*.o`、`*.mod`、
+  `__pycache__/`、`*.pyc`、编辑器临时文件）＋ **全部运行产物**
+  （`*.vtu`、`*.log`、`*.part.map`、`*.tmp`、`cases/**/*.dat`、`grid_BC/**/*.dat`、
+  `cases/**/output_para.out`、`checkpoint_*.tar.gz`）。
+  **不得**忽略 `lib/*/*.a`（vendored METIS/ParMETIS/Tecplot 预编译库，链接必需
+  且不可重建）、`regress/m6wing/baseline/*`（位级回归 oracle，含 `*.dat`！所以
+  `.dat` 规则**只**写 `cases/` 与 `grid_BC/` 两棵树，禁写全局 `*.dat`）与
+  `cases/*/**` 的输入件（`*.cas/*.neu/*.cgns/*.x/*.control/mix.control/bc3d.*`、
+  工具 `*.py`、`README.md`、`images/*.png`、`scratch/unMesh.cas.zsplit_bug`）。
+- **运行产物不入库**（2026-10-06 起，硬的）：`.vtu/*.log/*.dat/*.out/*.tmp/
+  *.part.map/__pycache__` 等由求解器写出的文件**一律不提交**，无论大小。
+  提交前 `git status` 里若出现这类文件即为误加，用 `git restore --staged` 退回，
+  并确认 `.gitignore` 覆盖到位。需要留证据时把**关键数值/命令**写进
+  `cases/*/README.md` 与 memory-bank，而不是把产物入库。
 - 提交信息格式：`<type>: <一句话>`（type ∈ feat / fix / docs / verify / chore），
   正文写清「验证方式 / 关键结果 / 遗留待办」，并与 `memory-bank/worklog.md`
   对应条目一致；本仓库文档为中文，提交信息用中文。
@@ -81,10 +91,16 @@
   完成，不单独询问。推送前 `git status -sb` 确认与 `origin/main` 无分叉（有分叉先
   `git pull --rebase`）；对已共享历史**禁止 `--force`**。网络不可达时跳过推送，并在
   worklog 注明"本节点未推送"。
-- 仓库体量提示（2026-10-06）：`cases/` 下生成物使跟踪总量 ≈916 MB（`.git` ≈120 MB）。
-  最大单文件为 8 个 `cases/channel/channel_*.vtu`（50,206,535 B = 50.2 MB = 47.9 MiB），
-  **低于** GitHub 的 50 MiB 告警阈值与 100 MB 硬限 —— 首次推送 `main` 为 594 对象 /
-  93.5 MiB 包体，实测**无任何 remote 告警**。仍须注意：单文件一旦 ≥100 MB 推送会被拒。
-- 回退：单文件 `git checkout <sha> -- <path>`；未提交改动 `git stash`；远端已有对应
-  提交后不再用 `commit --amend` 重写历史（本地未推送的提交重写后需 `push --force-with-lease`
-  并确认无人共用）。
+- 仓库体量（2026-10-06 **瘦身后**）：跟踪文件 **324** 个（原 536），源码 + vendored
+  库 + `external/` 原始包 + 算例**输入件**；212 个运行产物 / 761.8 MB 已用
+  `git filter-branch` 从全部历史移除（`.git` 120 MB → 见 worklog 校验条目），
+  工作树产物留在磁盘且被忽略。
+- **一次性历史重写（已执行，2026-10-06）**：本次为"剥离运行产物"在私有仓库
+  （无他人 clone，用户已确认）上做过一次 `git push --force-with-lease origin main`；
+  安全网 = 本地分支 `backup/pre-slim-2026-10-06` +
+  `/home/sundong/mixsolver_pre_slim_backup/`（98 MB bundle + 硬链接快照）。
+  **此后恢复铁律：对已共享历史禁止 `--force`/`--force-with-lease`**；
+  再要重写必须先确认无他人 clone 并重新做 bundle 备份。
+- 回退：单文件 `git checkout <sha> -- <path>`；未提交改动 `git stash`；
+  历史重写后的旧提交只能从 `backup/pre-slim-2026-10-06` 或那个 bundle 里找回
+  （`git fetch <bundle> <ref>`）。远端已有对应提交后不得用 `commit --amend` 重写。

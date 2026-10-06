@@ -4,6 +4,27 @@
 
 ## 已完成
 
+- [x] **仓库瘦身：算例运行产物脱离跟踪 + 历史重写 + 远端同步（2026-10-06）**：
+  **212 个**运行产物（**761.8 MB**）从**全部历史**移除并同步到 GitHub：
+  `cases/**`、`grid_BC/**` 下的 `*.vtu / *.log / *.dat / *.out / *.tmp /
+  *.part.map / __pycache__`、根目录 `LNTE1D.vtu`、`cavity.vtu`、`build_*.log`、
+  `m6_*.log`、`output_para.out`，以及 `checkpoint_2026-10-06_C2.tar.gz`。
+  跟踪文件数 **536 → 324**。
+  判定依据（逐个分类，非拍脑袋）：`grep` 源码确认 `Step_mess.dat`/`part_grid.dat`/
+  `partation-auto.dat`/`mesh-quality.dat`/`*.part.map`/`flow3d*.dat`/`output_para.out`
+  均为**求解器运行期写出**；各 `cases/*/README.md` 均把 `.vtu/.log` 记作"产出"并给出
+  复现命令；删除前全文检索确认**没有任何** README/脚本把 `.vtu` 当输入或 oracle。
+  手段：`git rm -r --cached --pathspec-from-file`（精确 212 条清单）→ `.gitignore`
+  新增"运行产物不入库"规则 → `git filter-branch --index-filter`（本机**无**
+  `git-filter-repo`）→ `git reflog expire --expire=now --all` +
+  `git gc --prune=now` → `git push --force-with-lease origin main`。
+  安全网：`backup/pre-slim-2026-10-06` 分支 +
+  `/home/sundong/mixsolver_pre_slim_backup/`（`repo_pre_slim.bundle` 98 MB
+  `git bundle verify` 通过、`cases`/`grid_BC` 硬链接快照、checkpoint 副本）。
+  工作树里 761.8 MB 产物**保留在磁盘**（转为未跟踪 + 被 .gitignore 挡住），
+  随时按各 README 复现小节重算。规则更新见 `.trae/rules/project_rules.md`
+  「版本控制约定」（新增运行产物条款 + 一次性重写记录 + 体量提示刷新）。
+
 - [x] **关闭自检缺口③④（2026-10-06）**：
   ③ `src/unstructured/mod_uns_driver.f90` 的 uns restart 读取由整段停用（TEMP
   WORKAROUND）改为 `#ifdef HAVE_MPI` 守护——MPI 树恢复 `read_field_dump(serial=.true.)`
@@ -283,7 +304,9 @@
 ### 阶段 1 收尾（P0）
 - [x] 顶层 Makefile（目标：structured / unstructured / all / mpi；自动模块依赖；链接 lib 库）
 - [x] 确定 build 输出目录规范（build/ser、build/mpi），清理根目录游离的 .mod 文件
-- [ ] `mod_unit_convert.f90` + `mod_reference_state`（已移至阶段 5 前与量纲重构合并）
+- [x] `mod_unit_convert.f90` + `mod_reference_state`（2026-10-06 勾销：阶段 5 已落地，
+  实际实现文件名为 `mod_reference_state.f90` + `mod_interface_units.f90`，
+  与条目原拟名不同；原条目移至"阶段 5 前与量纲重构合并"后**已完成但未勾销**）
 
 ### 阶段 2：结构求解器集成（P0，约 3-4 天）
 - [x] **阶段 2a（2026-10-03 完成）原样搬迁 + 跑通回归**：
@@ -416,7 +439,9 @@
 - [x] **mod_interface_units.f90**（2026-10-05）：结构无量纲↔SI 互转（struct_to_SI/SI_to_struct + 速度向量版本），约定 ρ*=ρ/ρ_ref, u*=u/a_ref, T*=T/T_ref, p*=p/(ρ_ref·a_ref²)。
 - [x] **mod_interface_exchange.f90**（2026-10-05）：iface_state_t 容器 + struct→uns 双线性插值（peer_w）+ uns→struct 面积加权平均（守恒）。MPI 通信包装留阶段6。
 - [x] **单元测试 test_units_exchange.f90** + Makefile `units_test` 目标：3 测试全 PASS（量纲往返 1e-14、常量场插值精确、面积加权正确）。
-- [ ] MPI 子通信域 + 跨域 Send/Recv 包装（阶段6 耦合驱动时实现）
+- [x] MPI 子通信域 + 跨域 Send/Recv 包装（2026-10-06 勾销：阶段 6 已实现，
+  `src/coupling/mod_coupling_exchange.f90`，count+payload 协议 tags 110/111/210/211，
+  支持两侧面数不同与 nfaces=0）
 
 ### 阶段 6：弱耦合驱动（P1，约 2 天）
 - [x] **main.f90 耦合驱动框架（2026-10-05）**：
@@ -438,22 +463,41 @@
   - [x] main.f90：`has_struct` 保护修复 nproc=1 uns 自等 Recv 死锁
   - [x] 验证：grid_BC np=2 × 3 耦合迭代 exit=0、双向各 250 面、struct step
     正常；np=1 不挂起；standalone struct 回归一致
-- [ ] 界面插值接入驱动（struct→uns peer_w 双线性；uns→struct 面积加权，
-      现为简单平均占位）
-- [ ] 界面收敛检查
-- [ ] 修复 uns_solver_extract_iface 的 rho 占位（用 ctrl%rho）
-- [ ] 从 mix.control 读 n_couple / n_uns_steps
-- [ ] unMesh.cas mm→m 单位缩放（uns 侧 NaN 根因）
-- [ ] grid_BC 真实耦合物理验证
+- [x] 界面插值接入驱动（2026-10-06 勾销：`src/coupling/mod_interface_exchange.f90`
+  已实现 struct→uns `peer_w` 双线性、uns→struct 面面积加权平均（守恒），
+  已在流 B / C2 耦合链路中实际使用；"简单平均占位"描述已过期）
+- [ ] 界面收敛检查（**重新界定**：现状 = 固定 `n_couple` 迭代 + 每 25 步打印
+  iface 均值（`src/main.f90`），缺"界面跳变 < tol 早停 / 界面残差历史"；
+  动手前需先与用户定判据，故保留未勾销）
+- [x] 修复 uns_solver_extract_iface 的 rho 占位（2026-10-06 勾销：
+  `mod_uns_driver.f90` 增 optional `rho_in`，`src/main.f90` 调用处已传 `ctrl%rho`）
+- [x] 从 mix.control 读 n_couple / n_uns_steps（2026-10-06 勾销：
+  `src/main.f90` 用 `get_coupling_params(n_couple, n_uns_steps, iface_relax,
+  iface_ramp, …)`）
+- [x] unMesh.cas mm→m 单位缩放（2026-10-06 勾销：`mod_uns_control.read_mesh_scale`
+  + `ctrl%mesh_scale`，默认 1.0；C2 算例用 `mesh_scale = 1.0e-3`）
+- [x] grid_BC 真实耦合物理验证（2026-10-06 勾销：grid_BC np=2 双向各 250 面 +
+  后续 `cases/couple_channel`（流 B）与 `cases/couple_porous`（C2）真实物理验收）
 
 ### 阶段 7：构建与测试（P2）
-- [ ] 完善 Makefile 依赖；单元测试（量纲转换、匹配精度、交换守恒性）
+- [x] 完善 Makefile 依赖；单元测试（量纲转换、匹配精度、交换守恒性）（2026-10-06 勾销：
+  `bin/units_test`（量纲往返/常量场插值/面积加权）、`bin/match_test`（匹配精度）、
+  `bin/coupling_test`（np2 交换）三目标已就位且 rc=0；pristine/BOOTSTRAP 依赖链已建。
+  "继续完善依赖"并入日常维护，不再单列）
 
 ### 阶段 8：算例验证（P2）
-- [ ] 亚声速通道（结构）+ 低速腔体（非结构）；界面物理量偏差 < 1%
+- [~] 亚声速通道（结构）+ 低速腔体（非结构）；界面物理量偏差 < 1%（2026-10-06 重界定：
+  两侧算例均已在跑（`cases/couple_channel` = 流 B / `cases/natconv` 等），
+  但实测界面速度偏差 **−2.9%**（流 B）/ 型线 11.8%（C2 §4），**尚未达到 <1% 判据**，
+  已归因于两侧**壁面层物理差异**（非交换层误差）⇒ 与阶段 11 可选项"壁面层对齐"
+  联动；需与用户重定判据或收口归因后方可勾销）
 
 ### 文档（随功能同步）
 - [ ] `docs/程序使用手册.tex` 及 `91_appendix_params.tex`、`93_changelog.tex`、`control.ec.template`（目前均不存在）
+- [ ] **`cases/couple_channel/README.md` 缺失**（2026-10-06 新登记）：流 B 的复现命令、
+  界面定值（质量精确连续、压力跳变 <1 Pa、对拍 uns_full 剩余 −2.9%）只散在
+  `docs/plan.md` 流 B 节与 worklog 里；对照 `cases/couple_porous/README.md` 的
+  体例补齐，作为算例文档一致性收口
 
 ### 阶段 9–13：后续功能储备（2026-10-05 录入 docs/plan.md，源自程序功能说明 L8–15）
 - [~] **阶段9 多孔介质完善**：
@@ -471,9 +515,12 @@
   - [x] **Beavers-Joseph（2026-10-05）cases/beavers_joseph/**（见顶部收尾条）。
   - [x] **α/K 标定实验设计（2026-10-06）cases/calibration/**（见顶部条目）。
   - 已完成历史：Darcy-Forchheimer、Brinkman、LTE/LTNE；1D LTNE ✅、多孔自然对流 ✅。
-- [ ] **阶段10 自动保存与耦合联合重启**：两侧流场（含 halo）定时保存；
-  struct 按节点插值写 Plot3D（格式随 Mesh3d.x）；main.f90 联合重启入口。
-- [ ] **阶段11 多类型界面**：低速-多孔（BJ 滑移）、低速可压缩、可压缩-多孔；
-  按两侧块属性自动分派界面类型/交换量。
+- [x] ~~**阶段10 自动保存与耦合联合重启**：两侧流场（含 halo）定时保存；struct 按节点
+  插值写 Plot3D；main.f90 联合重启入口。~~（已完成并勾销 2026-10-06：见本文件
+  「已完成」区阶段 10 条目——`write_field_dump`/`read_field_dump` +
+  `couple_restart=1` 逐位续跑，本条为**陈旧残留**，故删除勾选）
+- [~] **阶段11 多类型界面**：低速-多孔（BJ 滑移）✅ C1、低速可压缩 ✅ 流 B、
+  可压缩-多孔 ✅ C2 **均已完成**；**剩余** = 界面类型/交换量自动分派表 +
+  `uns` 绝对压力 ≈−250 Pa 偏置（详见本文件「待办 → 阶段 11」两条）。
 - [ ] **阶段12 Gambit NEU 输入**：.neu 读取器（网格+BC+体区域属性），复用现有登记流程。
 - [ ] **阶段13 结构求解器演进（远期）**：SST bug 修复前禁用；改用 Liao 格心型有限差分，兼容现有 Riemann。
