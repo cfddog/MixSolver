@@ -5,7 +5,33 @@
 
 ---
 
-## 2026-10-06 | C2 收尾：遗留开放项登记为后续待办 + 节点保存（代码/文档快照）
+## 2026-10-06 | 版本控制初始化：git init + .gitignore + 首个提交（= C2 节点快照）
+
+- **`git init -b main`**：仓库原本**无** git（也无 `.git` 目录）；按 `progress.md`
+  「环境准备」里的原待办补齐版本控制。全局 `user.name/email` 为空，故只设**仓库本地**
+  身份 `sundong <sundong@localhost>`（如需改：`git config user.email …` ＋
+  `git commit --amend --reset-author`）。
+- **`.gitignore`**（`build/`、`bin/` 为原待办要求，另补通用垃圾）：`build/`、`bin/`、
+  `*.o`、`*.mod`、`__pycache__/`、`*.pyc`、`*.swp`、`*~`、`.DS_Store`。
+  **刻意不忽略** `lib/{metis,parmetis,tecplot}/*.a`（vendored 预编译第三方库，链接
+  必需、不可由本仓库重建）与 `regress/m6wing/baseline/*`（位级回归 oracle）——
+  该判断已用注释固化在 `.gitignore` 内。核实：源码树无散落 `*.o`/`*.mod`。
+- **首个提交 `97f247f`**「chore: 初始化版本库（首个提交 = C2 完成节点快照）」：
+  536 文件 = 排除 `build/`、`bin/` 与 3 个 `__pycache__/*.pyc` 后的**全部**文件
+  （逐个核对无遗漏）；`.git` ≈119 MB（ASCII `*.vtu` 压缩 ~7×）；`git status` 干净。
+  说明：`cases/` 下 757 MB 生成产物（`*.vtu`、日志、`Residual.dat` 等）按原待办
+  **未**忽略，一并入库；日后若要瘦身：`git rm --cached <path>` ＋ `git commit --amend`
+  （本地无远端，重写历史安全）。
+- **回退方式**：单文件 `git checkout 97f247f -- <path>`；未提交改动 `git stash`。
+- **遗留**：`checkpoint_2026-10-06_C2.tar.gz`（仓库根，上一轮打的文档快照）已随首个
+  提交入库，有 git 后冗余 —— 可 `git rm checkpoint_2026-10-06_C2.tar.gz` 后删除磁盘
+  文件（留着也不影响）。
+- **新增规则**：`.trae/rules/project_rules.md` 增加「版本控制约定」小节（提交粒度、
+  `.gitignore` 白/黑名单、提交信息格式、回退方式），避免后续会话误忽略 `lib/*/*.a`
+  或 `regress/` 基线。
+
+---
+
 
 - **登记待办**：把 C2 暴露的唯一遗留问题 —— **uns 单求解器绝对压力水平
   ≈−250 Pa 内部偏置的机理定位与修复** —— 计入后续待办：

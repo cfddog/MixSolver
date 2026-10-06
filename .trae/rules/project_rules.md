@@ -53,3 +53,16 @@
 - **验证脚本必须自带回归守卫**：在错误（历史缺陷）资产上要能主动报错，而不是
   静默给出"看起来合理"的数，例如 `uns_full/check_bed_gradient.py` 的
   `zone 2 is not the x<100 mm half!`。
+
+## 版本控制约定（2026-10-06 起，仓库已 `git init`）
+- 分支 `main`；改完一个**可验证的节点**就提交一次，提交前先跑该节点对应的验证脚本
+  （或位级回归 `regress/m6wing/run_regression.sh`）。
+- `.gitignore` 只忽略构建/中间产物：`build/`、`bin/`、`*.o`、`*.mod`、
+  `__pycache__/`、`*.pyc`、编辑器临时文件。**不得**忽略 `lib/*/*.a`
+  （vendored METIS/ParMETIS/Tecplot 预编译库，链接必需且不可重建）与
+  `regress/m6wing/baseline/*`（位级回归 oracle）。
+- 提交信息格式：`<type>: <一句话>`（type ∈ feat / fix / docs / verify / chore），
+  正文写清「验证方式 / 关键结果 / 遗留待办」，并与 `memory-bank/worklog.md`
+  对应条目一致；本仓库文档为中文，提交信息用中文。
+- 回退：单文件 `git checkout <sha> -- <path>`；未提交改动 `git stash`；
+  无远端时可用 `commit --amend` 重写单个未共享提交。

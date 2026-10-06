@@ -237,7 +237,15 @@
 - [x] OpenCFD-EC-1.16a.zip 已放入项目根目录（另已有解压副本 `/home/sundong/Fortran_Project/OpenCFD-EC-1.16a`）
 - [x] lib/ 库文件核对：metis/libmetis.a、parmetis/libparmetis(_gnu_mpi).a、tecplot/libtecio.a
 - [x] 编译器核对：gfortran 13.3.0、OpenMPI 4.1.6（mpif90/mpirun 就位）
-- [ ] 可选：日后 git init 时补 .gitignore（build/、bin/）
+- [x] **版本控制初始化（2026-10-06 完成）**：`git init -b main` + `.gitignore`
+      （`build/`、`bin/` 为原待办要求；另补 `*.o`、`*.mod`、`__pycache__/`、`*.pyc`、
+      编辑器临时文件。**刻意不忽略** `lib/{metis,parmetis,tecplot}/*.a` —— vendored
+      预编译第三方库，链接必需且不可由本仓库重建；也不忽略 `regress/m6wing/baseline/*`）。
+      首个提交 `97f247f`「chore: 初始化版本库（首个提交 = C2 完成节点快照）」：
+      536 文件、`.git` ≈119 MB（ASCII VTU 压缩 ~7×）、分支 `main`、工作区干净。
+      说明：`cases/` 下生成产物（`*.vtu`、日志等）按原待办**未**忽略，一并入库；
+      日后若要瘦身可 `git rm --cached` ＋ `commit --amend`（本地无远端，安全）。
+      身份仅设仓库本地 `sundong <sundong@localhost>`（全局 user.name/email 为空）。
 
 ## 待办
 

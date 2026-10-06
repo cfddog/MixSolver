@@ -24,10 +24,12 @@
 > 下一步：① 可压缩–多孔跨组界面 ② 界面分派表 ③ 远期 NEU/SST/Liao。
 > （2026-10-06 更新：① 已完成并验证，见下节 C2；下一步 = ② 界面分派表 ＋
 > ③′ 新登记待办：uns 绝对压力 ≈−250 Pa 偏置机理（plan 阶段 11 第 3 条）。
-> **本节点已保存**（本仓库无 git，改动全部落盘）：`docs/plan.md`、`memory-bank/*.md`、
-> `.trae/rules/project_rules.md`（新增「验证/诊断硬规则」5 条）、
-> `cases/couple_porous/*`（README ＋ 5 个脚本）、`cases/couple_channel/{gen_meshes.py,
-> uns_full/gen_full.py}`；另打快照 `checkpoint_2026-10-06_C2.tar.gz`（仓库根）。
+> **本节点已保存**：`docs/plan.md`、`memory-bank/*.md`、`.trae/rules/project_rules.md`
+> （新增「验证/诊断硬规则」5 条）、`cases/couple_porous/*`（README ＋ 5 个脚本）、
+> `cases/couple_channel/{gen_meshes.py, uns_full/gen_full.py}`。
+> **2026-10-06 起本仓库已纳入 git**：`git init -b main`，首个提交 `97f247f`
+> （= 本节点快照；536 文件、`.git` ≈119 MB、分支 main、工作区干净）；
+> 单文件回退 `git checkout 97f247f -- <path>`，未提交改动 `git stash`。
 > 复验命令见下节 C2 与 `cases/couple_porous/README.md` §6。）
 
 ## 阶段 11（2026-10-06）：C2 可压缩–多孔跨组界面 ✅（完成并验证）
