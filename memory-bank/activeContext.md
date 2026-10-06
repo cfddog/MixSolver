@@ -23,7 +23,9 @@
 > 阶段 11 流 B（Dirichlet-Neumann 特征界面）+ C1（BJ 复用勾销）+ Turbo 清理。
 > 下一步：① 可压缩–多孔跨组界面 ② 界面分派表 ③ 远期 NEU/SST/Liao。
 > （2026-10-06 更新：① 已完成并验证，见下节 C2；下一步 = ② 界面分派表 ＋
-> ③′ 新登记待办：uns 绝对压力 ≈−250 Pa 偏置机理（plan 阶段 11 第 3 条）。
+> ③′ uns 绝对压力 ≈−251 Pa 偏置 **机理已定位**（整场电平/压力零模，入口边界单元
+> 印标签后原样传播；Δx/ramp/BC 无关、严格 ∝u²；见 `cases/couple_porous/README.md`
+> §5.1 与 progress 阶段 11），**修复项已登记待排期**。）
 > **仓库瘦身（2026-10-06）**：212 个运行产物 / 761.8 MB 脱离跟踪并重写历史，
 > 跟踪 536 → 324 文件、`.git` 120 MB → **46 MB**；远端 `main` 已 force-with-lease
 > 覆盖（零告警）。安全网 = `/home/sundong/mixsolver_pre_slim_backup/`
