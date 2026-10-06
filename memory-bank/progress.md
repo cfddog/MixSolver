@@ -250,6 +250,10 @@
       自动 `git add -A && git commit -F -`（**无需询问**），一个节点一个提交；
       验证未通过/半成品不提交（保留脏工作区或 `git stash`）。规则：
       `.trae/rules/project_rules.md`「版本控制约定」。
+      **远端同步（2026-10-06）**：`origin = git@github.com:cfddog/MixSolver.git`（SSH，
+      密钥 `~/.ssh/id_ed25519`）；首次 `git push -u origin main` 成功 —— 594 对象 /
+      93.5 MiB 包体 / ≈2.9 MiB/s，**无大文件告警**；HEAD == `origin/main` == `8f40a31`。
+      工作流扩展为「验证 → 记账 → commit → **push**」，此后自动执行。
 
 ## 待办
 

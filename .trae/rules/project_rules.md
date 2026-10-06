@@ -76,5 +76,15 @@
 - 提交信息格式：`<type>: <一句话>`（type ∈ feat / fix / docs / verify / chore），
   正文写清「验证方式 / 关键结果 / 遗留待办」，并与 `memory-bank/worklog.md`
   对应条目一致；本仓库文档为中文，提交信息用中文。
-- 回退：单文件 `git checkout <sha> -- <path>`；未提交改动 `git stash`；
-  无远端时可用 `commit --amend` 重写单个未共享提交。
+- **远端同步**：`origin = git@github.com:cfddog/MixSolver.git`（SSH，密钥
+  `~/.ssh/id_ed25519`）。**提交后自动 `git push origin main`**，与自动提交同一节点内
+  完成，不单独询问。推送前 `git status -sb` 确认与 `origin/main` 无分叉（有分叉先
+  `git pull --rebase`）；对已共享历史**禁止 `--force`**。网络不可达时跳过推送，并在
+  worklog 注明"本节点未推送"。
+- 仓库体量提示（2026-10-06）：`cases/` 下生成物使跟踪总量 ≈916 MB（`.git` ≈120 MB）。
+  最大单文件为 8 个 `cases/channel/channel_*.vtu`（50,206,535 B = 50.2 MB = 47.9 MiB），
+  **低于** GitHub 的 50 MiB 告警阈值与 100 MB 硬限 —— 首次推送 `main` 为 594 对象 /
+  93.5 MiB 包体，实测**无任何 remote 告警**。仍须注意：单文件一旦 ≥100 MB 推送会被拒。
+- 回退：单文件 `git checkout <sha> -- <path>`；未提交改动 `git stash`；远端已有对应
+  提交后不再用 `commit --amend` 重写历史（本地未推送的提交重写后需 `push --force-with-lease`
+  并确认无人共用）。

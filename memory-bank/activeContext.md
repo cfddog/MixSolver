@@ -34,6 +34,9 @@
 > `git add -A && git commit -F -`（**无需询问**），与 memory-bank 更新同批提交，
 > 一个节点一个提交；验证未通过/半成品不提交。规则：
 > `.trae/rules/project_rules.md`「版本控制约定」。
+> **远端（2026-10-06）**：`origin = git@github.com:cfddog/MixSolver.git`（SSH）；
+> 首次 `git push -u origin main` 成功（594 对象 / 93.5 MiB 包体、无大文件告警），
+> HEAD == `origin/main` == `8f40a31`；此后每节点「提交后自动 push」。
 > 复验命令见下节 C2 与 `cases/couple_porous/README.md` §6。）
 
 ## 阶段 11（2026-10-06）：C2 可压缩–多孔跨组界面 ✅（完成并验证）

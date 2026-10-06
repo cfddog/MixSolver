@@ -5,7 +5,29 @@
 
 ---
 
-## 2026-10-06 | 规则固化：每完成一个小节点自动提交（auto-commit 工作流）
+## 2026-10-06 | 同步到 GitHub：origin = git@github.com:cfddog/MixSolver.git（首次推送成功）
+
+- **预检**：`~/.ssh/id_ed25519` 已配 → `ssh -T git@github.com` 返回
+  `Hi cfddog! You've successfully authenticated`；HTTPS 200；远端为空仓库
+  （`git ls-remote` 无引用，故 `push` 为 fast-forward 建分支，无覆盖风险）。
+- **`.gitignore` 无需改动**：最大单文件 8 个 `cases/channel/channel_*.vtu`
+  = 50,206,535 B（50.2 MB = 47.9 MiB）< GitHub 的 50 MiB 告警阈值与 100 MB 硬限；
+  跟踪总量 916 MB / `.git` 120 MB。
+- **推送**：`git remote add origin …` ＋ `git push -u --progress origin main` →
+  `* [new branch] main -> main`，`branch 'main' set up to track 'origin/main'`。
+  统计：**594 对象 / 93.46 MiB pack / ≈2.9 MiB/s**；`remote: warning` **0 条**；
+  推送后 `HEAD == origin/main == 8f40a31`，`git status -sb` = `## main...origin/main`
+  （无 ahead/behind）。
+- **规则扩展** `.trae/rules/project_rules.md`「版本控制约定」新增两条：
+  ① **远端同步**：提交后自动 `git push origin main`（同一节点内、不单独询问）；
+     推送前查 `git status -sb` 无分叉（有分叉先 `pull --rebase`）；已共享历史禁止
+     `--force`；网络不可达时跳过并在 worklog 注明"本节点未推送"。
+  ② **仓库体量提示**：记录 916 MB / 120 MB / 47.9 MiB 最大单文件与"≥100 MB 会被拒"。
+     同时修正回退条目（已推送历史不再用 `--amend` 重写）。
+- 备注：GitHub 仓库名 `MixSolver`、本地目录 `MixNSSolver`，路径不同不影响同步。
+
+---
+
 
 - **用户要求**：每次完成一个小节点（一次可验证的改动 / 缺陷修复 / 文档收尾）都
   **自动 commit**，并把该流程计入规则。
