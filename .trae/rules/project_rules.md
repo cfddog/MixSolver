@@ -105,6 +105,9 @@
   一起重写（本次 `backup/pre-slim-2026-10-06` 就被一并改写，随后删除）。
   重写后推送前**必须** `git fetch origin` 复位远端跟踪引用，否则
   `--force-with-lease` 会拿被改写的本地缓存去比对而误判。
+  **注意**：这次 `fetch` 会把旧远端对象拉回本地（实测 `.git` 46 → 140 MB），
+  推送成功后要**再跑一次** `git reflog expire --expire=now --all &&
+  git gc --prune=now` 回收（实测回到 46 MB / 1 pack / 434 对象）。
   **此后恢复铁律：对已共享历史禁止 `--force`/`--force-with-lease`**；
   再要重写必须先确认无他人 clone 并重新做 bundle 备份。
 - 回退：单文件 `git checkout <sha> -- <path>`；未提交改动 `git stash`；

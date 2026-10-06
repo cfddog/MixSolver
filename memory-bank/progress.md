@@ -256,7 +256,9 @@
 - [x] 顶层 `Makefile`（2026-10-03）：all/mpi/structured(_mpi)/unstructured(_mpi)/common/clean/help；
       build/ser 与 build/mpi 分离；gfortran -MMD -MP 自动依赖；DEBUG=1；已验证串行/MPI、
       增量、-j4 干净构建（3 次）、缺失 main 友好报错；根目录游离 .mod 已清理
-- [ ] `mod_unit_convert.f90` + `mod_reference_state`（与量纲重构合并，建议阶段 5 前做）
+- [x] `mod_unit_convert.f90` + `mod_reference_state`（2026-10-06 勾销：阶段 5
+      已落地，实际文件名 `mod_reference_state.f90` + `mod_interface_units.f90`；
+      本条为「阶段 5 前做」的计划项，与阶段 1 收尾区那条同源）
 
 ### 环境准备
 - [x] OpenCFD-EC-1.16a.zip 已放入项目根目录（另已有解压副本 `/home/sundong/Fortran_Project/OpenCFD-EC-1.16a`）

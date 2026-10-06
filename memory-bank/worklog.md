@@ -81,6 +81,12 @@
   一起重写 ⇒ 备份必须用**仓库外的 bundle**，不能只靠分支；② 重写后推送前必须
   `git fetch` 复位 `origin/main`，否则 `--force-with-lease` 会拿被改写的本地缓存去比对
   而误报（或更糟：用 `--force` 绕过保护）。
+- **操作坑（已实测）**：上面那条 `git fetch origin` 会把**旧的远端对象**一并拉回本地
+  （`.git` 46 MB → 140 MB；`git count-objects -vH` = 2 packs / 138.53 MiB）。因为
+  `--force-with-lease` 推送后**没有任何引用**指向旧历史，所以再跑一次
+  `git reflog expire --expire=now --all && git gc --prune=now` 即回收（实测回到
+  **1 pack / 434 对象 / 44.98 MiB = 46 MB**，`git fsck` 干净）。⇒ 规则补一条：
+  **重写 + 推送后要再 gc 一次**。
 
 ---
 
