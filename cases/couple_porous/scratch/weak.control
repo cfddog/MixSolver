@@ -1,0 +1,8 @@
+cell_zone = 2 fluid
+cell_zone = 8 perm=1.0e-4 inertial=1.0 porosity=0.4
+bc = 4 symmetry
+bc = 5 symmetry
+bc = 6 pressure-outlet 0.0
+bc = 7 mass-flow-inlet 40.868 300.0
+inlet_ramp = 100
+outer_max = 2000

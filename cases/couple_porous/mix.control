@@ -1,0 +1,30 @@
+# mix.control -- coupling-driver parameters for the couple_porous case
+# C2 struct-porous cross-group interface: the struct side (compressible
+# Riemann, Ma=0.1 free stream) butts the uns side whose ENTIRE domain is a
+# Darcy-Forchheimer bed.  The exchange scheme is the flow-B
+# Dirichlet-Neumann characteristic coupling, unchanged: struct subsonic
+# outlet receives the uns back pressure, uns receives velocity Dirichlet.
+# The porous bed only changes the converged value (interface pressure set
+# by the Darcy-Forchheimer pressure drop, ~302 Pa, instead of ~0).
+
+rho_ref = 1.177
+T_ref   = 300.0
+L_ref   = 0.001
+# struct free-stream velocity scale U_inf = Ma*a_ref = 0.1*347.224
+# (OpenCFD-EC nondim: u*=u/U_inf, p*=p/(rho*U_inf^2))
+u_ref   = 34.7224
+
+# --- coupling loop ---
+n_couple        = 1000
+n_struct_steps  = 10    # struct pseudo-time steps per coupling iteration
+n_uns_steps     = 10    # SIMPLE outer steps per coupling iteration
+
+# --- interface BC under-relaxation + ramp ---
+# omega reaches 1.0 after iface_ramp iterations: flux-conserving exchange
+# at the fixed point (relaxation only cushions the cold start).
+iface_relax = 1.0
+iface_ramp  = 20
+
+# --- phase-10 periodic save / joint restart ---
+save_interval  = 1000
+couple_restart = 0

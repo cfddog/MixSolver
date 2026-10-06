@@ -1,0 +1,39 @@
+# UNSolver control file -- C2 single-solver reference (uns_full)
+# Full x=0..200 mm hex mesh (mm units -> mesh_scale), two cell zones:
+#   zone 2 fluid     (x=0..100 mm)
+#   zone 8 VC:porous (x=100..200 mm, tag in unMesh.cas; coefficients here)
+# Face zones:
+#   4 symmetry (z), 5 symmetry (y),
+#   6 pressure-outlet (x=200), 7 velocity-inlet (x=0)
+#
+# Analytical bed pressure drop (L=0.1 m):
+#   dP = (mu/eps/K) u L + rho beta u^2 L
+#      = 160.2 + 141.9 = 302.1 Pa
+mesh_scale = 1.0e-3
+rho = 1.177
+mu  = 1.846e-5
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 3000
+outer_tol = 1.0e-9
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+# cold start at 34.72 m/s with physical mu: ramp the mass-flow-inlet over
+# 100 outer steps (zero-field start would overshoot in the first pressure
+# correction and go NaN).
+inlet_ramp = 100
+init_t = 300.0
+
+# --- cell (volume) zones ---
+cell_zone = 2 fluid
+cell_zone = 8 perm=1.0e-6 inertial=1.0 porosity=0.4
+
+# --- boundary conditions ---
+bc = 4 symmetry
+bc = 5 symmetry
+bc = 6 pressure-outlet 0.0
+# mass-flow-inlet: mdot = rho*u = 1.177*34.7224 = 40.868 kg/m^2/s
+bc = 7 mass-flow-inlet 40.868 300.0

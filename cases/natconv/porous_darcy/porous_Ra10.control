@@ -1,0 +1,45 @@
+# Natural convection in a fluid-saturated porous square cavity
+# (Darcy regime, Local Thermal Equilibrium)
+#
+# Side-heated benchmark: hot LEFT wall (x=0, T=301), cold RIGHT (x=1, T=300);
+# horizontal walls adiabatic; z planes symmetry (2D extrusion).
+#
+# With porosity eps=1 the implementation reduces to the standard Darcy model:
+#   Darcy drag  (mu/eps)/K u = (mu/K) u ; Brinkman mu_eff = mu ; k_eff = k_f
+# Da = K/H^2 = 1e-6  -> Brinkman viscous term negligible vs Darcy drag.
+# Darcy-Rayleigh Ra_K = g*beta*dT*K*H / (nu*alpha)
+#   rho=1, cp=1 -> nu=mu, alpha=k_f ; g*beta*dT = 9.81*3.33e-3*1 = 3.2667e-2
+#   mu = k_f = sqrt(g*beta*dT*K/Ra_K) = sqrt(3.2667e-8 / 10)
+# Reference Nu (Walker & Homsy / Bejan, square porous cavity): ~1.07
+
+rho = 1.0
+mu  = 5.7155e-5
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 10000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 400
+conv_blend   = 1.0
+nonorth_corr = 0.0
+ppe_precond  = ic0
+
+# --- porous cell zone (zone 2): pure Darcy, LTE ---
+cell_zone = 2 porous perm=1.0e-6 inertial=0.0 porosity=1.0
+
+# --- energy / Boussinesq ---
+cp = 1.0
+k_cond = 5.7155e-5
+boussinesq = true
+beta = 3.33e-3
+tref = 300.5
+gravity = 0.0 -9.81 0.0
+init_t = 300.5
+t_pert = 0.0
+
+# --- boundary conditions ---
+bc = 5 wall
+bc = 4 symmetry
+# thermal: left (x=0) hot, right (x=1) cold, top/bottom adiabatic by default
+tbc_plane = 5 1 0.0 1 301.0
+tbc_plane = 5 1 1.0 1 300.0

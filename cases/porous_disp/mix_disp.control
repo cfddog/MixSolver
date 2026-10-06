@@ -1,0 +1,36 @@
+# 2D porous thermal mixing layer, WITH transverse dispersion
+# -----------------------------------------------------------
+# Uniform Darcy flow u=1 m/s along x; inlet split at y=H/2: T=310 (lower),
+# T=300 (upper).  Transverse dispersivity alpha_t=1e-3 m gives
+#   Gamma_y = k_cond + rho*cp*alpha_t*u
+#           = 0.026 + 1.177*1005*1e-3*1 = 1.2089 W/m/K
+# and the error-function similarity solution
+#   T(x,y) = 305 - 5*erf( (y-H/2)*sqrt(u/(4*Gamma_y*x)) )
+# alpha_l = 0 so streamwise dispersion does not perturb the similarity form.
+
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+cp  = 1005.0
+k_cond = 0.026
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 20000
+outer_tol = 1.0e-8
+lin_tol   = 1.0e-10
+lin_max   = 500
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 305.0
+
+# VC:porous tag in the CAS supplies the block type; this line is coefficients
+# only (no fluid|porous token, CZ_AUTO)
+cell_zone = 2 perm=1.0e-8 porosity=0.4 disp_t=1.0e-3
+
+bc = 4 symmetry
+bc = 5 symmetry
+bc = 6 velocity-inlet 1.0 0.0 0.0 310.0
+bc = 7 pressure-outlet 0.0
+bc = 8 velocity-inlet 1.0 0.0 0.0 300.0

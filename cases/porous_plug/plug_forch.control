@@ -1,0 +1,31 @@
+# 1D porous plug, Darcy-Forchheimer regime (u_in = 1.0 m/s)
+# ----------------------------------------------------------
+# Same mesh/VC-tagged zone as plug_darcy.control, higher velocity and a
+# non-zero Forchheimer coefficient.
+#
+# Analytical pressure drop:
+#   dP = (mu/eps/K) u L + rho C_F u^2 L
+#      = 1.846e-5/0.4/1e-8 * 1.0 * 0.1 + 1.177*500*1.0*0.1
+#      = 461.5 + 58.85 = 520.35 Pa
+
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 3000
+outer_tol = 1.0e-9
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 300.0
+
+cell_zone = 2 perm=1.0e-8 inertial=500.0 porosity=0.4
+
+bc = 4 symmetry
+bc = 5 symmetry
+bc = 6 velocity-inlet 1.0 0.0 0.0 300.0
+bc = 7 pressure-outlet 0.0

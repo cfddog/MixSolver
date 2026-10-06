@@ -1,0 +1,41 @@
+# UNSolver control file -- couple_channel (unstructured side, SI)
+# Hex mesh unMesh.cas (mm units -> mesh_scale), domain x=100..200 mm:
+#   zone 4 = symmetry (z planes), zone 5 = wall (y=0/H),
+#   zone 6 = pressure-outlet (x=200 mm), zone 7 = coupling interface (x=100)
+#
+# Matched to the structured side: T=300 K air, Ma=0.1 (u=34.72 m/s),
+# artificial viscosity mu=4.0868e-3 Pa.s -> Re_H = 500 (H=50 mm).
+# -------------------------------------------------------------------------
+
+# --- mesh units: CAS file is in mm -> scale to m ---
+mesh_scale = 1.0e-3
+
+# --- physical properties ---
+rho = 1.177
+mu  = 4.0868e-3
+
+# --- numerical parameters (SIMPLE) ---
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 200
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+# no inlet-ramp: the driver-level interface mass-balance correction needs the
+# boundary fluxes at full strength (see grid_BC lessons).
+inlet_ramp = 1
+
+# --- initial temperature field (interface T exchange) ---
+init_t = 300.0
+
+# --- cell (volume) zones ---
+cell_zone = 2 fluid
+
+# --- boundary conditions ---
+bc = 4 symmetry
+bc = 5 wall
+bc = 6 pressure-outlet 0.0
+# zone 7 "interface" needs no bc: handled by the coupling exchange layer

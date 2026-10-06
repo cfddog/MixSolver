@@ -1,0 +1,20 @@
+# mix.control -- coupling-driver parameters for the grid_BC case
+# Reference state: air at 300 K, 1 atm (consistent with unMesh.control).
+# The structured side is non-dimensionalised with rho_ref, T_ref (a_ref from
+# gamma*R*T_ref); every interface quantity crosses in SI.
+
+rho_ref = 1.177
+T_ref   = 300.0
+L_ref   = 0.05
+
+# --- coupling loop ---
+n_couple    = 10      # weak-coupling iterations
+n_uns_steps = 100     # SIMPLE outer steps per coupling iteration
+
+# --- interface BC under-relaxation + ramp (phase 7) ---
+# omega = iface_relax * min(1, iter/iface_ramp)
+# BC    = omega*struct_state + (1-omega)*uns_current_state
+# The struct side starts from a Ma=3 freestream while the uns inflow is
+# ~1.7 m/s; a full-strength first exchange blows up SIMPLE, so ramp slowly.
+iface_relax = 0.3
+iface_ramp  = 10

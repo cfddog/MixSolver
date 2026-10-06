@@ -1,0 +1,32 @@
+# Pure-fluid Rayleigh-Benard convection, square cavity 1m (2D wedge extrusion)
+# Hot bottom y=0 (301 K), cold top y=1 (300 K), adiabatic side walls,
+# z planes symmetry. Air: Pr = 0.71 (rho=cp=1 -> k = mu/Pr).
+# Ra = g*beta*dT*H^3/(nu*alpha) = 9.81*3.33e-3*1/(mu*k) ; Ra = 1e3 (SUBCRITICAL,
+# analytic onset 1708): pure conduction, Nu = 1, u ~ 0.
+# Reference: this case caught the missing temperature convergence criterion.
+
+rho = 1.0
+mu  = 4.816e-3
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 5000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 400
+conv_blend   = 1.0
+nonorth_corr = 0.0
+ppe_precond  = ic0
+
+cp = 1.0
+k_cond = 6.783e-3
+boussinesq = true
+beta = 3.33e-3
+tref = 300.5
+gravity = 0.0 -9.81 0.0
+init_t = 300.5
+t_pert = 0.02
+
+bc = 5 wall
+bc = 4 symmetry
+tbc_plane = 5 2 0.0 1 301.0
+tbc_plane = 5 2 1.0 1 300.0

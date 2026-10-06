@@ -1,0 +1,27 @@
+# Beavers-Joseph validation, slip coefficient alpha = 2 (see bj_a0.control
+# for the setup).  Analytic: u_D = 2.710e-3 m/s, u_B = 5.536e-3 m/s.
+
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+body_force = 0.05 0.0 0.0
+
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 800
+outer_tol = 1.0e-9
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 1.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+init_t = 300.0
+
+cell_zone = 3 perm=1.0e-6 porosity=1.0 bj_alpha=2.0
+
+bc = 5 symmetry
+bc = 6 wall
+bc = 7 wall
+bc = 8 pressure-outlet 0.0
+bc = 9 pressure-outlet 0.0
+tbc = 7 1 300.0

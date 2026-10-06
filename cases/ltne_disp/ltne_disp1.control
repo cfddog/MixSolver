@@ -1,0 +1,36 @@
+# LTNE 1D porous slab WITH longitudinal thermal dispersion
+# ---------------------------------------------------------
+# Identical to ltne_disp0.control plus disp_l = 0.005 m on the porous
+# cell zone.  The fluid-phase axial conductivity becomes
+#   Kf = eps*k_f + rho*cp*disp_l*u = 0.0078 + 1.177*1005*0.005*1.699
+#      = 0.0078 + 10.05 = 10.06 W/m/K
+# (conduction length Kf/(G*cp) = 5.0 mm = 10 dx), so axial back-conduction
+# in the fluid strongly preheats the inlet region -- the reference is the
+# full 4th-order two-phase ODE system (plot_ltne_disp.py).
+
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+cp  = 1005.0
+k_cond = 0.026
+init_t = 300.0
+
+thermal_model = ltne
+cell_zone = 2 porous perm=1.0e-8 inertial=0.0 porosity=0.3 k_s=16.2 cp_s=500.0 rho_s=7900.0 h_sf=2.0e5 a_sf=1.0 disp_l=0.005
+
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 20000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 300
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+
+bc = 4 symmetry
+bc = 5 symmetry
+bc = 6 mass-flow-inlet 2.0 300.0
+bc = 7 pressure-outlet 0.0
+tbc = 7 2 2.0e6

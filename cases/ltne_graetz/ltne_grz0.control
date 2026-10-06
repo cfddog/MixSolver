@@ -1,0 +1,34 @@
+# LTNE Graetz forced convection, NO thermal dispersion (disp_t=0)
+# ---------------------------------------------------------------
+# Identical to ltne_grz_d.control but transverse transport in the fluid
+# phase is by microscopic conduction only: Kfy = eps*kf = 0.0104 W/m/K.
+# The solid bridge (Ds=0.6) plus interphase exchange (h*a=2.0e5) still
+# couples the phases; the reference is the same coupled eigenproblem
+# (plot_ltne_graetz.py).  Pe_f = rho cp U a / Kfy = 569.
+
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+cp  = 1005.0
+k_cond = 0.026
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 20000
+outer_tol = 1.0e-9
+lin_tol   = 1.0e-10
+lin_max   = 500
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 300.0
+
+thermal_model = ltne
+cell_zone = 2 porous perm=1.0e-10 porosity=0.4 k_s=1.0 cp_s=800.0 rho_s=2000.0 h_sf=2.0e5 a_sf=1.0
+
+bc = 4 symmetry
+bc = 5 symmetry
+bc = 6 velocity-inlet 1.0 0.0 0.0 300.0
+bc = 7 pressure-outlet 0.0
+bc = 8 wall
+tbc = 8 1 310.0

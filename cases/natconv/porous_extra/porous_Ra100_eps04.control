@@ -1,0 +1,38 @@
+# Porosity-weighting consistency test (side heated, Darcy, Ra_K=100)
+# eps=0.4 with coefficients re-tuned so the DISCRETE EQUATIONS are identical
+# to the eps=1 case porous_Ra100.control:
+#   drag coeff  mu/(eps*K) = mu/K0  (buoyancy source is NOT eps-weighted)
+#                             -> K = K0/eps = 1e-6/0.4 = 2.5e-6
+#   Brinkman mu/eps differs 2.5x but is O(Da)=1e-6 relative, negligible.
+#   mixture k   eps*k_f + (1-eps)*k_s = k_f0 -> k_s = k_f0
+# Then Nu must reproduce 3.096 and max|u| the same value; any deviation
+# exposes a wrong eps factor in momentum, energy or wall-flux paths.
+
+rho = 1.0
+mu  = 1.8074e-5
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 10000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 400
+conv_blend   = 1.0
+nonorth_corr = 0.0
+ppe_precond  = ic0
+
+cell_zone = 2 porous perm=2.5e-6 inertial=0.0 porosity=0.4 k_s=1.8074e-5 cp_s=1.0 rho_s=1.0
+
+thermal_model = lte
+cp = 1.0
+k_cond = 1.8074e-5
+boussinesq = true
+beta = 3.33e-3
+tref = 300.5
+gravity = 0.0 -9.81 0.0
+init_t = 300.5
+t_pert = 0.0
+
+bc = 5 wall
+bc = 4 symmetry
+tbc_plane = 5 1 0.0 1 301.0
+tbc_plane = 5 1 1.0 1 300.0

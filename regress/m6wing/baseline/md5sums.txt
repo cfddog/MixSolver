@@ -1,0 +1,11 @@
+# M6-wing baseline md5 manifest (pristine OpenCFD-EC 1.16a, np1, 51 steps,
+# t_end=0.501, Kstep_save=50, built mpif90 -O2 -std=legacy -ffree-line-length-none).
+# flow3d.dat md5 is bit-identical to the historical /tmp/m6reg baseline.
+dc134a2d196422043ecad7c86ac8f898  flow3d.dat
+a9228557a4a13084b90f247d408d6aca  SA3d.dat
+cf9bd55ac2fde91b81fe4a61bf0ff842  wall_dist.dat
+669193348548e9b3255090d9daef81bd  partation-auto.dat
+e107bf303a41db57be33484cb0f6ac50  part_grid.dat
+20c566fae84b60689c50d1824b04118c  Step_mess.dat
+05d6911388bab03172de3c36212417ea  bc3d.inc
+9cf418181aa7ef89cc7e985f86d34ef3  mesh-quality.dat

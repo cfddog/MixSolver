@@ -1,0 +1,40 @@
+# LTNE Graetz forced convection, WITH transverse thermal dispersion
+# ----------------------------------------------------------------
+# Same mesh/BC as cases/porous_graetz (half parallel plate, a=5 mm,
+# L=0.45 m, 180x40, plug U=1 m/s, T0=300, Tw=310), but run with the
+# local thermal non-equilibrium two-temperature model:
+#   fluid: rho cp U dTf/dx = dy(Kfy dTf/dy) + h*a*(Ts-Tf)
+#   solid: 0             = dy(Ds dTs/dy) + h*a*(Tf-Ts)
+# Kfy = eps*kf + rho*cp*disp_t*U = 0.0104 + 0.2957 = 0.3061 W/m/K
+# Ds  = (1-eps)*k_s = 0.6 W/m/K  (k_s=1.0 ceramic matrix)
+# H=h*a=2.0e5 W/m^3/K -> Bi=H*a/(rho cp U)=0.845,
+# interphase length sqrt(Ds/H)=1.73 mm = 14 dy (dy=a/40=0.125 mm).
+# Reference: coupled two-equation Graetz eigenproblem, solved
+# numerically (plot_ltne_graetz_xref.py).
+
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+cp  = 1005.0
+k_cond = 0.026
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 20000
+outer_tol = 1.0e-9
+lin_tol   = 1.0e-10
+lin_max   = 500
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 300.0
+
+thermal_model = ltne
+cell_zone = 2 porous perm=1.0e-10 porosity=0.4 k_s=1.0 cp_s=800.0 rho_s=2000.0 h_sf=2.0e5 a_sf=1.0 disp_t=2.5e-4
+
+bc = 4 symmetry
+bc = 5 symmetry
+bc = 6 velocity-inlet 1.0 0.0 0.0 300.0
+bc = 7 pressure-outlet 0.0
+bc = 8 wall
+tbc = 8 1 310.0

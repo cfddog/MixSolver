@@ -1,0 +1,33 @@
+# 1D porous plug, Darcy-only regime (inertial = 0)
+# -------------------------------------------------
+# Uniform 1D duct x in [0,0.1] m, all four side faces symmetry -> the
+# solution is strictly 1D.  Cell zone 2 is tagged "VC:porous" in plug.cas;
+# NOTE: no fluid|porous type token here -- the block type is inferred from
+# the VC tag, this line supplies the coefficients only (CZ_AUTO).
+#
+# Analytical pressure drop (mu_eff = mu/eps Brinkman effective viscosity):
+#   dp/dx = -(mu/eps/K) u
+#   dP    = 1.846e-5/0.4/1e-8 * 0.1 * 0.1 = 46.15 Pa
+# Pore Reynolds number Re_p = rho u sqrt(K)/mu = 0.64 (Darcy regime).
+
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 3000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 300.0
+
+cell_zone = 2 perm=1.0e-8 perm_xx=5.0e-9 porosity=0.4
+
+bc = 4 symmetry
+bc = 5 symmetry
+bc = 6 velocity-inlet 0.1 0.0 0.0 300.0
+bc = 7 pressure-outlet 0.0

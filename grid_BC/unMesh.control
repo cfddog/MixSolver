@@ -1,0 +1,51 @@
+# UNSolver control file -- coupled case (unstructured side)
+# Mesh: unMesh.cas (Pointwise export, units = mm)
+#   cell zones : 2 = fluid (9220 wedge cells)
+#   face zones : 3 = interior
+#                4 = symmetry        (1844 faces)
+#                5 = wall (adiabatic, 400 faces)
+#                6 = pressure-inlet slot in CAS -> mass-flow-inlet (250 faces)
+#                7 = interface (coupling with structured block 2, 250 faces)
+#
+# Incompressible flow, inlet mass flux m' = 2 kg/m^2/s (normal inflow).
+# Air at 300 K, 1 atm: rho = p/(R T) = 101325/(287.058*300) = 1.177 kg/m^3,
+# mu (Sutherland) ~ 1.846e-5 Pa.s.  Inlet speed = mdot/rho ~= 1.70 m/s.
+# NOTE: mesh coordinates are in mm; mesh_scale converts them to metres at
+#       read time so all solver quantities stay in SI.
+# -------------------------------------------------------------------------
+
+# --- mesh units: CAS file is in mm -> scale to m ---
+mesh_scale = 1.0e-3
+
+# --- physical properties: air at 300 K, 1 atm ---
+rho = 1.177
+mu  = 1.846e-5
+
+# --- numerical parameters (SIMPLE) ---
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 10
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+# mass-flow-inlet cold-start ramp: inlet speed ramps linearly to its full
+# value over this many outer iterations (1 = no ramp).  Keep DISABLED in the
+# coupled run: the driver-level interface mass-balance correction assumes the
+# inlet runs at full flux, and a per-iteration inlet ramp inside simple_run
+# would desync that balance (sustained mass sink during the ramp -> blow-up).
+inlet_ramp = 1
+
+# --- cell (volume) zones: <id|name> fluid|porous ---
+cell_zone = 2 fluid
+
+# --- boundary conditions ---
+# bc = <zone> wall | symmetry | velocity-inlet ux uy uz |
+#       pressure-outlet p | pressure-far-field p ux uy uz | slip-wall |
+#       mass-flow-inlet mdot(kg/m^2/s)
+bc = 4 symmetry                    # symmetry planes
+bc = 5 wall                        # adiabatic wall (default ttype=0)
+bc = 6 mass-flow-inlet 2.0         # inlet, m' = 2 kg/m^2/s into domain
+# zone 7 "interface" needs no bc: handled by the coupling exchange layer

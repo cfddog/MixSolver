@@ -1,0 +1,34 @@
+# Forchheimer quadratic-drag path test (side heated, Ra_K=100)
+# Same Darcy case as porous_Ra100.control but with inertial coefficient
+# C = 1.0e4 (very large) -> quadratic drag rho*C*|u|*u dominates.
+# Expected vs C=0: monotonically lower max|u| and lower Nu.
+# (Standard Ergun value C_F/sqrt(K) ~ 550 only gives ~2.5% effect here;
+#  this exaggerated value exercises and bounds the explicit term.)
+
+rho = 1.0
+mu  = 1.8074e-5
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 10000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 400
+conv_blend   = 1.0
+nonorth_corr = 0.0
+ppe_precond  = ic0
+
+cell_zone = 2 porous perm=1.0e-6 inertial=1.0e4 porosity=1.0
+
+cp = 1.0
+k_cond = 1.8074e-5
+boussinesq = true
+beta = 3.33e-3
+tref = 300.5
+gravity = 0.0 -9.81 0.0
+init_t = 300.5
+t_pert = 0.0
+
+bc = 5 wall
+bc = 4 symmetry
+tbc_plane = 5 1 0.0 1 301.0
+tbc_plane = 5 1 1.0 1 300.0

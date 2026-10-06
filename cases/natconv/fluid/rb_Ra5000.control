@@ -1,0 +1,31 @@
+# Pure-fluid Rayleigh-Benard, Ra = 5e3 (supercritical).
+# Finite-amplitude perturbation required: with weak noise the symmetric
+# initial field stays on the (unstable) conductive branch; t_pert=0.15
+# selects the single-roll branch. Hollands(1976) infinite-layer Nu ~ 1.90;
+# square-cavity side walls reduce it (computed ~1.68).
+
+rho = 1.0
+mu  = 2.154e-3
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 6000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 400
+conv_blend   = 1.0
+nonorth_corr = 0.0
+ppe_precond  = ic0
+
+cp = 1.0
+k_cond = 3.035e-3
+boussinesq = true
+beta = 3.33e-3
+tref = 300.5
+gravity = 0.0 -9.81 0.0
+init_t = 300.5
+t_pert = 0.15
+
+bc = 5 wall
+bc = 4 symmetry
+tbc_plane = 5 2 0.0 1 301.0
+tbc_plane = 5 2 1.0 1 300.0

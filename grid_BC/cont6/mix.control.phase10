@@ -1,0 +1,10 @@
+# mix.control -- phase-10 restart validation
+rho_ref = 1.177
+T_ref   = 300.0
+L_ref   = 0.05
+n_couple    = 6
+n_uns_steps = 100
+iface_relax = 0.3
+iface_ramp  = 10
+save_interval = 3
+couple_restart = 0

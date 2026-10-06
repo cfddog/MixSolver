@@ -1,0 +1,37 @@
+# Graetz forced convection, molecular conduction only (disp_t = 0)
+# ----------------------------------------------------------------
+# Half parallel-plate channel y in [0,a], a=5 mm, L=0.45 m, Darcy plug flow.
+# Inlet T0=300 K, wall Tw=310 K, centreline adiabatic symmetry.
+# k_s is set equal to k_f so the LTE effective conductivity is exactly
+# k_eff = eps*k_f + (1-eps)*k_s = k_f (clean Graetz diffusivity).
+#
+# kappa_eff = k_eff/(rho*cp) = 0.026/(1.177*1005) = 2.198e-5 m^2/s
+# Pe = U*a/kappa = 0.1*0.005/2.198e-5 = 22.7  (axial conduction minor)
+# exit x* = kappa*L/(U*a^2) = 3.96 (thermally developed)
+
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+cp  = 1005.0
+k_cond = 0.026
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 20000
+outer_tol = 1.0e-9
+lin_tol   = 1.0e-10
+lin_max   = 500
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 300.0
+
+# VC:porous supplies block type; k_s=k_f keeps k_eff = k_f (see header)
+cell_zone = 2 perm=1.0e-10 porosity=0.4 k_s=0.026
+
+bc = 4 symmetry
+bc = 5 symmetry
+bc = 6 velocity-inlet 0.1 0.0 0.0 300.0
+bc = 7 pressure-outlet 0.0
+bc = 8 wall
+tbc = 8 1 310.0

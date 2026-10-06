@@ -1,0 +1,35 @@
+# LTE effective-conductivity analytic check (no flow)
+# eps=0.4, k_s = 5*k_f  -> k_eff = eps*k_f + (1-eps)*k_s = 3.4*k_f.
+# Subcritical bottom heating keeps the solution on the pure conduction branch:
+#   u ~ 0 and Q/A = k_eff * dT/H.
+# Wall report normalises Nu by k_f -> expect Nu = k_eff/k_f = 3.4 exactly.
+# k_f = 5.7155e-5, k_s = 2.85775e-4, perm=1e-6.
+
+rho = 1.0
+mu  = 5.7155e-5
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 10000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 400
+conv_blend   = 1.0
+nonorth_corr = 0.0
+ppe_precond  = ic0
+
+cell_zone = 2 porous perm=1.0e-6 inertial=0.0 porosity=0.4 k_s=2.85775e-4 cp_s=1.0 rho_s=1.0
+
+thermal_model = lte
+cp = 1.0
+k_cond = 5.7155e-5
+boussinesq = true
+beta = 3.33e-3
+tref = 300.5
+gravity = 0.0 -9.81 0.0
+init_t = 300.5
+t_pert = 0.0
+
+bc = 5 wall
+bc = 4 symmetry
+tbc_plane = 5 2 0.0 1 301.0
+tbc_plane = 5 2 1.0 1 300.0

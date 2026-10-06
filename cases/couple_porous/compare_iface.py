@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""Compare the C2 struct-porous coupled case at the interface plane
+(x=100 mm) against the single-solver full-domain reference (uns_full).
+
+Data sources:
+  uns_full/unMesh.vtu     reference, full 0..200 mm domain, pure uns solver
+                          (fluid 0..100 mm + VC:porous bed 100..200 mm)
+  unMesh_coupled.vtu      coupled run uns side (100..200 mm, entirely porous)
+  flow3d.dat              coupled run struct side (0..100 mm, non-dim
+                          primitives d,u,v,w,T; parsed with Mesh3d.x dims)
+
+The case is strictly 1D (all lateral faces are symmetry), so the reported
+profiles should be flat; deviation is dominated by the exchange layer, not
+wall boundary-layer physics.
+
+Quantities at the interface:
+  * mean u_x and mean p (Pa gauge)
+  * u_x(y) profile (20 bins across H=50 mm, z-averaged)
+  * struct/uns/reference profile deviation vs the reference
+"""
+import re
+import struct
+import numpy as np
+
+P_REF = 101334.0          # Pa, rho_ref*R*T_ref = 1.177*287.058*300
+RHO_REF = 1.177
+T_REF = 300.0
+U_INF = 34.7224           # m/s, Ma=0.1 * a_ref
+H = 0.05
+X_IFACE = 0.100
+DP_ANALYTIC = 302.1       # Pa, Darcy 160.2 + Forchheimer 141.9 over L=0.1 m
+DX = 0.002                # m, streamwise cell size on BOTH meshes (2 mm)
+# Window for selecting the single x-plane that straddles the interface.  It
+# must be no wider than one cell, otherwise it straddles TWO planes and
+# dilutes the value: with dx=2 mm a 2.5 mm window picked up x=101 mm
+# (p=+295 Pa, the interface) AND x=103 mm (p=+70 Pa), giving a bogus
+# 182.6 Pa mean and a phantom 112 Pa struct/uns "jump".  With
+# [100,102) mm we get exactly one plane; its centre x=101 mm is the first
+# porous-side cell, and the reference mesh has the identical cell there
+# (spans 100..102 mm), so the two are directly comparable.
+
+
+def read_vtu_hex(fn):
+    """Read an ASCII VTU whose cells are 12 tets per hex (writer order).
+
+    Returns hex centres, pressure (Pa), velocity (m/s), temperature (K).
+    """
+    txt = open(fn).read()
+    ncell = int(re.search(r'NumberOfCells="(\d+)"', txt).group(1))
+    pts = np.array(
+        re.search(r'Name="Coordinates"[^>]*>(.*?)</DataArray>', txt,
+                  re.S).group(1).split(), dtype=float).reshape(-1, 3)
+    con = np.array(
+        re.search(r'Name="connectivity"[^>]*>(.*?)</DataArray>', txt,
+                  re.S).group(1).split(), dtype=int).reshape(ncell, -1)
+    cc = pts[con[:, 1:]].mean(axis=1)
+
+    def scl(name):
+        return np.array(
+            re.search(r'Name="%s"[^>]*>(.*?)</DataArray>' % name, txt,
+                      re.S).group(1).split(), dtype=float)
+
+    p = scl('pressure')
+    u = scl('velocity').reshape(-1, 3)
+    t = scl('temperature')
+    nhex = ncell // 12
+    assert ncell % 12 == 0, 'not a 12-tet/hex file'
+    cx = cc[:, 0].reshape(nhex, 12).mean(axis=1)
+    cy = cc[:, 1].reshape(nhex, 12).mean(axis=1)
+    cz = cc[:, 2].reshape(nhex, 12).mean(axis=1)
+    ph = p.reshape(nhex, 12).mean(axis=1)
+    uh = u.reshape(nhex, 12, 3).mean(axis=1)
+    th = t.reshape(nhex, 12).mean(axis=1)
+    return cx, cy, cz, ph, uh, th
+
+
+def read_plot3d_dims(fn):
+    with open(fn, 'rb') as f:
+        rec = f.read(4)
+        n = struct.unpack('<i', rec)[0]
+        nb = struct.unpack('<i', f.read(4))[0]
+        f.read(4)
+        f.read(4)
+        dims = struct.unpack('<%di' % (3 * nb), f.read(12 * nb))
+    return nb, np.array(dims, dtype=int).reshape(nb, 3)
+
+
+def read_struct_iface(fn, mesh='Mesh3d.x'):
+    """Struct flow3d.dat at the i+ interface: returns face u_x(y), p(y),
+    z-averaged, SI units (m/s, Pa absolute).
+
+    output_flow writes U(0:nx,0:ny,0:nz) (ghost rows included) where
+    bNi = ni (the node count): stored array shape is
+    (ni+1)*(nj+1)*(nk+1) in the order i fastest, then j, k, variable.
+    Interface i+ (50 cells): inner cell index i=nx-1=ni-1, ghost i=nx=ni.
+    """
+    nb, dims = read_plot3d_dims(mesh)
+    ni, nj, nk = dims[0]          # single block, node counts
+    with open(fn, 'rb') as f:
+        rec = f.read(4)
+        ln = struct.unpack('<i', rec)[0]
+        assert ln == 5 * (ni + 1) * (nj + 1) * (nk + 1) * 8, \
+               (ln, 5 * (ni + 1) * (nj + 1) * (nk + 1) * 8)
+        raw = np.frombuffer(f.read(ln), dtype='<f8')
+        f.read(4)
+    q = raw.reshape(5, nk + 1, nj + 1, ni + 1)
+    d = q[0]
+    u = q[1] * U_INF
+    T = q[4] * T_REF
+    p = d * q[4] * P_REF            # Pa absolute
+    # i+ interface: inner cell i=ni-1, ghost i=ni
+    uf = 0.5 * (u[:, :, ni - 1] + u[:, :, ni])
+    pf = 0.5 * (p[:, :, ni - 1] + p[:, :, ni])
+    ui = u[:, :, ni - 1]
+    pi = p[:, :, ni - 1]
+    # average over interior k layers (1..nk-1) and j cells 1..nj-1
+    uf_y = uf[1:nk, 1:nj].mean(axis=0)
+    pf_y = pf[1:nk, 1:nj].mean(axis=0)
+    ui_y = ui[1:nk, 1:nj].mean(axis=0)
+    pi_y = pi[1:nk, 1:nj].mean(axis=0)
+    yc = (np.arange(nj - 1) + 0.5) * H / (nj - 1)
+    return yc, uf_y, pf_y, ui_y, pi_y
+
+
+def uns_profile(cx, cy, p, u, x0, x1, ny=20):
+    m = (cx >= x0) & (cx < x1)
+    ys = np.linspace(0, H, ny + 1)
+    yc = 0.5 * (ys[:-1] + ys[1:])
+    prof = np.array([
+        u[m, 0][(cy[m] >= ya) & (cy[m] < yb)].mean()
+        for ya, yb in zip(ys[:-1], ys[1:])])
+    pmean = p[m].mean()
+    return yc, prof, pmean, m.sum()
+
+
+def main():
+    # ---- reference full domain at x=100 ----
+    cx, cy, cz, p, u, t = read_vtu_hex('uns_full/unMesh.vtu')
+    yref, uref, pref, ncell = uns_profile(cx, cy, p, u,
+                                          X_IFACE, X_IFACE + DX)
+    print('reference @x=100 (n=%d): mean u=%.3f  mean p=%.1f Pa gauge'
+          % (ncell, uref.mean(), pref))
+
+    # ---- coupled uns first layer at its inlet ----
+    cx2, cy2, cz2, p2, u2, t2 = read_vtu_hex('unMesh_coupled.vtu')
+    # same absolute window as the reference: the coupled uns side starts at
+    # x=100 mm too, so its first plane centre is also x=101 mm
+    yuns, uuns, puns, n2 = uns_profile(cx2, cy2, p2, u2,
+                                       X_IFACE, X_IFACE + DX)
+    print('coupled uns @x=%.3f (n=%d): mean u=%.3f  mean p=%.1f Pa gauge'
+          % (X_IFACE + 0.5 * DX, n2, uuns.mean(), puns))
+
+    # ---- coupled struct at i+ interface ----
+    ys, uface, pface, uinner, pinner = read_struct_iface('flow3d.dat')
+    print('coupled struct face: mean u=%.3f  mean p=%.1f Pa abs (gauge %.1f)'
+          % (uface.mean(), pface.mean(), pface.mean() - P_REF))
+    print('coupled struct inner: mean u=%.3f  p gauge %.1f'
+          % (uinner.mean(), pinner.mean() - P_REF))
+
+    print('\n y(mm)  u_ref  u_struct_face  u_uns_cell0   p_ref  p_struct  p_uns')
+    for i in range(len(yref)):
+        print('%6.2f %7.2f %8.2f %9.2f   %8.1f %8.1f %8.1f' % (
+            ys[i] * 1e3, uref[i], uface[i], uuns[i],
+            pref, pface[i] - P_REF, puns))
+
+    # ---- error metrics ----
+    du_s = 100 * (uface - uref) / U_INF
+    du_u = 100 * (uuns - uref) / U_INF
+    print('\nprofile deviation vs reference (% of U_inf):')
+    print('  struct face: max %+.2f%%  RMS %.2f%%  mean-ux %+.2f%%'
+          % (np.abs(du_s).max(), np.sqrt((du_s**2).mean()),
+             100 * (uface.mean() - uref.mean()) / U_INF))
+    print('  uns  cell0 : max %+.2f%%  RMS %.2f%%  mean-ux %+.2f%%'
+          % (np.abs(du_u).max(), np.sqrt((du_u**2).mean()),
+             100 * (uuns.mean() - uref.mean()) / U_INF))
+    print('  pressure: struct %.1f Pa, uns %.1f Pa, ref %.1f Pa (gauge)'
+          % (pface.mean() - P_REF, puns, pref))
+    print('  interface pressure jump (struct face - uns cell0): %.2f Pa'
+          % (pface.mean() - P_REF - puns))
+    print('  analytic bed drop: %.1f Pa' % DP_ANALYTIC)
+
+
+if __name__ == '__main__':
+    main()

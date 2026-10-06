@@ -1,0 +1,58 @@
+# LTNE 1D forced convection through a porous slab (stainless steel / air)
+# -----------------------------------------------------------------------
+# Mesh: LNTE1D.cas (Pointwise), duct x[0,50] x y[0,10] x z[0,10]
+#   zone 2 = fluid (porous cell zone), 4 = symmetry,
+#   5 = mass-flow-inlet (x=0), 6 = pressure-outlet (x=50)
+# Quasi-SI convention (same as grid_BC/unMesh.control): mesh length unit
+# consumed as-is; per-area / per-volume quantities in SI.
+#
+# Physics: air coolant forced through a porous stainless sample; the
+# downstream end face (the pressure-outlet face, x=50) receives a constant
+# heat flux q'' = 2e6 W/m^2.  Heat enters the solid matrix, conducts
+# upstream and is exchanged to the fluid via h*a; the fluid carries it out.
+#
+# Steady 1D analytical solution (fluid axial conduction negligible, Pe~1e6):
+#   G*cp*T_f' = h*a*(T_s - T_f)          (fluid energy)
+#   D*T_s''   = h*a*(T_s - T_f)          (solid energy, D = (1-eps)*k_s)
+#   T_f(0)=T_in ; T_s'(0)=0 ; D*T_s'(L) = q_s
+#   Wall-flux split by effective conductivities:
+#     q_s = q''*(1-eps)k_s / (eps*k_f + (1-eps)k_s)   (99.93% -> solid)
+#     q_f = q''*eps*k_f   / (eps*k_f + (1-eps)k_s)
+#   b = h*a/(G*cp), c = h*a/D, lambda+- = [-b +- sqrt(b^2+4c)]/2
+#   T_f'(x) = A e^{l+ x} + B e^{l- x}, B = -A(l++b)/(l-+b)
+#   A = (q_s/D) / [ (1+l+/b) (e^{l+ L} - e^{l- L}) ]
+#   T_s = T_f + G*cp*T_f'/(h*a)
+#   Overall balance: T_f(L) - T_in = q''/(G*cp) = 2e6/(2*1005) = 995.0 K
+#
+# h_sf*a_sf = 0.3 W/(m^3 K) chosen so the interphase exchange length
+#   l_ex = sqrt(D/(h*a)) = sqrt(11.34/0.3) = 6.15 = 4.9*dx (dx = 1.25)
+
+# --- fluid: air at 300 K ---
+rho = 1.177
+mu  = 1.846e-5
+cp  = 1005.0
+k_cond = 0.026
+init_t = 300.0
+
+# --- porous cell zone: stainless steel matrix, porosity 0.3 ---
+# h_sf*a_sf product = 0.3 W/(m^3 K) (see header); k_s/rho_s/cp_s = SS304
+thermal_model = ltne
+cell_zone = 2 porous perm=1.0e-8 inertial=0.0 porosity=0.3 k_s=16.2 cp_s=500.0 rho_s=7900.0 h_sf=0.3 a_sf=1.0
+
+# --- numerics (steady SIMPLE) ---
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 5000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 300
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+
+# --- boundary conditions ---
+bc = 4 symmetry
+bc = 5 mass-flow-inlet 2.0 300.0
+bc = 6 pressure-outlet 0.0
+# heated end face: the outlet face doubles as the constant-heat-flux wall
+tbc = 6 2 2.0e6
