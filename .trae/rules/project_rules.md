@@ -95,12 +95,20 @@
   库 + `external/` 原始包 + 算例**输入件**；212 个运行产物 / 761.8 MB 已用
   `git filter-branch` 从全部历史移除（`.git` 120 MB → 见 worklog 校验条目），
   工作树产物留在磁盘且被忽略。
-- **一次性历史重写（已执行，2026-10-06）**：本次为"剥离运行产物"在私有仓库
-  （无他人 clone，用户已确认）上做过一次 `git push --force-with-lease origin main`；
-  安全网 = 本地分支 `backup/pre-slim-2026-10-06` +
-  `/home/sundong/mixsolver_pre_slim_backup/`（98 MB bundle + 硬链接快照）。
+- **一次性历史重写（已执行，2026-10-06）**：为剥离运行产物，在私有仓库（无他人
+  clone，用户已确认）做过一次 `git push --force-with-lease=main:<远端旧值> origin main`
+  （`3fa7b91 → f2ebf0b`，**零告警**，`.git` 120 MB → 46 MB）。
+  安全网 = **仓库外 bundle**：
+  `/home/sundong/mixsolver_pre_slim_backup/repo_pre_slim.bundle`（98 MB，
+  `git bundle verify` = 完整旧历史）+ `cases_hardlinks/`、`grid_BC_hardlinks/` 硬链接快照。
+  **本地分支不能当安全网**：`filter-branch --all` 会连备份分支与 `refs/remotes/*`
+  一起重写（本次 `backup/pre-slim-2026-10-06` 就被一并改写，随后删除）。
+  重写后推送前**必须** `git fetch origin` 复位远端跟踪引用，否则
+  `--force-with-lease` 会拿被改写的本地缓存去比对而误判。
   **此后恢复铁律：对已共享历史禁止 `--force`/`--force-with-lease`**；
   再要重写必须先确认无他人 clone 并重新做 bundle 备份。
 - 回退：单文件 `git checkout <sha> -- <path>`；未提交改动 `git stash`；
-  历史重写后的旧提交只能从 `backup/pre-slim-2026-10-06` 或那个 bundle 里找回
-  （`git fetch <bundle> <ref>`）。远端已有对应提交后不得用 `commit --amend` 重写。
+  历史重写后的旧历史只能从 bundle 找回：
+  `git fetch /home/sundong/mixsolver_pre_slim_backup/repo_pre_slim.bundle
+  'refs/heads/main:refs/heads/restored-pre-slim'`。
+  远端已有对应提交后不得用 `commit --amend` 重写。

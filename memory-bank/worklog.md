@@ -5,6 +5,37 @@
 
 ---
 
+## 2026-10-06 | 瘦身后校验：`.git` 120 MB → 46 MB，远端 `main` 已 force-with-lease 覆盖
+
+- `git filter-branch --index-filter`（`--prune-empty -- --all`）**5 个提交全部重写**：
+  新历史 `63af789`（init）→ `54b2571` → `7802068` → `25d86ac` → `f2ebf0b`（瘦身节点）。
+- 清理链：`refs/original/*` 全删 → `git reflog expire --expire=now --all` →
+  `git gc --prune=now`。
+- **实测**：`.git` **120 MB → 46 MB**；跟踪文件 **324**；
+  `git log --all --name-only --pretty=format: | grep -c '\.vtu$'` = **0**；
+  `^cases/.*\.log$` = **0**；仍跟踪的 `.vtu/.log/.dat` 只剩
+  `regress/m6wing/baseline/*`（7 个位级 oracle）+ `external/**/M6-wing/Mesh3d.dat`
+  （上游原始输入）。工作区 `git status --porcelain` = **0 项**（761.8 MB 产物在磁盘、
+  被 `.gitignore` 挡住）；`lib/*/*.a`、`src/**`、`cases/**` 输入件、`scratch/unMesh.cas.zsplit_bug`
+  全部仍在跟踪（逐项 `git ls-files` 复查通过）。
+- **推送**：`git fetch origin`（先把**被 filter-branch 一并改写**的
+  `refs/remotes/origin/main` 复位为远端真值 `3fa7b91`）→
+  `git push --force-with-lease=main:3fa7b917db557d38d451d543b2424eb87a0c7f73 origin main`
+  → `+ 3fa7b91...f2ebf0b main -> main (forced update)`，**零 remote 告警**；
+  之后 `main` 与 `origin/main` ahead/behind = **0/0**。
+- **⚠️ 安全网更正（重要）**：原计划的本地分支 `backup/pre-slim-2026-10-06` 被
+  `--all` **一并重写**（只剩同名骨架），已 `git branch -D` 删除。**唯一完整旧历史在
+  `/home/sundong/mixsolver_pre_slim_backup/repo_pre_slim.bundle`（98 MB，
+  `git bundle verify` = "records a complete history"）**；另有
+  `cases_hardlinks/`、`grid_BC_hardlinks/`（硬链接快照）、`checkpoint_2026-10-06_C2.tar.gz`
+  与 `LNTE1D.vtu` 副本。恢复：`git fetch /home/sundong/mixsolver_pre_slim_backup/repo_pre_slim.bundle 'refs/heads/main:refs/heads/restored-pre-slim'`。
+- **两条经验（已写进规则）**：① `filter-branch --all` 会连**备份分支**与**远端跟踪引用**
+  一起重写 ⇒ 备份必须用**仓库外的 bundle**，不能只靠分支；② 重写后推送前必须
+  `git fetch` 复位 `origin/main`，否则 `--force-with-lease` 会拿被改写的本地缓存去比对
+  而误报（或更糟：用 `--force` 绕过保护）。
+
+---
+
 ## 2026-10-06 | 仓库瘦身：212 个运行产物脱离跟踪 + 历史重写（剥离 761.8 MB）
 
 - **触发**：本次会话统计出跟踪总量 916 MB / `.git` 120 MB，其中 `cases/` + `grid_BC/`
@@ -31,11 +62,12 @@
   （本机**无** `git-filter-repo`，故用 filter-branch）→ `rm -rf .git/refs/original`
   + `git reflog expire --expire=now --all` + `git gc --prune=now`
   → `git push --force-with-lease origin main`（**结果校验见下一条记录**）。
-- **安全网**：本地分支 `backup/pre-slim-2026-10-06`（= 重写前 HEAD `3fa7b91`）+
-  `/home/sundong/mixsolver_pre_slim_backup/`：`repo_pre_slim.bundle`（98 MB，
+- **安全网**：`/home/sundong/mixsolver_pre_slim_backup/`：`repo_pre_slim.bundle`（98 MB，
   `git bundle verify` = "records a complete history"）、`cases_hardlinks/`、
   `grid_BC_hardlinks/`（硬链接快照，秒级、零额外空间）、`checkpoint_2026-10-06_C2.tar.gz`
   与 `LNTE1D.vtu` 副本。
+  （原拟用作安全网的本地分支 `backup/pre-slim-2026-10-06` 在 `--all` 重写时被一并改写，
+  已删除，详见上一条校验记录。）
 - **工作树策略**：761.8 MB 产物**不删除**，留在原路径转为未跟踪（被 `.gitignore`
   挡住），需要时按各 README"复现"小节重算。
 - **同批勾销**（清单与代码漂移的 9 条 + 1 条陈旧残留，逐条给了证据）：

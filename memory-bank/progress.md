@@ -18,9 +18,12 @@
   新增"运行产物不入库"规则 → `git filter-branch --index-filter`（本机**无**
   `git-filter-repo`）→ `git reflog expire --expire=now --all` +
   `git gc --prune=now` → `git push --force-with-lease origin main`。
-  安全网：`backup/pre-slim-2026-10-06` 分支 +
-  `/home/sundong/mixsolver_pre_slim_backup/`（`repo_pre_slim.bundle` 98 MB
-  `git bundle verify` 通过、`cases`/`grid_BC` 硬链接快照、checkpoint 副本）。
+  安全网：`/home/sundong/mixsolver_pre_slim_backup/`（`repo_pre_slim.bundle` 98 MB
+  `git bundle verify` 通过 = 完整旧历史；`cases`/`grid_BC` 硬链接快照；checkpoint 副本）。
+  ⚠️ 原拟用的本地分支 `backup/pre-slim-2026-10-06` 被 `filter-branch --all` 一并重写，
+  已删除 ⇒ **恢复只能走 bundle**（详见下条校验记录）。
+  实测结果：`.git` **120 MB → 46 MB**，跟踪 **324** 文件，历史中 `.vtu` 计数 0，
+  `git push --force-with-lease` 零告警，`main` 与 `origin/main` 0/0。
   工作树里 761.8 MB 产物**保留在磁盘**（转为未跟踪 + 被 .gitignore 挡住），
   随时按各 README 复现小节重算。规则更新见 `.trae/rules/project_rules.md`
   「版本控制约定」（新增运行产物条款 + 一次性重写记录 + 体量提示刷新）。

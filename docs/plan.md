@@ -563,8 +563,10 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
    （`*.cas/*.neu/*.cgns/*.x/*.control/mix.control/bc3d.*`）、工具脚本、`README.md`
    与 `images/*.png`；阶段验收的**定值与命令**写进 `cases/*/README.md`，
    靠重算复现，而非靠入库产物。历史剥离用了 `git filter-branch`（本机无
-   `git-filter-repo`），安全网为 `backup/pre-slim-2026-10-06` + 98 MB bundle
-   （`/home/sundong/mixsolver_pre_slim_backup/`）。
+   `git-filter-repo`），安全网为**仓库外 bundle**（98 MB，含完整旧历史）：
+   `/home/sundong/mixsolver_pre_slim_backup/repo_pre_slim.bundle`
+   （另有 `cases`/`grid_BC` 硬链接快照）。实测：`.git` 120 MB → 46 MB、
+   跟踪 324 文件、`main` 与 `origin/main` 0/0。
 
 ## 实施优先级
 
