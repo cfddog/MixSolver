@@ -1,6 +1,21 @@
 # 当前上下文 (activeContext)
 
-> 最后更新：2026-10-06（**C2 可压缩–多孔跨组界面完成并验证；两处网格/后处理缺陷已修**）
+> 最后更新：2026-10-07（**阶段 11 界面类型自动分派表完成并验证——仅分类+报告，不改数值**）
+
+> **2026-10-07 阶段 11「界面类型自动分派表」✅（完成并验证）**：
+> `Interface_FACE_TYPE` 增 `cz_type/loc_face/iface_type`；新增 `classify_interface`
+> （struct 侧恒 comp+fluid；跨求解器**仅由 uns 侧 cztype 决定** fluid/porous；
+> uns↔uns = `IFACE_UNS_FLUID_POROUS`）、`iface_exchange_recipe`（pure 子程序）、
+> 名称/配方串、`report_interface_dispatch`。uns 侧
+> `mod_uns_geometry.tag_interface_cell_zones`（读真实 `m%cztype`，须在
+> `resolve_cell_zones` 后）+ `register_interface_zones` 记 `loc_face`；
+> `mod_interface_match.dispatch_interfaces` 匹配后分类/回填/打印；struct 侧
+> `mod_struct_grid` 标 fluid；生产接线在 `mod_uns_driver`（`PEER_STRUCT /
+> IFACE_CZ_FLUID`）。**范围**：分类+报告，**不改** `main.f90` 数值行为。
+> 验证：`match_test`(grid_BC) 250/250 全 `comp-fluid<->lowspeed-fluid`、断言 PASS；
+> `couple_channel` np2 → fluid、`couple_porous` np2 → porous；`regress/m6wing`
+> PASS（`flow3d.dat` md5 `dc134a2d196422043ecad7c86ac8f898` 不变）；全量 make RC=0。
+> 阶段 11 剩余唯一项 = uns 绝对压力 ≈−250 Pa 偏置修复（机理已定位）。
 
 > **自检缺口①②③④已全部修 2026-10-06**：
 > ① `Makefile` 让 `src/coupling/*` 与 `src/main.f90` 在 ser 树也用 `$(MPIFC)` 编译

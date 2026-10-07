@@ -22,8 +22,10 @@ module mod_uns_driver
    use mod_uns_fields, only: fields_t, init_fields, setup_porous_fields
    use mod_uns_cas_reader, only: read_cas
    use mod_uns_connectivity, only: build_connectivity
-   use mod_uns_geometry, only: compute_geometry, register_interface_zones
+   use mod_uns_geometry, only: compute_geometry, register_interface_zones, &
+                               tag_interface_cell_zones
    use mod_uns_control, only: read_control, resolve_cell_zones, read_mesh_scale
+   use mod_interface, only: report_interface_dispatch, PEER_STRUCT, IFACE_CZ_FLUID
    use mod_uns_bc, only: build_bc
    use mod_uns_simple, only: simple_run
    ! The coupled restart reader lives in the MPI-only mod_uns_restart stack
@@ -91,6 +93,14 @@ contains
 
       call resolve_cell_zones( m, ctrl, ier )
       if ( ier /= 0 ) return
+
+      ! phase-11 dispatch: tag each coupling-interface face with its owning
+      ! cell's cell-zone class (needs m%cztype from resolve_cell_zones), then
+      ! classify + print the interface dispatch table.  The peer is the
+      ! structured (compressible|fluid) solver, so an unstructured porous
+      ! interface is classed comp-fluid<->lowspeed-porous (C2); otherwise flow B.
+      call tag_interface_cell_zones( m )
+      call report_interface_dispatch( PEER_STRUCT, IFACE_CZ_FLUID )
 
       call build_bc( m, ctrl, bcs, ier )
       if ( ier /= 0 ) return

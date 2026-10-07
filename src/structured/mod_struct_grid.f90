@@ -991,7 +991,7 @@
    subroutine register_bc_interfaces
     use Global_var
     use mod_interface, only: Interface_FACE_TYPE, Interface_List, Num_Interface, &
-                             BC_INTERFACE, PEER_STRUCT
+                             BC_INTERFACE, PEER_STRUCT, IFACE_CZ_FLUID
     implicit none
     integer:: mBlock, ksub, cnt, nquad
     integer:: nx, ny, nz
@@ -1078,6 +1078,9 @@
              Interface_List(cnt)%kb = Bc%kb; Interface_List(cnt)%ke = Bc%ke
              Interface_List(cnt)%match_state = 0
              Interface_List(cnt)%peer_id     = 0
+             ! phase-11 dispatch: the structured side is always compressible
+             ! fluid, so every struct interface face is classed fluid.
+             Interface_List(cnt)%cz_type     = IFACE_CZ_FLUID
 
              ! ghost-cell indices for BC application (phase 6)
              Interface_List(cnt)%ic = a2; Interface_List(cnt)%jc = b2; Interface_List(cnt)%kc = 0

@@ -1,8 +1,25 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-06
+> 最后更新：2026-10-07
 
 ## 已完成
+
+- [x] **阶段 11：界面类型自动分派表（2026-10-07）**：`Interface_FACE_TYPE` 增
+  `cz_type / loc_face / iface_type`；`classify_interface`（struct 侧恒 comp+fluid；
+  跨求解器仅由 uns 侧 cztype 决定 fluid/porous；uns↔uns = `IFACE_UNS_FLUID_POROUS`）、
+  `iface_exchange_recipe`（pure 子程序）、`iface_type_name/quantity_name/role_name/
+  iface_recipe_string`、`report_interface_dispatch`。uns：`tag_interface_cell_zones`
+  （读真实 `m%cztype`，须在 `resolve_cell_zones` 后）+ `register_interface_zones`
+  记 `loc_face` + `mod_uns_driver` 生产接线（`PEER_STRUCT/IFACE_CZ_FLUID`）。
+  coupling：`dispatch_interfaces`（匹配后分类/回填/打印）。struct：`mod_struct_grid`
+  标 fluid。**仅分类+报告，不改 `main.f90` 数值行为**。
+  验证：`bin/match_test`（grid_BC）250/250 全 `comp-fluid<->lowspeed-fluid`、
+  `unclassified=0`、断言 PASS；`couple_channel` np2 → fluid、`couple_porous` np2 →
+  porous（RC=0）；`regress/m6wing/run_regression.sh` 全 IDENTICAL（`flow3d.dat`
+  md5 `dc134a2d196422043ecad7c86ac8f898` 不变）；全量 make RC=0。
+  涉及文件：`src/common/mod_interface.f90`、`src/coupling/mod_interface_match.f90`、
+  `src/coupling/test_match.f90`、`src/structured/mod_struct_grid.f90`、
+  `src/unstructured/mod_uns_driver.f90`、`src/unstructured/mod_uns_geometry.f90`。
 
 - [x] **仓库瘦身：算例运行产物脱离跟踪 + 历史重写 + 远端同步（2026-10-06）**：
   **212 个**运行产物（**761.8 MB**）从**全部历史**移除并同步到 GitHub：
@@ -547,7 +564,7 @@
   「已完成」区阶段 10 条目——`write_field_dump`/`read_field_dump` +
   `couple_restart=1` 逐位续跑，本条为**陈旧残留**，故删除勾选）
 - [~] **阶段11 多类型界面**：低速-多孔（BJ 滑移）✅ C1、低速可压缩 ✅ 流 B、
-  可压缩-多孔 ✅ C2 **均已完成**；**剩余** = 界面类型/交换量自动分派表 +
-  `uns` 绝对压力 ≈−250 Pa 偏置（详见本文件「待办 → 阶段 11」两条）。
+  可压缩-多孔 ✅ C2、**界面类型/交换量自动分派表 ✅（2026-10-07）** **均已完成**；
+  **剩余** = `uns` 绝对压力 ≈−250 Pa 偏置（详见本文件「待办 → 阶段 11」条）。
 - [ ] **阶段12 Gambit NEU 输入**：.neu 读取器（网格+BC+体区域属性），复用现有登记流程。
 - [ ] **阶段13 结构求解器演进（远期）**：SST bug 修复前禁用；改用 Liao 格心型有限差分，兼容现有 Riemann。

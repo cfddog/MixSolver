@@ -5,6 +5,39 @@
 
 ---
 
+## 2026-10-07 | 阶段 11：界面类型自动分派表（分类 + 报告；不改数值行为）
+
+- **目标**：把 `main.f90` 里硬编码的界面处理抽象为「按两侧 solver + cell-zone
+  类别自动判定界面类型并报告交换量清单」。
+- **common**（`src/common/mod_interface.f90`）：`Interface_FACE_TYPE` 增
+  `cz_type / loc_face / iface_type` 三字段；枚举 `IFACE_UNKNOWN /
+  IFACE_COMP_FLUID_FLUID / IFACE_COMP_FLUID_POROUS / IFACE_UNS_FLUID_POROUS`、
+  cell-zone 类别 `IFACE_CZ_FLUID/POROUS`、交换量 `Q_U/Q_T/Q_P/Q_RHO` +
+  角色 `XQ_DIRICHLET/XQ_CHARACTER/XQ_JUMP`；纯过程 `classify_interface`、
+  `iface_exchange_recipe`（**用 pure 子程序**，因 pure function 不允许 intent(out)
+  实参）、`iface_type_name/quantity_name/role_name/iface_recipe_string`、
+  `report_interface_dispatch`。
+- **踩坑**：① `pure function` 内 `intent(out)` 数组非法 → 改子程序；
+  ② 局部逻辑名 `peer_struct/peer_uns` 与常量 `PEER_STRUCT/PEER_UNS` **大小写
+  不敏感同名**互相遮蔽 → 去掉逻辑变量改写。
+- **uns**：`mod_uns_geometry.tag_interface_cell_zones`（由
+  `m%cztype(m%f(loc_face)%c0)` 打 `cz_type`，须在 `resolve_cell_zones` 后调用），
+  `register_interface_zones` 记 `loc_face`；`mod_uns_driver` 接入生产路径
+  （`PEER_STRUCT / IFACE_CZ_FLUID`，匹配前打标）。
+- **struct**：`mod_struct_grid` 把界面面标 fluid。
+- **coupling**：`mod_interface_match.dispatch_interfaces`（匹配后分类、两侧回填
+  `iface_type`、打印分派表）。
+- **判定规则**：struct 侧恒 comp+fluid；跨求解器仅由 uns 侧 `cz_type` 决定
+  （porous → `IFACE_COMP_FLUID_POROUS`）；uns↔uns → `IFACE_UNS_FLUID_POROUS`。
+- **验证**：`match_test`(grid_BC) 250/250 全 `comp-fluid<->lowspeed-fluid`、
+  断言 PASS；`couple_channel` np2 → fluid、`couple_porous` np2 → porous；
+  `regress/m6wing` PASS（`flow3d.dat` md5 不变）；全量 make RC=0。
+- **仍待办（同阶段 11 未勾销）**：uns 绝对压力 ≈−250 Pa 偏置修复。
+- 涉及文件：`src/common/mod_interface.f90`、`src/coupling/mod_interface_match.f90`、
+  `src/coupling/test_match.f90`、`src/structured/mod_struct_grid.f90`、
+  `src/unstructured/mod_uns_driver.f90`、`src/unstructured/mod_uns_geometry.f90`、
+  `docs/plan.md`、`memory-bank/{activeContext,progress,worklog}.md`。
+
 ## 2026-10-06 | 并行小节点：uns 绝对压力 −251 Pa 偏置**定位完成**（整场电平/零模，非梯度误差）
 
 - **复现（逐位）**：新建 `cases/couple_porous/uns_full/bias_scan.sh`（工作目录参数

@@ -386,9 +386,10 @@ end type
      Dirichlet-Neumann 特征界面，2026-10-06 完成）；
    - [x] **可压缩（struct）–多孔（uns）界面**：跨组界面；2026-10-06 完成并验证，
      详见下方 C2 记录 ＋ `cases/couple_porous/README.md`。
-2. [待办] 界面分派表：按两侧 cell_zone 类型（fluid/porous）与求解器类型
+2. [x] 界面分派表：按两侧 cell_zone 类型（fluid/porous）与求解器类型
    （struct 可压 / uns 低速）在匹配阶段确定界面类型与交换量清单
-   （状态量 Dirichlet / 通量型 / 跳跃条件）。
+   （状态量 Dirichlet / 通量型 / 跳跃条件）。2026-10-07 完成，详见下方
+   「界面类型自动分派表」记录。
 3. [待办] **`uns` 单求解器绝对压力水平 ≈−250 Pa 内部偏置的机理定位与修复**
    （C2 验收时暴露，2026-10-06 登记）。现象与四组对照取证：`cases/couple_porous/
    README.md` §5（复现配方 §6.1），工具 `uns_full/plane_profile.py`。
@@ -404,6 +405,46 @@ end type
    进行。约束（见 `.trae/rules/project_rules.md`）：修复前跨求解器一律**不得**比对
    绝对压力，只比界面连续性＋梯度。
 4. 前置依赖：阶段 7/8 低速 fluid-fluid 耦合收敛验收；阶段 9 的 B-J 验证。
+
+#### 2026-10-07 界面类型自动分派表（阶段 11 收口）
+
+- **目标**：把此前散落在 `main.f90` 的界面处理，抽象为「按两侧 solver + cell-zone
+  类别自动判定界面类型 + 报告交换量清单」，供后续数值分派引用。
+- **数据结构**（`src/common/mod_interface.f90`）：`Interface_FACE_TYPE` 新增三字段
+  `cz_type`（本侧 cell-zone 类别，`IFACE_CZ_FLUID/POROUS`）、`loc_face`（face 在
+  本侧网格的局部编号，供回溯 cztype）、`iface_type`（判定出的界面类型，枚举
+  `IFACE_UNKNOWN / IFACE_COMP_FLUID_FLUID / IFACE_COMP_FLUID_POROUS /
+  IFACE_UNS_FLUID_POROUS`）；新增交换量词表 `Q_*`（U/T/P/RHO）与角色表 `XQ_*`
+  （DIRICHLET/CHARACTER/JUMP）。
+- **判定规则** `classify_interface(solver_own, cz_own, solver_peer, cz_peer)`：
+  struct 侧恒为 comp+fluid；`struct↔uns`（跨求解器）时**仅由 uns 侧的 `cz_type`
+  决定**——porous → `IFACE_COMP_FLUID_POROUS`，否则 `IFACE_COMP_FLUID_FLUID`；
+  `uns↔uns` → `IFACE_UNS_FLUID_POROUS`（内部面，跨组交换层不参与）。
+- **交换量配方** `iface_exchange_recipe`：comp-fluid↔lowspeed(fluid/porous) =
+  `u:dirichlet T:dirichlet p:characteristic rho:characteristic`（流 B / C2 同一
+  配方）；uns fluid/porous（C1）= `u:jump`。
+- **`cz_type` 来源**：取自真实 `m%cztype(m%f(loc_face)%c0)`（与求解器物理判定
+  一致），**非** VC 字符串。
+- **接线**：`mod_uns_geometry.tag_interface_cell_zones` 打标（须在
+  `resolve_cell_zones` 之后调用，`m%cztype` 已分配）；
+  `mod_interface_match.dispatch_interfaces` 在匹配后分类、两侧回填 `iface_type`
+  并打印分派表 (`report_interface_dispatch`)；生产路径见
+  `mod_uns_driver`（`PEER_STRUCT / IFACE_CZ_FLUID`）。struct 侧由 `mod_struct_grid`
+  把界面面标为 fluid。
+- **本节点范围**：仅分类 + 报告，**不改变** `main.f90` 现有 Dirichlet-Neumann
+  数值行为（fluid/porous 走同一路径）。
+- **验证（2026-10-07）**：
+  - `bin/match_test`（grid_BC）：250/250 匹配；分派表 250 面全
+    `comp-fluid<->lowspeed-fluid`、`unclassified=0`、断言 PASS（500/500 面、
+    0 面 porous）。
+  - `cases/couple_channel` np2：40 面 → `comp-fluid<->lowspeed-fluid`，RC=0。
+  - `cases/couple_porous` np2：40 面 → `comp-fluid<->lowspeed-porous`，RC=0
+    （验证 porous 判定）。
+  - `regress/m6wing/run_regression.sh`：全产物 IDENTICAL，
+    `flow3d.dat` md5 `dc134a2d196422043ecad7c86ac8f898` 不变 → struct 求解器
+    未受影响。
+  - `make all mpi structured structured_mpi unstructured unstructured_mpi
+    match_test` 全 RC=0。
 
 #### 2026-10-06 C1 低速-多孔界面：确认复用阶段 9 BJ 机制，勾销
 
@@ -582,6 +623,6 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
 | P2 | 阶段8: 算例验证 | 2-3天 | 阶段7 |
 | P2 | 阶段9: 多孔介质能力完善（VC 自动识别/输运修正/porous-plug/B-J） | 视算例 | 阶段8 |
 | P2 | 阶段10: 流场自动保存与耦合联合重启（Plot3D 节点插值） | 2-3天 | 阶段6 |
-| P2 | 阶段11: 多类型界面（C1 低速-多孔已勾销；流 B 已完成；余可压缩-多孔 + 分派表） | 剩余2-3天 | 阶段8,9 |
+| P2 | 阶段11: 多类型界面（C1 / 流 B / C2 / 分派表均完成；余 uns 绝对压力偏置修复） | 余压力偏置 | 阶段8,9 |
 | P3 | 阶段12: Gambit NEU 网格输入 | 2-3天 | 阶段3 |
 | P3 | 阶段13: 结构求解器演进（SST 修复；Liao 格心型 FD，远期） | 远期 | — |

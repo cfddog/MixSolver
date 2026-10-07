@@ -13,10 +13,11 @@ module mod_uns_geometry
    use mod_precision, only: dp, ip, pi
    use mod_uns_mesh
    use mod_interface, only: Interface_FACE_TYPE, Interface_List, Num_Interface, &
-                            PEER_UNS
+                            PEER_UNS, IFACE_CZ_FLUID, IFACE_CZ_POROUS
    implicit none
    private
-   public :: geom_t, compute_geometry, geom_stats, register_interface_zones
+   public :: geom_t, compute_geometry, geom_stats, register_interface_zones, &
+             tag_interface_cell_zones
 
    type :: geom_t
       real(dp), allocatable :: xf(:,:)    ! face centroids, xf(1:3,1:nfaces)
@@ -324,6 +325,9 @@ contains
                Interface_List(pos)%block_no = m%zone(zi)%id
                Interface_List(pos)%face     = 0
                Interface_List(pos)%f_no     = 0
+               ! own-side local face index (phase 11 dispatch: recover the
+               ! owning cell's cell-zone class in tag_interface_cell_zones)
+               Interface_List(pos)%loc_face = fi
                Interface_List(pos)%ib = 0;  Interface_List(pos)%ie = 0
                Interface_List(pos)%jb = 0;  Interface_List(pos)%je = 0
                Interface_List(pos)%kb = 0;  Interface_List(pos)%ke = 0
@@ -364,6 +368,34 @@ contains
       write(*,'(a,i0)') '  Total unstructured interface faces registered: ', niface
 
    end subroutine register_interface_zones
+
+   !----------------------------------------------------------------------------
+   ! Tag every unstructured coupling-interface face with the cell-zone class
+   ! (fluid/porous) of its owning cell.  Must run AFTER resolve_cell_zones
+   ! (which fills m%cztype).  The per-face local index was stored as loc_face by
+   ! register_interface_zones; the owner cell is m%f(loc_face)%c0.
+   !----------------------------------------------------------------------------
+   subroutine tag_interface_cell_zones( m )
+      use mod_uns_control, only: CZ_POROUS
+      type(mesh_t), intent(in) :: m
+
+      integer :: i, c0
+
+      if ( .not. allocated(Interface_List) ) return
+      do i = 1, Num_Interface
+         if ( Interface_List(i)%solver /= PEER_UNS ) cycle
+         if ( Interface_List(i)%loc_face < 1 .or. &
+              Interface_List(i)%loc_face > m%nfaces ) cycle
+         if ( .not. allocated(m%cztype) ) cycle
+         c0 = m%f(Interface_List(i)%loc_face)%c0
+         if ( c0 < 1 .or. c0 > m%ncells ) cycle
+         if ( m%cztype(c0) == CZ_POROUS ) then
+            Interface_List(i)%cz_type = IFACE_CZ_POROUS
+         else
+            Interface_List(i)%cz_type = IFACE_CZ_FLUID
+         end if
+      end do
+   end subroutine tag_interface_cell_zones
 
    ! case-insensitive helper (local to this module)
    pure function lowercase( s ) result( r )

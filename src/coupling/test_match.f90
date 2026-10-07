@@ -14,18 +14,22 @@ program test_match
    use mod_struct_init, only: read_parameter, init
    use mod_uns_cas_reader, only: read_cas
    use mod_uns_connectivity, only: build_connectivity
-   use mod_uns_geometry, only: compute_geometry, register_interface_zones
-   use mod_interface_match, only: match_interfaces
-   use mod_interface, only: Interface_List, Num_Interface
+   use mod_uns_geometry, only: compute_geometry, register_interface_zones, &
+                               tag_interface_cell_zones
+   use mod_uns_control, only: read_control, resolve_cell_zones, ctrl_t
+   use mod_interface_match, only: match_interfaces, dispatch_interfaces
+   use mod_interface, only: Interface_List, Num_Interface, IFACE_COMP_FLUID_FLUID, &
+                            IFACE_COMP_FLUID_POROUS
    use mod_uns_mesh, only: mesh_t
    use mod_uns_connectivity, only: conn_t
    use mod_uns_geometry, only: geom_t
    implicit none
 
-   integer :: ierr, myrank
+   integer :: ierr, myrank, n_ff, n_fp
    type(mesh_t) :: m
    type(conn_t) :: conn
    type(geom_t) :: g
+   type(ctrl_t) :: ctrl
 
    call mpi_init(ierr)
    call mpi_comm_rank(MPI_COMM_WORLD, myrank, ierr)
@@ -51,8 +55,37 @@ program test_match
       write(*,'(a,i0)') '  unstructured interface entries registered: ', &
                          count(Interface_List(1:Num_Interface)%solver == 2)
 
-   ! ---- geometric matching ----
+   ! ---- cell-zone tagging (phase 11 dispatch needs m%cztype) ----
+   call read_control('unMesh.control', ctrl, ierr)
+   if (ierr /= 0) then
+      write(*,'(a,i0)') 'FATAL: read_control failed, ier = ', ierr
+      call mpi_abort(MPI_COMM_WORLD, 1, ierr)
+   end if
+   call resolve_cell_zones(m, ctrl, ierr)
+   if (ierr /= 0) then
+      write(*,'(a,i0)') 'FATAL: resolve_cell_zones failed, ier = ', ierr
+      call mpi_abort(MPI_COMM_WORLD, 1, ierr)
+   end if
+   call tag_interface_cell_zones(m)
+
+   ! ---- geometric matching + phase-11 dispatch ----
    if (myrank == 0) call match_interfaces
+   if (myrank == 0) call dispatch_interfaces
+
+   ! ---- assertion: grid_BC is an all-fluid case -> never classified porous ----
+   n_ff = count(Interface_List(1:Num_Interface)%iface_type == IFACE_COMP_FLUID_FLUID)
+   n_fp = count(Interface_List(1:Num_Interface)%iface_type == IFACE_COMP_FLUID_POROUS)
+   if (myrank == 0) then
+      write(*,'(a,i0,a,i0)') '  classified comp-fluid<->lowspeed-fluid: ', &
+                             n_ff, ' / ', Num_Interface
+      write(*,'(a,i0)')      '  classified comp-fluid<->lowspeed-porous: ', n_fp
+   end if
+   if (n_ff == 0 .or. n_fp /= 0) then
+      if (myrank == 0) &
+         write(*,'(a)') 'ASSERT FAILED: grid_BC must be all-fluid flow B'
+      call mpi_abort(MPI_COMM_WORLD, 2, ierr)
+   end if
+   if (myrank == 0) write(*,'(a)') '  dispatch assertion PASSED'
 
    call mpi_finalize(ierr)
 end program test_match

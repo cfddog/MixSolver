@@ -28,10 +28,13 @@
 module mod_interface_match
    use mod_precision, only: dp
    use mod_interface, only: Interface_FACE_TYPE, Interface_List, Num_Interface, &
-                            PEER_STRUCT, PEER_UNS, MATCH_MATCHED, MATCH_UNMATCHED
+                            PEER_STRUCT, PEER_UNS, MATCH_MATCHED, MATCH_UNMATCHED, &
+                            classify_interface, iface_type_name, iface_recipe_string, &
+                            IFACE_UNKNOWN, IFACE_COMP_FLUID_FLUID, &
+                            IFACE_COMP_FLUID_POROUS, IFACE_UNS_FLUID_POROUS
    implicit none
    private
-   public :: match_interfaces
+   public :: match_interfaces, dispatch_interfaces
 
    ! module-level state used to pass the selected component indices between
    ! jacobian22 and the residual extraction helpers (avoided passing through
@@ -167,6 +170,68 @@ contains
       write(*,'(a)') '--- end matching ---'
 
    end subroutine match_interfaces
+
+   !---------------------------------------------------------------------------
+   ! Phase-11 dispatch: run after match_interfaces.  Classify each matched pair
+   ! from the solver + cell-zone class of both sides (classify_interface) and
+   ! print the interface dispatch table (type + exchange-quantity recipe per
+   ! type).  Unmatched structured faces stay IFACE_UNKNOWN and are counted.
+   !---------------------------------------------------------------------------
+   subroutine dispatch_interfaces
+      integer :: i, j, it, cnt_ff, cnt_fp, cnt_uu, cnt_unk, ns_side
+
+      do i = 1, Num_Interface
+         Interface_List(i)%iface_type = IFACE_UNKNOWN
+      end do
+
+      cnt_ff = 0; cnt_fp = 0; cnt_uu = 0; cnt_unk = 0; ns_side = 0
+      do i = 1, Num_Interface
+         if ( Interface_List(i)%solver /= PEER_STRUCT ) cycle
+         ns_side = ns_side + 1
+         j = Interface_List(i)%peer_id
+         if ( Interface_List(i)%match_state /= MATCH_MATCHED .or. &
+              j < 1 .or. j > Num_Interface ) then
+            cnt_unk = cnt_unk + 1
+            cycle
+         end if
+         it = classify_interface( Interface_List(i)%solver, &
+                                  Interface_List(i)%cz_type, &
+                                  Interface_List(j)%solver, &
+                                  Interface_List(j)%cz_type )
+         Interface_List(i)%iface_type = it
+         Interface_List(j)%iface_type = it
+         select case ( it )
+         case ( IFACE_COMP_FLUID_FLUID );  cnt_ff = cnt_ff + 1
+         case ( IFACE_COMP_FLUID_POROUS ); cnt_fp = cnt_fp + 1
+         case ( IFACE_UNS_FLUID_POROUS );  cnt_uu = cnt_uu + 1
+         case default;                     cnt_unk = cnt_unk + 1
+         end select
+      end do
+
+      write(*,'(a)') ''
+      write(*,'(a)') '--- Interface dispatch table (phase 11) ---'
+      write(*,'(a,i0)') '  struct faces           : ', ns_side
+      write(*,'(a,i0)') '  unclassified (no match): ', cnt_unk
+      if ( cnt_ff > 0 ) then
+         write(*,'(a,i0,a,a)') '  faces ', cnt_ff, '  ', &
+            trim(iface_type_name(IFACE_COMP_FLUID_FLUID))
+         write(*,'(a,a)')      '        recipe:', &
+            trim(iface_recipe_string(IFACE_COMP_FLUID_FLUID))
+      end if
+      if ( cnt_fp > 0 ) then
+         write(*,'(a,i0,a,a)') '  faces ', cnt_fp, '  ', &
+            trim(iface_type_name(IFACE_COMP_FLUID_POROUS))
+         write(*,'(a,a)')      '        recipe:', &
+            trim(iface_recipe_string(IFACE_COMP_FLUID_POROUS))
+      end if
+      if ( cnt_uu > 0 ) then
+         write(*,'(a,i0,a,a)') '  faces ', cnt_uu, '  ', &
+            trim(iface_type_name(IFACE_UNS_FLUID_POROUS))
+         write(*,'(a,a)')      '        recipe:', &
+            trim(iface_recipe_string(IFACE_UNS_FLUID_POROUS))
+      end if
+      write(*,'(a)') '--- end dispatch ---'
+   end subroutine dispatch_interfaces
 
    !--------------------------------------------------------------------------
    ! Project point P onto the plane of a quad face, invert the bilinear map
