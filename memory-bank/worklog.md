@@ -43,6 +43,13 @@
   `cases/couple_porous/uns_full` 参考重算床梯度 −3021.3 vs 解析 3021.7 Pa/m（PASS）、
   流体半区压平 302.13/302.30 Pa。`cases/couple_porous/bc3d.inc` 为求解器产物，
   未入库。
+- **收尾核对补正（逐条对源码复核后发现并修）**：手册/模板初稿曾按 `read_parameter`
+  的**可选** `ctlfile` 哑参写成「`bin/struct_solver` 读第 1 个命令行参数」，但
+  `src/structured/main.f90` 是**无参**调用 ⇒ 独立结构求解器**固定读当前目录
+  `control.ec`**（缺失即 `Can not find 'control.ec', stop !`）。已在
+  `control.ec.template` 头部与手册 §2 更正，并把 `mixsolver_mpi` 的参数顺序与
+  默认值（`./mix.control` ＋ `grid_BC/{Mesh3d.x,control.ec,unMesh.cas,unMesh.control}`）
+  按 `src/main.f90` 写实；`make` 目标表逐项与 `Makefile` 的 `.PHONY` 列表核对一致。
 - 涉及文件：`docs/程序使用手册.tex`、`docs/91_appendix_params.tex`、
   `docs/93_changelog.tex`、`docs/control.ec.template`、`.gitignore`、
   `memory-bank/{worklog,progress,activeContext}.md`。

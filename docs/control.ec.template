@@ -3,9 +3,14 @@
 !                        (compressible) solver control file.
 !
 ! Copy this file into your case directory as "control.ec" and edit it.
-! The solver reads the control file given as argument 1 of bin/struct_solver,
-! or as the 3rd argument of bin/mixsolver_mpi; when no argument is given the
-! default name is "control.ec" in the current working directory.
+! Who reads it:
+!   * bin/struct_solver        -- NO command-line argument; it always reads
+!                                 ./control.ec in the current directory
+!                                 (absent => "Can not find 'control.ec', stop !").
+!   * bin/mixsolver_mpi        -- 3rd argument (default grid_BC/control.ec);
+!                                 argument order: mix.control, struct mesh
+!                                 (.cas/.x), struct control, uns .cas,
+!                                 uns control.
 !
 ! FORMAT RULES  (read by mod_struct_init:read_parameter_ec)
 !   1. The file is a Fortran NAMELIST group: only the text between

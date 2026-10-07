@@ -172,6 +172,8 @@ $a_{ref}$、$p_{ref}$、$p_{scale}$。\textbf{混用两份参考状态是耦合�
 \begin{quote}\ttfamily\small
 /path/to/bin/struct\_solver
 \end{quote}
+        \textbf{不接受任何命令行参数}：固定读当前目录的 \texttt{control.ec}，缺失时
+        打印 \texttt{Can not find 'control.ec', stop !} 并退出。
   \item \textbf{非结构侧单机}：
 \begin{quote}\ttfamily\small
 bin/uns\_solver <mesh.cas> <control文件>
@@ -180,7 +182,9 @@ bin/uns\_solver <mesh.cas> <control文件>
         这些文件在当前仓库中已不存在，因此\textbf{请总是显式给出两个参数}。
   \item \textbf{弱耦合（推荐）}：在仓库根目录运行，参数依次为
         mix 控制文件、结构侧 \texttt{.cas}（网格）、结构侧控制文件、非结构侧
-        \texttt{.cas}、非结构侧控制文件；省略时用 \texttt{grid\_BC/} 下的同名文件：
+        \texttt{.cas}、非结构侧控制文件；省略时默认 \texttt{./mix.control} ＋
+        \texttt{grid\_BC/} 下的 \texttt{Mesh3d.x}、\texttt{control.ec}、
+        \texttt{unMesh.cas}、\texttt{unMesh.control}：
 \begin{quote}\ttfamily\small
 mpirun -np 2 bin/mixsolver\_mpi mix.control grid\_BC/Mesh3d.x \textbackslash\\
 \hspace*{1em}grid\_BC/control.ec grid\_BC/unMesh.cas grid\_BC/unMesh.control
