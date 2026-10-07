@@ -301,7 +301,7 @@
 
 ## 待办
 
-### 阶段 11（流 B、C1、C2 已完成，余分派表 + uns 绝对压力偏置）
+### 阶段 11（流 B、C1、C2、分派表已完成，余 uns 绝对压力偏置）
 - [x] 弃用并删除 IF_InnerFlow / IF_TurboMachinary 全套机制（2026-10-06 完成，位级回归通过）
 - [x] **流 B：可压缩（struct）–低速（uns）界面（2026-10-06 完成，
   Dirichlet-Neumann 特征界面，详见「已完成」条目）**：
@@ -340,8 +340,8 @@
   −3021.3 Pa/m、出口 `pressure-outlet ±10` 能收敛、耦合首排 −9.67% 改善或至少
   不退化；回归 mpi/structured(_mpi)/unstructured(_mpi)/units_test/match_test/
   coupling_test 全 RC=0。
-- [ ] 界面分派表：按 cell_zone 类型 + solver 类型自动确定界面类型与
-  交换量清单（plan 阶段 11 第 2 条）。
+- [x] 界面分派表：按 cell_zone 类型 + solver 类型自动确定界面类型与
+  交换量清单（plan 阶段 11 第 2 条，**2026-10-07 完成并验证**，见「已完成」顶部）。
 - [ ] （可选，物理一致性）壁面层对齐：struct 近壁分辨率/壁面处理与 uns
   对齐以消除近壁型线 11.8% 偏差（非交换层任务）。
 
