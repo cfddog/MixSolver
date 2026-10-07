@@ -1,8 +1,21 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-07
+> 最后更新：2026-10-08（**文档节点：`程序使用手册.tex` 等 4 个 docs 文件补齐，
+> 23 页 PDF 零告警编译通过**）
 
 ## 已完成
+
+- [x] **文档节点：程序使用手册 ＋ 附录 A 参数总表 ＋ 更新记录 ＋ `control.ec.template`
+  （2026-10-08）**：此前 4 个文件**均不存在**，本次补齐。
+  `docs/程序使用手册.tex`（ctexart/xelatex，**23 页**）：§1 概述、§2 构建与运行、
+  §3 输入文件、§4 结构化求解器、§5 低速求解器、§6 弱耦合（Dirichlet–Neumann 契约）、
+  §7 算例集表、§8 验证与回归、§9 FAQ（10 条）、§10 更新记录、附录 A；
+  `docs/91_appendix_params.tex`（A.1 `control.ec` / A.2 `*.control` / A.3 `mix.control`
+  / A.4 `bc` 与边界类型码 / A.5 `cell_zone`（含 `h_sf`/`a_sf`）/ A.6 `tbc`/`tbc_plane`/`lid`，
+  表 3–8）；`docs/93_changelog.tex`（逆序 2026-10-08 → 2026-10-03，阶段 1–11）；
+  `docs/control.ec.template`。**验证**：`xelatex` 连跑 4 遍，末两遍零 error /
+  零 undefined reference / 零 multiply defined；标签定义 26 / 引用 17 全命中。
+  涉及文件：上述 4 个 docs 文件 + `.gitignore`（LaTeX 中间产物）。
 
 - [x] **阶段 11：界面类型自动分派表（2026-10-07）**：`Interface_FACE_TYPE` 增
   `cz_type / loc_face / iface_type`；`classify_interface`（struct 侧恒 comp+fluid；
@@ -551,7 +564,8 @@
   联动；需与用户重定判据或收口归因后方可勾销）
 
 ### 文档（随功能同步）
-- [ ] `docs/程序使用手册.tex` 及 `91_appendix_params.tex`、`93_changelog.tex`、`control.ec.template`（目前均不存在）
+- [x] `docs/程序使用手册.tex` 及 `91_appendix_params.tex`、`93_changelog.tex`、`control.ec.template`
+      **（2026-10-08 全部完成；23 页 PDF 编译通过，见「已完成」顶部文档节点）**
 - [ ] **`cases/couple_channel/README.md` 缺失**（2026-10-06 新登记）：流 B 的复现命令、
   界面定值（质量精确连续、压力跳变 <1 Pa、对拍 uns_full 剩余 −2.9%）只散在
   `docs/plan.md` 流 B 节与 worklog 里；对照 `cases/couple_porous/README.md` 的

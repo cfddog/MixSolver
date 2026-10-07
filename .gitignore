@@ -15,6 +15,14 @@ bin/
 __pycache__/
 *.pyc
 
+# LaTeX 编译中间产物（docs/程序使用手册.tex，xelatex）
+# 源文件 docs/*.tex 与 docs/control.ec.template 仍然跟踪；PDF 为可再生成的
+# 构建产物，不入库（需要时 `cd docs && xelatex 程序使用手册.tex`）。
+docs/*.aux
+docs/*.toc
+docs/*.out
+docs/*.pdf
+
 # 编辑器 / 系统临时文件
 *.swp
 *~

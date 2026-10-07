@@ -1,6 +1,25 @@
 # 当前上下文 (activeContext)
 
-> 最后更新：2026-10-07（**uns 绝对压力 ≈−250 Pa 偏置修复并验证；阶段 11 全部完成**）
+> 最后更新：2026-10-08（**文档节点：程序使用手册.tex（23 页）＋ 91_appendix_params.tex
+> ＋ 93_changelog.tex ＋ control.ec.template 补齐并编译通过**）
+
+> **2026-10-08 文档节点 ✅（完成并验证）**：`docs/程序使用手册.tex` 与
+> `91_appendix_params.tex`/`93_changelog.tex`/`control.ec.template` 此前**均不存在**，
+> 本次按 `project_rules`「程序说明文档（LaTeX）维护规则」一次性补齐：
+> 手册含 §1 概述 / §2 构建与运行 / §3 输入文件 / §4 结构化求解器 / §5 低速求解器 /
+> §6 弱耦合（Dirichlet–Neumann 契约 `α=0.3·min(1,iter/iface_ramp)`、质量守恒修正、
+> 联合重启）/ §7 算例集表 / §8 验证与回归 / §9 FAQ（10 条）/ §10 更新记录；
+> 附录 A 为参数总表 A.1–A.6（`control.ec`、`*.control`、`mix.control`、`bc`/边界类型码、
+> `cell_zone`（含 `h_sf`/`a_sf`）、`tbc`/`tbc_plane`/`lid`，表 3–8）；更新记录为逆序
+> 2026-10-08 → 2026-10-03（阶段 1–11）。**验证**：`xelatex` 连跑 4 遍 → PDF **23 页**，
+> 末两遍零 error / 零 undefined reference / 零 multiply defined（`\input` 用
+> `\detokenize` 规避文件名下划线）；标签定义 26 / 引用 17 全部命中。
+> **同一节点另清账**：上一节点（阶段 11 uns 绝对压力偏置修复）此前留在工作区未提交，
+> 已重新验证后提交并推送（`9f46467`）——`make` 全量 RC=0、`units_test` 3/0、
+> `coupling_test` np2 6/0、`match_test` 500/500、`regress/m6wing` PASS（md5
+> `dc134a2d196422043ecad7c86ac8f898` 不变）、`uns_full` 参考重算床梯度 −3021.3 vs
+> 解析 3021.7 Pa/m（PASS）。**下一步候选**：① 压力电平非规范不变性（`pval` 正值
+> 鲁棒区仅 ≈+15 Pa）立项；② 把手册编译/标签核对做成脚本（`docs/Makefile` 或 CI）。
 
 > **2026-10-07 阶段 11「uns 绝对压力 ≈−250 Pa 偏置」✅（修复并验证）**：
 > **根因**＝`mod_uns_simple.f90` `momentum_assembly` 内部面**对流系数重复乘 ρ**

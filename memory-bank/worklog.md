@@ -5,6 +5,50 @@
 
 ---
 
+## 2026-10-08 | 文档：`程序使用手册.tex`（23 页）＋ 附录 A 参数总表 ＋ 更新记录 ＋ `control.ec.template`
+
+- **背景**：`docs/程序使用手册.tex` 及三个附属文件此前**均不存在**（progress.md
+  「文档（随功能同步）」待办项），阶段 11 收尾后补齐；并按 `project_rules`
+  「程序说明文档（LaTeX）维护规则」把参数总表与更新记录拆成可 `\input` 的子文件。
+- **新增（4 个文件）**：
+  - `docs/程序使用手册.tex`：§1 概述（可执行文件表/单位约定/目录布局）、
+    §2 构建与运行（依赖、`make` 目标、struct/uns/耦合三种运行方式）、
+    §3 输入文件（namelist 规则、`.cas`/`*.control`/`mix.control` 示例）、
+    §4 结构化求解器、§5 低速求解器（压力电平、能量/浮力/多孔、分区重启）、
+    §6 弱耦合（进程划分、界面匹配与分派、Dirichlet–Neumann 交换契约、
+    `α=0.3·min(1,iter/iface_ramp)`、质量守恒修正、联合重启）、§7 算例集表、
+    §8 验证与回归、§9 FAQ（10 条）、§10 更新记录（`\input`）、附录 A（`\input`）。
+  - `docs/91_appendix_params.tex`：A.1 `control.ec`、A.2 `*.control`、
+    A.3 `mix.control`、A.4 `bc` 语法与边界类型码、A.5 `cell_zone`
+    （多孔/热物性/`h_sf`/`a_sf`）、A.6 `tbc`/`tbc_plane`/`lid`（表 3–8）。
+  - `docs/93_changelog.tex`：逆序时间线 2026-10-08 → 2026-10-03（阶段 1–11），
+    每条含日期/节点/功能/涉及源码/验证。
+  - `docs/control.ec.template`：可直接复制的 namelist 模板（组内只写字面量）。
+- **写进文档的硬事实**（全部取自代码与实测，非推测）：`$control_ec` 组内只能写
+  字面量（写符号常量 ⇒ `Cannot match namelist object name scheme_muscl2c`；
+  `$end` 之后文本不解析）；uns 侧未知关键字只 WARNING 忽略；`pval` 鲁棒区
+  ≈+15 / −200 Pa；多 cell zone 的 cell-id 排序（分割方向索引最慢）；取窗 ≤1 个
+  网格单元；耦合复现必须 `save_interval ≤ n_couple`；`nproc=1` 时
+  `n_struct_ranks=0`（真多物理耦合需 `-np ≥ 2`）。
+- **验证**：`cd docs && xelatex 程序使用手册.tex` 连跑 **4 遍** →
+  `程序使用手册.pdf` **23 页**，末两遍**零 error / 零 undefined reference /
+  零 multiply defined**（`\input` 用 `\detokenize` 规避文件名下划线；另修掉
+  `93_changelog.tex` 一处未转义 `_` 导致的 `Missing $ inserted`）；标签核对脚本
+  ——定义 **26** 个、引用 **17** 个，全部命中。未触碰源码 ⇒ 本节点无需重跑位级
+  回归（提交前已在同一源码状态复跑 `regress/m6wing/run_regression.sh` = PASS）。
+- **同批**：上一节点（阶段 11「uns 绝对压力 ≈−250 Pa 偏置」修复）此前**留在工作区
+  未提交**，本次先重新验证再提交并推送（`9f46467`）：全量 `make` RC=0、
+  `units_test` 3/0、`coupling_test` np2 6/0、`match_test` 500/500（`unclassified=0`）、
+  `regress/m6wing` 8 产物全 IDENTICAL（md5 `dc134a2d196422043ecad7c86ac8f898` 不变）、
+  `cases/couple_porous/uns_full` 参考重算床梯度 −3021.3 vs 解析 3021.7 Pa/m（PASS）、
+  流体半区压平 302.13/302.30 Pa。`cases/couple_porous/bc3d.inc` 为求解器产物，
+  未入库。
+- 涉及文件：`docs/程序使用手册.tex`、`docs/91_appendix_params.tex`、
+  `docs/93_changelog.tex`、`docs/control.ec.template`、`.gitignore`、
+  `memory-bank/{worklog,progress,activeContext}.md`。
+
+---
+
 ## 2026-10-07 | 阶段 11 补充：`pval`（出口压力）取值敏感性实测 + 文档纠错
 
 - **背景**：追问 `pressure-outlet` 的 `pval`（表压）能否取 100/1000/10000。

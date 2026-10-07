@@ -1,0 +1,156 @@
+% !TeX root = 程序使用手册.tex
+%=============================================================================
+% 93_changelog.tex -- 更新记录（\input 自 docs/程序使用手册.tex 的
+%                     \section{更新记录} 之内）
+% 维护规则（.trae/rules/project_rules.md）：每新增/修改一个功能，必须在本表
+% 顶部追加一条（日期 / 节点（版本）/ 功能 / 涉及源码 / 验证），并与
+% memory-bank/worklog.md 的对应条目一致。
+%=============================================================================
+
+本表按时间倒序排列，字段含义与维护要求如下：
+
+\begin{itemize}\itemsep2pt
+  \item \textbf{日期}：完成日（与 \texttt{memory-bank/worklog.md} 一致）。
+  \item \textbf{节点}：开发阶段号（\texttt{plan.md} 的阶段划分），可视为版本标签。
+  \item \textbf{功能}：一句话说明改了什么、为什么改。
+  \item \textbf{涉及源码}：主要改动的源文件（不含文档）。
+  \item \textbf{验证}：{\bfseries 必须写可复现的验证方式与关键数值}，不能只写``已测试''。
+\end{itemize}
+
+{\footnotesize
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.075\textwidth}>{\raggedright\arraybackslash}p{0.055\textwidth}>{\raggedright\arraybackslash}p{0.28\textwidth}>{\raggedright\arraybackslash}p{0.24\textwidth}>{\raggedright\arraybackslash}p{0.29\textwidth}@{}}
+\caption{MixNSSolver 更新记录}\label{tab:changelog}\\
+\toprule
+日期 & 节点 & 功能 & 涉及源码 & 验证 \\
+\midrule
+\endfirsthead
+\multicolumn{5}{@{}l}{\small\itshape 表~\ref{tab:changelog}（续）}\\
+\toprule
+日期 & 节点 & 功能 & 涉及源码 & 验证 \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+2026-10-08 & 文档 &
+建立本手册（\texttt{程序使用手册.tex}）、附录 A 参数总表、
+\texttt{control.ec.template}、本更新记录；补 \texttt{cases/couple\_channel/README.md}
+（布局/量纲匹配/缺陷/修法/结果/复现）；修 \texttt{compare\_iface.py} 取窗宽度缺陷 &
+（仅文档与工具脚本） &
+\texttt{cd docs \&\& xelatex 程序使用手册.tex} 两遍无 Error；模板用与
+\texttt{read\_parameter\_ec} 同构的 namelist 读入测试通过；
+\texttt{python3 compare\_iface.py} 复现界面压差 4.1 Pa \\
+2026-10-07 & 11 &
+界面类型自动分派表：\texttt{Interface\_FACE\_TYPE} 增 \texttt{cz\_type/loc\_face/iface\_type}，
+新增 \texttt{classify\_interface} / \texttt{iface\_exchange\_recipe} /
+\texttt{report\_interface\_dispatch}；纯分类与报告，不改数值行为 &
+\texttt{src/common/mod\_interface.f90},
+\texttt{src/coupling/mod\_interface\_match.f90},
+\texttt{src/coupling/test\_match.f90},
+\texttt{src/structured/mod\_struct\_grid.f90},
+\texttt{src/unstructured/mod\_uns\_driver.f90} &
+\texttt{mpirun -np 1 bin/match\_test}（\texttt{grid\_BC} 拷贝）250/250 全
+\texttt{comp-fluid<->lowspeed-fluid}、\texttt{unclassified=0}、断言 PASS；
+\texttt{couple\_channel} np2 判为 fluid、\texttt{couple\_porous} np2 判为 porous；
+\texttt{regress/m6wing/run\_regression.sh} 全 IDENTICAL（\texttt{flow3d.dat} md5
+\texttt{dc134a2d196422043ecad7c86ac8f898}） \\
+2026-10-07 & 11 &
+修复 uns 绝对压力约 $-250$ Pa 偏置：根因是 \texttt{momentum\_assembly} 内部面对流系数
+\texttt{F = ctrl\%rho*fld\%flux(i)} 把已是质量通量（kg/s）的 \texttt{fld\%flux}
+重复乘 $\rho$；并给 \texttt{pressure-outlet} 加出口压力爬升 &
+\texttt{src/unstructured/mod\_uns\_simple.f90},
+\texttt{src/unstructured/mod\_uns\_bc.f90} &
+\texttt{cases/couple\_porous/README.md} \S5 四组对照（$\rho$ 倍放大消失）；
+\texttt{regress/m6wing/run\_regression.sh} 位级 IDENTICAL \\
+2026-10-07 & 11 &
+\texttt{pval} 取值敏感性实测后纠正文档：常密度下 \texttt{pval} 只是表压锚点，
+但正负不对称（正侧约 $+15$ Pa、负值到约 $-200$ Pa，$+100$ 及以上必发散） &
+（仅文档：\texttt{cases/couple\_porous/README.md}） &
+各值分别重跑 5 次统计收敛/发散；慢化 \texttt{inlet\_ramp}（300/1000/3000）对
+$+100$ 无效 \\
+2026-10-06 & 11 &
+交换层改为 {\bfseries Dirichlet--Neumann 分区特征界面}：结构侧只接收背压
+$p_b$ 并用线性化 Riemann 反射构造 ghost，非结构侧只施加速度 Dirichlet 且界面压力零梯度；
+删除压力重锚定；背压松弛 $\alpha = 0.3\min(1, iter/\texttt{iface\_ramp})$ &
+\texttt{src/main.f90},
+\texttt{src/coupling/mod\_coupling\_exchange.f90},
+\texttt{src/coupling/mod\_interface\_exchange.f90} &
+\texttt{cases/couple\_channel} np2、\texttt{n\_couple}=1000：无
+\texttt{OverLimit}、约 100 迭代后冻结；界面压差 4.1 Pa（旧方案为 kPa 级冻结跳变）；
+结构面/内部与 uns 下游 $u_x$ 逐位相同 \\
+2026-10-06 & 11 &
+C2 可压缩--多孔跨组界面验证并修两处缺陷：多 cell zone 的 cell-id 排序
+（分割方向索引最慢）与取窗宽度（$\le$ 一个单元、用绝对窗） &
+\texttt{cases/couple\_porous/}（工具与 README）、
+\texttt{src/unstructured/mod\_uns\_cas\_reader.f90} &
+\texttt{check\_bed\_gradient.py} 带回归守卫（zone 2 不是 $x<100$ mm 半区即报错）；
+界面跳变由``幻影 112 Pa''回到物理值 \\
+2026-10-06 & 11 &
+彻底删除 \texttt{IF\_InnerFlow} / \texttt{IF\_TurboMachinary} 全套机制（结构侧不再
+自带内流/叶轮机械分支） &
+\texttt{src/structured/mod\_struct\_*},
+\texttt{src/main.f90} &
+\texttt{regress/m6wing/run\_regression.sh} 位级 IDENTICAL \\
+2026-10-06 & 10 &
+流场自动保存 + 耦合联合重启：\texttt{save\_interval}（每 N 个耦合步与两侧同步存档）、
+\texttt{couple\_restart}（结构侧强制从 \texttt{flow3d.dat} 续算，非结构侧读耦合状态） &
+\texttt{src/main.f90},
+\texttt{src/structured/mod\_struct\_driver.f90} &
+\texttt{couple\_porous}/\texttt{couple\_channel} np2 跑满 \texttt{n\_couple} 且
+\texttt{save\_interval} $\le$ \texttt{n\_couple} 时 \texttt{flow3d.dat} 落盘；
+二次启动从存档续算，界面量连续 \\
+2026-10-06 & 9 &
+多孔介质热学收尾：LTNE（流体/固体双温度）＋热弥散（\texttt{disp\_l}/\texttt{disp\_t}）、
+对角各向异性渗透率（\texttt{perm\_xx/yy/zz}）、Beavers--Joseph 界面滑移
+（\texttt{bj\_alpha}）、VC 标记自动识别块类型 &
+\texttt{src/unstructured/mod\_uns\_simple.f90},
+\texttt{src/unstructured/mod\_uns\_bc.f90},
+\texttt{src/unstructured/mod\_uns\_control.f90} &
+\texttt{cases/ltne}（1D 发汗冷却解析解）、\texttt{cases/graetz2d}（2D Graetz）、
+\texttt{cases/porous\_plug}（1D 压降）解析/半解析对比；低速-多孔界面确认复用 BJ Robin 条件 \\
+2026-10-05 & 5--6 &
+弱耦合框架打通：\texttt{mix.control} 参考状态、\texttt{MPI\_Comm\_split} 分组、
+\texttt{main.f90} 弱耦合循环、接口量交换先转 SI；
+新增 \texttt{outflow}（充分发展出口）与 \texttt{mass-flow-inlet} 起动 ramp &
+\texttt{src/main.f90},
+\texttt{src/common/mod\_reference\_state.f90},
+\texttt{src/common/mod\_interface\_units.f90},
+\texttt{src/unstructured/mod\_uns\_control.f90} &
+常量场 MPI 端到端测试（两组交换值逐位一致）；
+\texttt{cases/channel} 槽道起动稳定（\texttt{inlet\_ramp}） \\
+2026-10-04 & 8 / 10 &
+瞬态 PISO（\texttt{transient}/\texttt{dt}/\texttt{n\_correct}/\texttt{time\_scheme}）
+与 PIMPLE 稳定化（\texttt{pimple}/\texttt{n\_outer\_iter}）；能量方程（被动标量）
+＋ Boussinesq 浮力（\texttt{cp}/\texttt{k\_cond}/\texttt{beta}/\texttt{gravity}/
+\texttt{boussinesq}）＋ 多孔 Darcy--Forchheimer（LTE/LTNE） &
+\texttt{src/unstructured/mod\_uns\_simple.f90},
+\texttt{src/unstructured/mod\_uns\_control.f90},
+\texttt{src/unstructured/mod\_uns\_output.f90} &
+\texttt{cases/cavity\_transient}（PISO，$\max|u|$ 与稳态一致量级）、
+\texttt{cases/cavity\_temp}（被动标量：$\max|u|$ 不变、$0\le T\le1$）、
+\texttt{cases/cavity\_boussinesq}、
+\texttt{cases/natconv}（多孔自然对流）、\texttt{cases/rayleigh\_benard}（2026-10-08） \\
+2026-10-04 & 4 &
+交界面几何匹配：最近点/投影 ＋ 双线性插值权重，双向映射（struct 面 $\leftrightarrow$
+uns 面） &
+\texttt{src/coupling/mod\_interface\_match.f90},
+\texttt{src/common/mod\_interface.f90} &
+\texttt{bin/match\_test} 逐面比对（250/250 命中、权重和为 1） \\
+2026-10-03 & 3 &
+非结构求解器迁移进树；Fluent \texttt{.cas} 的 interface 面 zone 与 cell zone 解析、
+\texttt{.control} 增 \texttt{cell\_zone}、新增 \texttt{mass-flow-inlet} 与
+\texttt{pressure-far-field}，修复 far-field 零解缺陷 &
+\texttt{src/unstructured/*} &
+\texttt{regress} 与源求解器位级一致；\texttt{grid\_BC/cavity} 算例回归 \\
+2026-10-03 & 2 &
+结构求解器原样搬迁 + 模块化封装（\texttt{mod\_struct\_*} 前缀、全局模块名唯一、
+共享 \texttt{mod\_precision}/\texttt{mod\_constants}）；新增 \texttt{BC\_Interface} &
+\texttt{src/structured/*},
+\texttt{src/common/*} &
+\texttt{regress/m6wing/run\_regression.sh} 每批封装后位级 IDENTICAL \\
+2026-10-03 & 1 &
+顶层 Makefile：\texttt{ser}/\texttt{mpi} 双构建树、\texttt{.mod} 集中目录、
+自动依赖（\texttt{-MMD -MP}）、\texttt{DEBUG=1} &
+\texttt{Makefile} &
+\texttt{make all mpi} 全绿；\texttt{make help} 列出全部目标 \\
+\end{longtable}
+}

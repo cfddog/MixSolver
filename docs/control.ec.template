@@ -1,0 +1,145 @@
+!=============================================================================
+! control.ec.template -- annotated template for the MixNSSolver structured
+!                        (compressible) solver control file.
+!
+! Copy this file into your case directory as "control.ec" and edit it.
+! The solver reads the control file given as argument 1 of bin/struct_solver,
+! or as the 3rd argument of bin/mixsolver_mpi; when no argument is given the
+! default name is "control.ec" in the current working directory.
+!
+! FORMAT RULES  (read by mod_struct_init:read_parameter_ec)
+!   1. The file is a Fortran NAMELIST group: only the text between
+!      "$control_ec" and "$end" is parsed.  Text AFTER "$end" is ignored
+!      (the historical OpenCFD-EC files keep a commented reference block
+!      there -- it is dead text, never parsed).
+!   2. Keys are matched by NAME: any order, any subset.  Omitted keys keep
+!      the defaults listed in [ ].  An unknown name inside the group is a
+!      fatal error ("Cannot match namelist object name ...").
+!   3. Values must be LITERALS.  Symbolic constants from the source (e.g.
+!      "Scheme_MUSCL2C") are NOT valid inside the group -- use the integer
+!      codes from the appendix of docs/程序使用手册.tex.
+!   4. Real literals accept Fortran exponents: 1.0d0 / 1.0e0 / 1.0 / 1.d0.
+!   5. "!" starts a comment; comments are allowed inside the group.
+!   6. Array keys may be assigned whole ("Pre_Step_Mesh = 0, 0, 0") or
+!      element-wise ("Pre_Step_Mesh(1) = 0").
+!
+! UNITS: the structured solver works with OpenCFD-EC non-dimensional
+!        variables (u* = u/u_ref, p* = p/(rho_ref*u_ref^2), T* = T/T_ref).
+!        The reference state (rho_ref / T_ref / L_ref / u_ref) is read from
+!        mix.control, see docs/程序使用手册.tex.
+!=============================================================================
+$control_ec
+  !---------------------------------------------------------------- flow state
+  Ma      = 0.1d0        ! [1.0]     free-stream Mach number
+  Re      = 1.0d5        ! [1000.0]  Reynolds number (rho_ref*u_ref*L_ref/mu)
+  gamma   = 1.4d0        ! [1.4]     ratio of specific heats
+  AoA     = 0.0d0        ! [0.0]     angle of attack              [deg]
+  AoS     = 0.0d0        ! [0.0]     angle of slide (sideslip)    [deg]
+  T_inf   = 300.0d0      ! [288.15]  reference temperature of the viscosity
+                         !           law (Sutherland)             [K]
+  Twall   = -1.0d0       ! [-1.0]    isothermal wall temperature [K];
+                         !           < 0  =>  adiabatic wall
+  p_outlet = -1.0d0      ! [-1.0]    subsonic outlet static pressure [Pa];
+                         !           < 0  =>  zero-order extrapolation
+  PrL     = 0.72d0       ! [0.7]     laminar Prandtl number
+  PrT     = 0.9d0        ! [0.9]     turbulent Prandtl number
+
+  !---------------------------------------------------------- time integration
+  Iflag_init  = 0        ! [0]  0 = start from free stream, 1 = continue from
+                         !      flow3d.dat, -1 = start from zero flow
+  t_end       = 1.0d0    ! [100.0] non-dimensional end time
+  Kstep_save  = 100      ! [1000]  write flow3d.dat every N steps
+  Kstep_show  = 1        ! [1]     print residuals every N steps
+  Iflag_local_dt = 1     ! [1]     1 = local time step, 0 = global time step
+  dt_global   = 0.01d0   ! [0.01]  global time step (Iflag_local_dt = 0)
+  CFL         = 5.0d0    ! [1.0]   CFL ramp target
+  dtmax       = 10.0d0   ! [10.0]  upper limit of the time step
+  dtmin       = 1.0d-9   ! [1e-9]  lower limit of the time step
+  Time_Method = 0        ! [0]     -1 = dual-time LU-SGS, 0 = LU-SGS,
+                         !          1 = Euler, 3 = RK3
+  If_dtime_mesh = 1      ! [1]     shrink dt on bad-quality cells
+  If_Residual_smoothing = 0  ! [0] residual smoothing on (1) / off (0)
+  w_LU        = 1.0d0    ! [1.0]   LU-SGS relaxation factor
+  Step_Inner_Limit = 20  ! [20]    dual-time inner iterations
+  Res_Inner_Limit  = 1.0d-10 ! [1e-10] dual-time inner residual limit
+
+  !----------------------------------------------------------- spatial scheme
+  Iflag_Scheme = 5       ! [5]  0 UD1, 1 NND2, 2 UD3, 3 MUSCL2U, 4 MUSCL2C,
+                         !      5 MUSCL3, 6 OMUSCL2, 7 WENO5, 8 UD5, 9 WENO7
+  Iflag_Flux   = 5       ! [5]  1 Steger-Warming, 2 HLL, 3 HLLC, 4 Roe,
+                         !      5 Van Leer, 6 AUSM
+  IFlag_Reconstruction = 0  ! [0]  0 original, 1 conservative, 2 characteristic
+  Bound_Scheme = 4       ! [4]  boundary-point scheme code: 0 UD1, 1 NND2,
+                         !      2 UD3, 3 MUSCL2U, 4 MUSCL2C (default),
+                         !      5 MUSCL3, 6 OMUSCL2, 7 WENO5, 8 UD5;
+                         !      -1 => follow Iflag_Scheme
+  IF_Scheme_Positivity = 1   ! [1] fall back to 1st-order upwind wherever the
+                         !     reconstructed pressure/density would be < 0
+  IFLAG_LIMIT_FLOW = 1   ! [1]  clip density / velocity / pressure to the
+                         !      limits below
+  Ldmin = 1.0d-6         ! [1e-6]   lower density limit
+  Ldmax = 1000.0d0       ! [1000.0] upper density limit
+  Lpmin = 1.0d-6         ! [1e-6]   lower pressure limit
+  Lpmax = 1000.0d0       ! [1000.0] upper pressure limit
+  Lumax = 1000.0d0       ! [1000.0] upper velocity limit
+  LSAmax = 1000.0d0      ! [1000.0] upper limit of the SA variable
+
+  !---------------------------------------------------------------- turbulence
+  Iflag_turbulence_model = 0  ! [0]  0 none, 1 Baldwin-Lomax, 2 SA, 3 SST
+  Kt_inf = 1.0d-5        ! [1e-5]  initial kt for the SST model
+  Wt_inf = 0.01d0        ! [0.01]  initial wt for the SST model
+  CP1_NSA = 0.2d0        ! [0.2]   new-SA constant CP1
+  CP2_NSA = 100.0d0      ! [100.0] new-SA constant CP2
+  MUT_MAX = -1.0d0       ! [-1.0]  limit of vt/vs;  < 0  =>  no limit
+
+  !---------------------------------------------------------------------- mesh
+  Mesh_File_Format = 1   ! [0]  0 = unformatted (Mesh3d.dat),
+                         !      1 = formatted   (Mesh3d.x)
+  Num_Mesh = 1           ! [1]  number of grid levels (1 = single grid)
+  Pre_Step_Mesh = 0, 0, 0   ! [0,0,0] pre-steps per multigrid level
+  Cood_Y_UP = 1          ! [1]  1 = the Y axis points up, 0 = the Z axis
+  Periodic_dX = 0.0d0    ! [0.0] geometric period (translation) in x
+  Periodic_dY = 0.0d0    ! [0.0] geometric period in y
+  Periodic_dZ = 0.0d0    ! [0.0] geometric period in z
+
+  !------------------------------------------------------- reference / output
+  Ref_S = 1.0d0          ! [1.0]  reference area for force coefficients
+  Ref_L = 1.0d0          ! [1.0]  reference length for moment coefficients
+  Centroid = 0.0d0, 0.0d0, 0.0d0   ! [0,0,0] moment centre
+  Iflag_savefile = 0     ! [0]    keep 0: write the native Plot3D snapshot
+                         !        flow3d.dat (required for joint restart)
+  IF_Debug = 0           ! [0]    verbose debug mode
+  Pdebug = 1, 1, 1, 1    ! [1,1,1,1] per-item debug switches
+  NUM_THREADS = 1        ! [1]    OpenMP threads
+$end
+
+!=============================================================================
+! EVERYTHING BELOW "$end" IS IGNORED BY THE SOLVER -- dead reference text.
+! It is kept only as a mnemonic of the historical OpenCFD-EC 1.11 / 1.02
+! control files.  Do NOT move these lines above "$end": they use symbolic
+! constants (e.g. Scheme_MUSCL2C) and legacy "control.in" reading code, and
+! symbolic constants are illegal inside a namelist group -- the read then
+! aborts with "Cannot match namelist object name scheme_muscl2c".
+!
+! Code tables, reproduced for convenience (see docs/程序使用手册.tex):
+!   Iflag_Scheme  0 UD1  1 NND2  2 UD3  3 MUSCL2U  4 MUSCL2C  5 MUSCL3
+!                 6 OMUSCL2  7 WENO5  8 UD5  9 WENO7
+!   Iflag_Flux    1 Steger_Warming  2 HLL  3 HLLC  4 Roe  5 Van_Leer  6 Ausm
+!   IFlag_Reconstruction  0 Original  1 Conservative  2 Characteristic
+!   Time_Method   -1 dual_LU_SGS  0 LU_SGS  1 Euler1  3 RK3
+!   Iflag_turbulence_model  0 NONE  1 BL  2 SA  3 SST
+!   Boundary types (bc3d.inp)  2 Wall  3 Symmetry  4 Farfield  5 Inflow
+!                              6 Outflow  501 Periodic
+!   Iflag_init  0 free stream  1 restart  -1 zero flow
+!   Mesh_File_Format  0 unformatted  1 formatted
+!
+! Legacy ver 1.11 default list (for reference only):
+!   Ma=1.d0  Re=1000.d0  gamma=1.4d0  AOA=0.d0  AOS=0.d0  P_outlet=-1.d0
+!   t_end=100.d0  Kstep_save=1000  Iflag_turbulence_model=0  Iflag_init=0
+!   If_viscous=1  Iflag_local_dt=1  dt_global=0.01  CFL=1.d0
+!   Time_Method=0  If_Residual_smoothing=0  w_LU=1.d0  If_dtime_mesh=1
+!   Iflag_Scheme=5  Iflag_Flux=5  IFlag_Reconstruction=0  Mesh_File_Format=0
+!   Num_Mesh=1  T_inf=288.15d0  Twall=-1.d0  NUM_THREADS=1
+!   Step_Inner_Limit=20  Res_Inner_Limit=1.d-10  MUT_MAX=-1.d0
+!   Bound_Scheme=Scheme_MUSCL2C   PrL=0.7d0  PrT=0.9d0
+!=============================================================================

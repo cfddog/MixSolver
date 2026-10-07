@@ -1,0 +1,658 @@
+%=============================================================================
+% 程序使用手册.tex -- MixNSSolver 程序使用手册
+%
+% 编译（需要 TeX Live + ctex + xelatex）：
+%     cd docs && xelatex 程序使用手册.tex && xelatex 程序使用手册.tex
+%     再运行 xelatex 两遍以获得正确的目录与交叉引用。
+% 依赖宏包：ctexart, geometry, amsmath, booktabs, longtable, array,
+%           enumitem, hyperref（均为 TeX Live 自带）。
+%
+% 维护规则（.trae/rules/project_rules.md）：新增/修改任何控制参数或功能，
+% 必须同步 docs/91_appendix_params.tex 与 docs/93_changelog.tex。
+%=============================================================================
+\documentclass[11pt,a4paper]{ctexart}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage[colorlinks=true,linkcolor=blue,urlcolor=blue]{hyperref}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small MixNSSolver 程序使用手册}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\setlength{\parskip}{3pt}
+\setlist{topsep=2pt,itemsep=1pt,parsep=0pt}
+
+\title{\bfseries MixNSSolver 程序使用手册\\[6pt]
+\large 可压缩/低速混合求解器与弱耦合框架}
+\author{MixNSSolver 开发组}
+\date{\today}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+\vspace{1em}
+\noindent\textbf{本手册的约定}：所有``参数名''与``文件名''用等宽字体书写，
+反斜杠转义的下划线显示为下划线；\textbf{默认值}放在方括号中。
+参数总表见附录~\ref{app:params}，功能变更见第~\ref{sec:changelog} 节与
+\texttt{memory-bank/worklog.md}。
+
+\tableofcontents
+\newpage
+
+\section{概述}\label{sec:overview}
+
+MixNSSolver 是一个\textbf{弱耦合}（weakly-coupled）多物理场求解器框架：把一个
+可压缩结构网格求解器与一个低速非结构网格有限体积求解器在公共界面上
+\textbf{交替推进}，每个耦合步在界面交换一次数据（速度/压力/温度）。框架已跑通
+三类界面组合：可压缩$\leftrightarrow$低速、可压缩$\leftrightarrow$多孔、
+低速$\leftrightarrow$多孔（同一套交换层，仅界面类型分派不同）。
+
+\begin{itemize}\itemsep3pt
+  \item \textbf{结构侧}（\texttt{bin/struct\_solver}）：源自 OpenCFD-EC 3D 的
+        格心有限体积求解器，自带 LU-SGS / 双时间 / 多重网格、Roe / HLLC /
+        Van Leer 等通量格式、MUSCL2U$\sim$WENO7 重构与 SA / SST / BL 湍流模型。
+        使用\textbf{无量纲}变量。
+  \item \textbf{非结构侧}（\texttt{bin/uns\_solver}）：读 Fluent ASCII \texttt{.cas}
+        网格、单元中心压力修正（SIMPLE / PISO / PIMPLE），支持能量方程（被动标量
+        或 Boussinesq 浮力）、多孔介质（Darcy--Forchheimer、LTE/LTNE、热弥散、
+        Beavers--Joseph 界面）、MPI + METIS 分区与重启动。使用\textbf{SI}单位。
+  \item \textbf{耦合驱动}（\texttt{bin/mixsolver\_mpi}）：用
+        \texttt{MPI\_Comm\_split} 把进程分成 struct / uns 两组，交替推进并交换
+        界面数据；界面量先统一到 SI 再交换（第~\ref{sec:coupling} 节）。
+\end{itemize}
+
+\subsection{可执行程序清单}
+
+\begin{center}\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.19\textwidth}>{\raggedright\arraybackslash}p{0.20\textwidth}>{\raggedright\arraybackslash}p{0.55\textwidth}@{}}
+\toprule
+程序 & 编译目标 & 用途与输入 \\
+\midrule
+\texttt{bin/struct\_solver} & \texttt{make structured} & 结构侧单机求解器（无命令行参数；在当前目录找 \texttt{control.ec}、\texttt{Mesh3d.x/dat}、\texttt{bc3d.inp}） \\
+\texttt{bin/struct\_solver\_mpi} & \texttt{make structured\_mpi} & 结构侧 MPI 版本 \\
+\texttt{bin/uns\_solver} & \texttt{make unstructured} & 非结构侧单机求解器：\texttt{uns\_solver [mesh.cas] [control]} \\
+\texttt{bin/uns\_solver\_mpi} & \texttt{make unstructured\_mpi} & 非结构侧 MPI 版本（METIS 分区） \\
+\texttt{bin/mixsolver} & \texttt{make all} & 串行混合驱动（\texttt{nproc}=1 时同一进程先跑结构、再跑非结构） \\
+\texttt{bin/mixsolver\_mpi} & \texttt{make mpi} & 弱耦合驱动（推荐）：\texttt{mixsolver\_mpi [mix.control] [struct.cas] [control.ec] [unMesh.cas] [unMesh.control]} \\
+\texttt{bin/units\_test} & \texttt{make units\_test} & 量纲换算/插值单元测试（无参数） \\
+\texttt{bin/coupling\_test} & \texttt{make coupling\_test} & 交换协议 MPI 端到端测试：\texttt{mpirun -np 2 bin/coupling\_test} \\
+\texttt{bin/match\_test} & \texttt{make match\_test} & 界面匹配/类型分派测试：\texttt{cd grid\_BC \&\& mpirun -np 1 ../bin/match\_test} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{单位约定}\label{sec:units}
+
+\begin{center}\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.16\textwidth}>{\raggedright\arraybackslash}p{0.24\textwidth}>{\raggedright\arraybackslash}p{0.54\textwidth}@{}}
+\toprule
+域 & 单位制 & 说明 \\
+\midrule
+结构侧内部 & 无量纲 & $u^* = u/u_{ref}$，$p^* = p/(\rho_{ref}u_{ref}^2)$，$T^* = T/T_{ref}$，$x^* = x/L_{ref}$；$u_{ref}$ 默认取参考声速 \\
+非结构侧内部 & SI & m、s、kg、Pa、K \\
+界面交换 & SI & 交换前/后各做一次换算（\texttt{mod\_interface\_units}）；\textbf{两侧的参考状态必须来自同一份 \texttt{mix.control}} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+参考状态由 \texttt{mix.control} 给出（\texttt{rho\_ref}/\texttt{T\_ref}/
+\texttt{L\_ref}/\texttt{u\_ref}），求解器启动时会打印实际使用的
+$a_{ref}$、$p_{ref}$、$p_{scale}$。\textbf{混用两份参考状态是耦合发散的常见原因}。
+
+\subsection{目录布局}
+
+\begin{center}\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.22\textwidth}>{\raggedright\arraybackslash}p{0.72\textwidth}@{}}
+\toprule
+目录/文件 & 内容 \\
+\midrule
+\texttt{src/common/} & 精度与物理常数、参考状态、界面数据结构 \\
+\texttt{src/structured/} & 结构侧求解器（\texttt{mod\_struct\_*}，源自 OpenCFD-EC 3D） \\
+\texttt{src/unstructured/} & 非结构侧求解器（\texttt{mod\_uns\_*}） \\
+\texttt{src/coupling/} & 界面匹配、量纲换算、跨组交换协议与三个测试程序 \\
+\texttt{src/main.f90} & 弱耦合驱动（\texttt{mixsolver} / \texttt{mixsolver\_mpi}） \\
+\texttt{cases/} & 验证算例；\textbf{每个算例都有 README.md}，记录网格/参数/复现命令/结果 \\
+\texttt{grid\_BC/} & 耦合共享网格：\texttt{Mesh3d.x}、\texttt{bc3d.inp}、\texttt{control.ec}、\texttt{unMesh.cas}、\texttt{unMesh.control}、\texttt{mix.control} \\
+\texttt{regress/m6wing/} & 位级回归：\texttt{baseline/} ＋ \texttt{run\_regression.sh} \\
+\texttt{docs/} & 本手册、\texttt{control.ec.template}、\texttt{compare\_iface.py} \\
+\texttt{bin/} & 可执行文件（\texttt{make} 生成） \\
+\texttt{lib/} & 预编译第三方库：\texttt{metis/}、\texttt{tecplot/}（TecIO）、\texttt{parmetis/} \\
+\texttt{build/} & 编译中间产物（串行树与 MPI 树，\texttt{.mod} 在各树的 \texttt{mod/} 下） \\
+\texttt{memory-bank/} & 项目记忆：约束、进度、工作日志、当前上下文 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{构建与运行}\label{sec:build}
+
+\subsection{依赖}
+
+\begin{itemize}\itemsep2pt
+  \item \textbf{gfortran}（源码按 \texttt{-std=f2008} 编译）与 \textbf{mpif90}
+        （OpenMPI 或 MPICH 均可）。
+  \item \texttt{lib/metis/libmetis.a}：MPI 版本的网格分区（在 rank 0 上串行调用）。
+  \item \texttt{lib/tecplot/libtecio.a}（可选）：仅 \texttt{out\_format = tecplot}
+        时需要；缺失时该选项会报错，其余功能不受影响。
+  \item \texttt{xelatex} ＋ \texttt{ctex}：仅用于编译本手册。
+  \item \textbf{ParMETIS 默认不链接}：\texttt{lib/parmetis/} 里的预编译库对应
+        MPICH ABI，与 OpenMPI 不兼容，重新编译前不要启用。
+\end{itemize}
+
+\subsection{make 目标}
+
+\begin{center}\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.24\textwidth}>{\raggedright\arraybackslash}p{0.70\textwidth}@{}}
+\toprule
+命令 & 作用 \\
+\midrule
+\texttt{make all} & 串行混合驱动 \texttt{bin/mixsolver}（含两套库） \\
+\texttt{make mpi} & 弱耦合驱动 \texttt{bin/mixsolver\_mpi}（\textbf{日常使用这个}） \\
+\texttt{make structured} / \texttt{structured\_mpi} & 仅结构侧（串行 / MPI） \\
+\texttt{make unstructured} / \texttt{unstructured\_mpi} & 仅非结构侧（串行 / MPI） \\
+\texttt{make common} / \texttt{common\_mpi} & 仅公共层 \\
+\texttt{make units\_test} / \texttt{coupling\_test} / \texttt{match\_test} & 三个测试程序 \\
+\texttt{make clean} & 清理 \texttt{build/} 与 \texttt{bin/} \\
+\texttt{make help} & 列出全部目标与选项 \\
+\texttt{DEBUG=1} & 追加到任意目标后，改用 \texttt{-O0 -g -fcheck=all -fbacktrace} 调试编译 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{运行命令}
+
+\begin{enumerate}\itemsep3pt
+  \item \textbf{结构侧单机}：在算例目录（含 \texttt{control.ec}、\texttt{Mesh3d.x/dat}、
+        \texttt{bc3d.inp}）内运行：
+\begin{quote}\ttfamily\small
+/path/to/bin/struct\_solver
+\end{quote}
+  \item \textbf{非结构侧单机}：
+\begin{quote}\ttfamily\small
+bin/uns\_solver <mesh.cas> <control文件>
+\end{quote}
+        省略参数时用的是源码里的历史默认路径（\texttt{Grid\_BC/cavity.cas} 等），
+        这些文件在当前仓库中已不存在，因此\textbf{请总是显式给出两个参数}。
+  \item \textbf{弱耦合（推荐）}：在仓库根目录运行，参数依次为
+        mix 控制文件、结构侧 \texttt{.cas}（网格）、结构侧控制文件、非结构侧
+        \texttt{.cas}、非结构侧控制文件；省略时用 \texttt{grid\_BC/} 下的同名文件：
+\begin{quote}\ttfamily\small
+mpirun -np 2 bin/mixsolver\_mpi mix.control grid\_BC/Mesh3d.x \textbackslash\\
+\hspace*{1em}grid\_BC/control.ec grid\_BC/unMesh.cas grid\_BC/unMesh.control
+\end{quote}
+        \textbf{进程划分}：\texttt{nproc}$\ge$2 时 1 个 rank 跑结构侧、其余跑非结构侧；
+\end{enumerate}
+
+\section{输入文件}\label{sec:inputs}
+
+\subsection{结构侧：\texttt{control.ec}、\texttt{Mesh3d.x}、\texttt{bc3d.inp}}
+
+\begin{center}\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.20\textwidth}>{\raggedright\arraybackslash}p{0.10\textwidth}>{\raggedright\arraybackslash}p{0.64\textwidth}@{}}
+\toprule
+文件 & 读写 & 说明 \\
+\midrule
+\texttt{control.ec} & 读 & 流动参数与控制信息（namelist，见附录~\ref{app:params} 表~\ref{tab:struct-params}）；模板 \texttt{docs/control.ec.template} \\
+\texttt{Mesh3d.x} / \texttt{Mesh3d.dat} & 读 & Plot3D 多块结构网格；\texttt{Mesh\_File\_Format}=1 用文本 \texttt{.x}，=0 用无格式 \texttt{.dat} \\
+\texttt{bc3d.inp} & 读 & 每个块 6 个面的边界类型 \\
+\texttt{bc3d.inc} & 读 & 与 \texttt{bc3d.inp} 等价的``Inp-liked file''副本（随算例保存，便于人工核对） \\
+\texttt{flow3d.dat} & 读/写 & 原生 Plot3D 快照；\texttt{Iflag\_init}=1 时作为续算初值，也是耦合联合重启的载体 \\
+\texttt{Residual.dat}, \texttt{Step\_mess.dat} & 写 & 残差与时间步信息 \\
+\texttt{mesh-quality.dat} & 写 & 网格质量（\texttt{check\_mesh\_quality}） \\
+\texttt{output\_para.out} & 写 & 本次运行实际生效的全部参数（\textbf{排查参数没生效时先看它}） \\
+\texttt{wall\_dist.dat} & 写 & 壁面距离（SA/SST 用） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{bc3d.inp} 的每个块形如（取自 \texttt{grid\_BC/bc3d.inp} 的第一个块）：
+
+\begin{quote}\ttfamily\small
+43\quad101\quad11\phantom{xxxx}\# 块尺寸（i、j、k 方向的点数，或面索引范围）\\
+blk-1-split-1 \\
+6\phantom{xxxxxxxxx}\# 该块的 6 个面，每行：i1 i2 j1 j2 k1 k2 类型码 \\
+1\quad43\quad1\quad101\quad1\quad1\quad3 \\
+1\quad43\quad1\quad101\quad11\quad11\quad3 \\
+1\quad1\quad1\quad101\quad1\quad11\quad5 \\
+1\quad43\quad1\quad1\quad1\quad11\quad2 \\
+1\quad43\quad101\quad101\quad1\quad11\quad4 \\
+43\quad43\quad1\quad101\quad-1\quad-11\quad-1
+\end{quote}
+
+最后一列是边界类型码（2 Wall、3 Symmetry、4 Farfield、5 Inflow、6 Outflow、
+501 Periodic）。\textbf{注意}：块的行序必须与网格文件中的块序一致，否则边界会
+落到错误的面上。
+
+\subsection{非结构侧：\texttt{.cas} 与 \texttt{.control}}
+
+\begin{itemize}\itemsep2pt
+  \item \texttt{<mesh>.cas}：Fluent ASCII 网格（节点/单元坐标、连通性、面 zone）。
+        面 zone 的编号会被 \texttt{.control} 里的 \texttt{bc = <zone> ...} 引用；
+        网格若以 mm 导出，用 \texttt{mesh\_scale = 1.0e-3} 在读取时缩放到米。
+  \item \texttt{<case>.control}：非结构侧参数（附录~\ref{app:params}
+        表~\ref{tab:uns-params}）。\textbf{示例}（\texttt{grid\_BC/unMesh.control}）：
+\begin{quote}\ttfamily\small
+mesh\_scale = 1.0e-3 \# 网格单位为 mm \\
+rho = 1.177 \# 空气 300 K / 1 atm \\
+mu = 1.846e-5 \\
+alpha\_u = 0.7 \\
+alpha\_p = 0.3 \\
+bc = 5 wall \\
+bc = 4 symmetry \\
+bc = 6 mass-flow-inlet 2.0 300.0 \\
+bc = 7 interface
+\end{quote}
+  \item 输出：\texttt{*.vtu}（或 \texttt{out\_format = tecplot} 时写二进制
+        \texttt{*.plt}）、\texttt{<mesh>.part.map}（MPI 分区映射）、
+        \texttt{<mesh>\_cp.dat}（压力系数/采样）、重启动 dump 文件。
+\end{itemize}
+
+\subsection{耦合：\texttt{mix.control}}
+
+\textbf{示例}（\texttt{grid\_BC/mix.control} 全文）：
+
+\begin{quote}\ttfamily\small
+\# 参考状态：300 K、1 atm 的空气（与 unMesh.control 一致）\\
+rho\_ref = 1.177 \\
+T\_ref   = 300.0 \\
+L\_ref   = 0.05 \\
+\# 耦合循环 \\
+n\_couple    = 10 \\
+n\_uns\_steps = 100 \\
+\# 界面欠松弛 + 爬升：omega = iface\_relax*min(1, iter/iface\_ramp) \\
+iface\_relax = 0.3 \\
+iface\_ramp  = 10
+\end{quote}
+
+上例对应 \texttt{grid\_BC} 算例：结构侧初始为 Ma=3 来流，非结构侧入口速度仅
+$\approx1.7$ m/s，二者量级相差很大，因此用较小的 \texttt{iface\_relax} 加长
+\texttt{iface\_ramp} 缓启动；\textbf{耦合算例的参考状态必须与非结构侧
+\texttt{rho}/\texttt{mu} 一致}（上例中 $\rho=1.177$ kg/m$^3$、
+$\mu=1.846\times10^{-5}$ Pa$\cdot$s 对应 300 K、1 atm）。
+
+\section{结构化（可压缩）求解器}\label{sec:struct}
+
+\subsection{求解流程}
+
+\texttt{bin/struct\_solver} 启动后依次执行（\texttt{src/structured/main.f90}）：
+
+\begin{enumerate}\itemsep2pt
+  \item \texttt{read\_parameter}：读 \texttt{control.ec}（namelist），并写出
+        \texttt{output\_para.out}；
+  \item \texttt{check\_mesh\_multigrid}：核对 \texttt{Num\_Mesh} 与网格块数；
+  \item \texttt{Init}：分配内存、读网格（\texttt{Mesh3d.x/dat}）与 \texttt{bc3d.inp}；
+  \item \texttt{set\_control\_para}：把格式/通量/湍流/时间推进设置下发到各重网格；
+  \item \texttt{check\_mesh\_quality}：检查网格质量，在坏单元上压缩局部时间步；
+  \item \texttt{Init\_flow}：给出初值（\texttt{Iflag\_init}=1 时读 \texttt{flow3d.dat}）；
+  \item 时间推进：\texttt{do while(tt < t\_end)}，单重/二重/三重网格分别调用
+        \texttt{NS\_Time\_advance} / \texttt{NS\_2stge\_multigrid} /
+        \texttt{NS\_3stge\_multigrid}，每隔 \texttt{Kstep\_save} 步输出快照。
+\end{enumerate}
+
+\subsection{空间离散}
+
+内点格式由 \texttt{Iflag\_Scheme} 指定，边界点单独由 \texttt{Bound\_Scheme}
+指定（二者可不同；\texttt{Bound\_Scheme}=-1 表示跟随内点）。通量格式由
+\texttt{Iflag\_Flux} 选择，重构方式由 \texttt{IFlag\_Reconstruction} 选择，
+完整码表见附录~\ref{app:params} 表~\ref{tab:struct-codes}。
+
+两点经验规则：
+\begin{itemize}\itemsep2pt
+  \item 边界点格式\textbf{不要}比内点低太多：低阶边界格式是超声速/跨声速算例
+        残差停滞的常见原因。历史默认 \texttt{Bound\_Scheme}=4（MUSCL2C）与
+        \texttt{Iflag\_Scheme}=5（MUSCL3）配对。
+  \item \texttt{IF\_Scheme\_Positivity}=1 会在重构后压力/密度可能为负的局部位置
+        退回一阶迎风，等于给强激波/起动过程加一道保险；仅在确认格式本身稳定后
+        再考虑关闭。
+\end{itemize}
+
+\subsection{时间推进}
+
+\begin{center}\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.22\textwidth}>{\raggedright\arraybackslash}p{0.72\textwidth}@{}}
+\toprule
+参数 & 作用 \\
+\midrule
+\texttt{Time\_Method} & $-1$ 双时间 LU-SGS（内迭代 \texttt{Step\_Inner\_Limit} 步或残差降到 \texttt{Res\_Inner\_Limit}）；0 LU-SGS；1 显式 Euler；3 显式 RK3 \\
+\texttt{Iflag\_local\_dt} & 1 局部时间步（定常加速收敛），0 全局时间步（时间精确） \\
+\texttt{CFL} & 局部时间步的 CFL 目标；LU-SGS 一般可取 5$\sim$20 \\
+\texttt{dtmax} / \texttt{dtmin} & 时间步上下限 \\
+\texttt{If\_dtime\_mesh} & 网格质量差时自动缩小局部时间步（与 \texttt{mesh-quality.dat} 配合排查） \\
+\texttt{Num\_Mesh}, \texttt{Pre\_Step\_Mesh} & 多重网格重数与各重预推进步数 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{湍流模型}
+
+\texttt{Iflag\_turbulence\_model} = 0 无、1 Baldwin--Lomax、2 Spalart--Allmaras
+（含新 SA 常数 \texttt{CP1\_NSA}/\texttt{CP2\_NSA}）、3 SST（初值
+\texttt{Kt\_inf}/\texttt{Wt\_inf}）；\texttt{MUT\_MAX} 可给 $v_t$ 上限。
+\texttt{regress/m6wing} 是 SA 模型的位级回归算例（见 \S\ref{sec:regress}）。
+
+\subsection{边界条件与出口}
+
+结构侧边界来自 \texttt{bc3d.inp} 的类型码（表~\ref{tab:struct-codes}）。
+亚声速出口使用\textbf{线性化 Riemann 反射}：由 \texttt{p\_outlet}（$<0$ 时取
+零阶外插）给定静压，其余特征量取自内部；这正是耦合界面在结构侧所用的机制
+——界面 ghost 单元由对侧背压 $p_b$ 构造（见 \S\ref{sec:coupling}）。
+
+\subsection{输出与续算}
+
+每隔 \texttt{Kstep\_save} 步写一次 \texttt{flow3d.dat}；把
+\texttt{Iflag\_init} 设为 1 即从该文件续算。\textbf{耦合联合重启}
+（\texttt{couple\_restart=1}）会强制走这条路径。
+
+\section{低速（非结构）求解器}\label{sec:uns}
+
+\subsection{求解流程}
+
+\begin{enumerate}\itemsep2pt
+  \item 预扫描 \texttt{mesh\_scale}（必须在读网格前生效）$\to$ 读 Fluent
+        \texttt{.cas}：节点、单元、面 zone、连通性与几何量；
+  \item \texttt{read\_control}：读 \texttt{key = value} 控制文件（附录~\ref{app:params}
+        表~\ref{tab:uns-params}）；解析 \texttt{bc} / \texttt{lid} / \texttt{tbc} /
+        \texttt{tbc\_plane} / \texttt{cell\_zone}；
+  \item 由控制参数决定走 \texttt{simple\_run}（稳态）、\texttt{piso\_run}
+        （瞬态）或 \texttt{pimple\_run}（瞬态 + 动量松弛/外迭代）；
+  \item 结束：写结果文件与（可选）重启动 dump。
+\end{enumerate}
+
+\subsection{稳态 SIMPLE}
+
+\texttt{alpha\_u}/\texttt{alpha\_p} 是动量/压力修正的欠松弛因子，
+\texttt{outer\_max}/\texttt{outer\_tol} 是外迭代上限与残差收敛判据，
+\texttt{lin\_tol}/\texttt{lin\_max} 是线性求解器（CG + \texttt{ppe\_precond}）
+的收敛限与迭代上限。\texttt{conv\_blend} 控制对流通量：0 一阶迎风（最稳）、
+1 限幅二阶迎风（精度高、易振荡），中间值为混合。
+
+\subsection{压力方程与``压力电平''}
+
+压力修正方程是\textbf{纯 Neumann 问题}：它的解只能定到相差一个常数，物理上靠
+边界条件``锚定''压力。三条实践要点：
+
+\begin{itemize}\itemsep2pt
+  \item 全部边界都是速度 Dirichlet（\texttt{mass-flow-inlet} ＋ 界面）时，
+        \textbf{边界净体积通量必须为零}，否则压力方程无解。实现上对界面面速度
+        施加均匀法向修正以满足这一相容性条件；
+  \item \texttt{pressure-outlet} 的 \texttt{pval} 只是\textbf{表压锚点}（常密度下
+        整场平移），但它的\textbf{可用范围很小}：正值约 $+15$ Pa 以内、负值到约
+        $-200$ Pa；\texttt{pval} 取 $+100$ 及以上会发散（已多次复现）。需要大压差
+        时改用 \texttt{mass-flow-inlet} ＋ \texttt{outflow}（后者每次迭代按入口
+        总量重标定出口通量，天然相容）；如必须用远高于该范围的目标压差，改用
+        \texttt{pressure-far-field}；
+  \item 开放边界曾出现约 $-250$ Pa 的\textbf{绝对压力电平偏置}，根因是内部面对流
+        系数把已是质量通量（kg/s）的 \texttt{fld\%flux} 重复乘了 $\rho$。若日后
+        再次出现``梯度对、电平错''，先检查对流系数的量纲一致性（
+        \texttt{momentum\_assembly}）。
+\end{itemize}
+
+\subsection{瞬态 PISO / PIMPLE}
+
+\texttt{transient = true} 且 \texttt{dt}$>0$ 时进入瞬态路径，\texttt{n\_correct}
+是 PISO 压力修正扫掠次数，\texttt{time\_scheme} 选 implicit Euler（1）或 BDF2（2，
+首步自动用 Euler 启动）。\texttt{pimple = true} 时改用 PIMPLE：动量按
+\texttt{alpha\_u} 松弛、压力仍全量修正，\texttt{n\_outer\_iter} 给出每时间步的
+外迭代次数（=1 即``带动量松弛的 PISO''）。\texttt{n\_out\_every} 控制每 N 个时间步
+写一次结果。
+
+\subsection{能量方程、浮力与多孔介质}
+
+\begin{itemize}\itemsep2pt
+  \item \textbf{能量方程}：$\rho c_p(\partial_t T + \mathbf{u}\cdot\nabla T)
+        = \nabla\cdot(k\nabla T)$，由 \texttt{cp}、\texttt{k\_cond} 给出物性；
+        \texttt{boussinesq = true} 时额外在动量方程加
+        $-\rho\beta(T-T_{ref})\mathbf{g}V$（\texttt{beta}、\texttt{tref}、
+        \texttt{gravity}）。初始温度由 \texttt{init\_t}（＋可选
+        \texttt{t\_pert} 扰动）给出。
+  \item \textbf{多孔介质}：由 \texttt{cell\_zone} 把体区标为 \texttt{porous}，
+        Darcy--Forchheimer 阻力用 \texttt{perm}（或对角
+        \texttt{perm\_xx/yy/zz}）与 \texttt{inertial} 描述；\texttt{porosity}
+        进入有效热容，
+        \texttt{k\_s}/\texttt{cp\_s}/\texttt{rho\_s} 与 \texttt{h\_sf}/\texttt{a\_sf}
+        用于固相与\textbf{LTNE 双温度}（\texttt{thermal\_model = ltne}）；
+        \texttt{disp\_l}/\texttt{disp\_t} 为纵向/横向热弥散；
+        \texttt{bj\_alpha} 打开流体/多孔界面的 Beavers--Joseph 滑移。
+  \item \textbf{能量方程必须给入口温度}：\texttt{velocity-inlet} /
+        \texttt{mass-flow-inlet} 的第 4 个 token 是入口静温；不写时温度会被拉向 0
+        （历史缺陷，已修复为可检测）。
+\end{itemize}
+
+\subsection{MPI 分区与重启动}
+
+MPI 版本在 rank 0 上用串行 METIS 分区，映射缓存为 \texttt{<mesh>.part.map}；
+\texttt{partition\_file} 指定已存在的映射且与当前进程数/网格一致时直接复用。
+\texttt{restart = true} ＋ \texttt{restart\_file} 从 dump 文件续算；
+\texttt{dump\_file} 指定结束时写出的 dump（用于链式重启）。
+
+\subsection{使用注意事项（都有实际踩坑记录）}
+
+\begin{itemize}\itemsep2pt
+  \item \textbf{多 cell zone 的 cell-id 排序}：必须使分割方向索引最慢，让每个
+        zone 占一段连续 id；写错会得到``梯度只有解析值约 60\%''这类似是而非的结果
+        （详见 \S\ref{app:cz} 的硬约束框）。
+  \item \textbf{未知关键字会被静默忽略}（只打印 WARNING），参数写错名字等于没写；
+        长跑前先确认关键参数出现在启动打印/日志里。
+  \item \textbf{诊断脚本要限定取窗}：采样窗口宽度必须 $\le$ 一个单元且用绝对坐标
+        窗，否则会把相邻区域的值混进来，得到``幻影压差''。
+\end{itemize}
+
+\section{弱耦合求解}\label{sec:coupling}
+
+\subsection{进程划分}
+
+\texttt{nproc}$\ge$2：1 个 rank 跑结构侧（\texttt{komm\_struct}），其余全部跑非结构侧
+（\texttt{komm\_uns}）；界面数据只在两个\textbf{耦合根进程}之间交换一次，再由各
+自的 MPI 通信子广播/汇总。\texttt{nproc}=1 时分派代码把唯一 rank 划到非结构组
+（源码注释写``同一进程顺序跑两侧''，但实现里 \texttt{n\_struct\_ranks}=0），
+所以\textbf{调试真正的多物理耦合请用 \texttt{-np 2} 及以上}。
+
+\subsection{界面匹配与类型分派}
+
+\begin{itemize}\itemsep2pt
+  \item 每个界面由一对（结构面集合，非结构面集合）构成，匹配用几何最近点/投影 ＋
+        双线性插值权重（\texttt{mod\_interface\_match}，测试 \texttt{bin/match\_test}）。
+  \item 每个界面记录 \texttt{Interface\_FACE\_TYPE}：对侧类型（\texttt{PEER\_STRUCT}/
+        \texttt{PEER\_UNS}）、体区类型（fluid/porous）、位置面与界分类；
+        \texttt{classify\_interface} 给出组合分类——
+        \textbf{结构侧恒为 comp+fluid}，跨求解器的 fluid/porous 只由非结构侧体区类型
+        决定，非结构$\leftrightarrow$非结构为 \texttt{IFACE\_UNS\_FLUID\_POROUS}。
+  \item 启动时应看到分派报告，且 \texttt{classify} 的 \texttt{unclassified} 计数必须为 0；
+        \texttt{match\_test} 会对 \texttt{grid\_BC}（全流体算例）断言``不得判为 porous''。
+\end{itemize}
+
+\subsection{界面交换契约（Dirichlet--Neumann）}
+
+\begin{center}\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.22\textwidth}>{\raggedright\arraybackslash}p{0.72\textwidth}@{}}
+\toprule
+方向 & 施加量 \\
+\midrule
+结构 $\to$ 非结构 & 只传\textbf{速度}（$\mathbf{u}_{BC} = \omega\mathbf{u}_{struct} +
+ (1-\omega)\mathbf{u}_{uns}$，仅速度 Dirichlet；界面压力取零梯度） \\
+非结构 $\to$ 结构 & 只传\textbf{背压} $p_b$（结构侧用与亚声速出口相同的线性化
+ Riemann 反射构造界面 ghost，强度 $\alpha=0.3\min(1, iter/\texttt{iface\_ramp})$） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{为什么不同时交换压力}：两侧都施加压力会过度约束界面，把解冻结在一个
+kPa 量级的压力跳变上（早期方案的实测症状）。改成分区（一侧 Dirichlet 速度、
+另一侧用背压特征反射）后，界面压差回到物理量级（\texttt{couple\_channel}
+约 4.1 Pa，用 \texttt{docs/compare\_iface.py} 复核）。
+
+\textbf{质量守恒修正}：当全部边界都是速度 Dirichlet（\texttt{mass-flow-inlet}
+＋ 界面）时，压力方程（纯 Neumann）要求边界净体积通量为零，因此对界面面速度
+叠加一个均匀法向修正，使界面通量恰好抵消其他边界的净通量。
+
+\subsection{收敛判据与诊断}
+
+每次耦合迭代会打印界面量的均值（速度、表压、温度），可直接看出两侧是否
+``对齐''。收敛判据目前是\textbf{人工判据}：界面量随时间基本不再变化
+（\texttt{couple\_channel} np2 约 100 个耦合步后冻结）、残差曲线走平。
+调参顺序建议：先减小 \texttt{iface\_relax} 或加大 \texttt{iface\_ramp}（冷启动
+阶段的失稳几乎都来自第一次交换过猛），再增加 \texttt{n\_uns\_steps}
+（让非结构侧在每个耦合步内更接近收敛），最后才加 \texttt{n\_couple}。
+
+\subsection{存档与联合重启}
+
+\texttt{save\_interval} $>0$ 时，每 N 个耦合步结构侧写 \texttt{flow3d.dat}、
+两侧同时写耦合状态（\texttt{couple\_state.dat}）与非结构侧重启文件
+（\texttt{unMesh\_restart.dat}），另有可视化输出 \texttt{unMesh\_coupled.vtu}。
+\texttt{couple\_restart = 1} 时再次启动会从这些文件继续。\textbf{复现实验时}
+\texttt{save\_interval} 必须 $\le$ \texttt{n\_couple}，否则末态不落盘。
+
+\section{算例集}\label{sec:cases}
+
+所有算例位于 \texttt{cases/} 下，\textbf{每个目录都有 README.md}，内含网格来源、
+参数、\textbf{复现命令}与预期结果（数值/量级）；下表只给出验证对象与入口。
+运行非结构侧算例的一般形式为
+\texttt{bin/uns\_solver <case>.cas <case>.control}。
+
+{\small
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.20\textwidth}>{\raggedright\arraybackslash}p{0.72\textwidth}@{}}
+\caption{验证算例一览}\label{tab:cases}\\
+\toprule
+算例目录 & 验证对象 / 要点 \\
+\midrule
+\endfirsthead
+\multicolumn{2}{@{}l}{\small\itshape 表~\ref{tab:cases}（续）}\\
+\toprule
+算例目录 & 验证对象 / 要点 \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\texttt{channel} & 不可压缩槽道流；\texttt{mass-flow-inlet} 冷启动稳定性、\texttt{outflow} 出口相容性 \\
+\texttt{backstep} & 后台阶分离/再附 \\
+\texttt{cylinder\_cas} / \texttt{cylinder\_neu} & 圆柱绕流的两种入口/出口处理对比 \\
+\texttt{natconv} & 自然对流算例族：\texttt{fluid/}（Rayleigh--B\'enard，
+ \texttt{rb\_Ra1000}$\sim$\texttt{rb\_Ra5e4}）、\texttt{porous\_darcy/}、
+ \texttt{porous\_extra/}（Forchheimer、$\varepsilon$、$K$ 敏感性、LTE 有效导热） \\
+\texttt{ltne} & LTNE 1D 多孔发汗冷却（解析解对比） \\
+\texttt{ltne\_disp} & LTNE ＋ 纵向热弥散组合 \\
+\texttt{ltne\_graetz} / \texttt{porous\_graetz} & 二维 Graetz 强制对流（含横向热弥散） \\
+\texttt{porous\_disp} & 2D 横向热弥散 \\
+\texttt{porous\_plug} & 1D 多孔塞压降：Darcy、Forchheimer（\texttt{plug\_darcy}/
+ \texttt{plug\_forch}）、对角各向异性（\texttt{plug\_aniso1/1b/2}） \\
+\texttt{beavers\_joseph} & 流体/多孔界面 Beavers--Joseph 滑移（
+ \texttt{bj\_a0/a1/a2}：系数 0/1/2） \\
+\texttt{calibration} & 多孔参数 $\alpha$/$K$ 的数值标定实验设计 \\
+\texttt{lnte1d\_cgns} & LTNE 1D 的另一路网格（CGNS 导出）交叉验证 \\
+\texttt{couple\_channel} & \textbf{可压缩$\leftrightarrow$低速}跨组界面（np2）：布局、量纲匹配、
+ 缺陷与修法、结果、复现命令 \\
+\texttt{couple\_porous} & \textbf{可压缩$\leftrightarrow$多孔}跨组界面（np2）：cell-id
+ 排序与取窗两条硬规则 \\
+\texttt{regress/m6wing} & 结构侧 SA 模型\textbf{位级回归}（见 \S\ref{sec:regress}） \\
+\end{longtable}
+}
+
+\section{验证与回归}\label{sec:regress}
+
+\subsection{测试程序}
+
+\begin{center}\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.30\textwidth}>{\raggedright\arraybackslash}p{0.62\textwidth}@{}}
+\toprule
+命令 & 判据 \\
+\midrule
+\texttt{bin/units\_test} & 结构/无量纲 $\leftrightarrow$ SI 换算往返可逆；常量场插值精确；面平均守恒 \\
+\texttt{mpirun -np 2 bin/coupling\_test} & 跨组交换协议端到端：常量场、斜坡场的值/次序、两侧面数为 0 时不死锁 \\
+\texttt{cd grid\_BC \&\& mpirun -np 1 ../bin/match\_test} & 界面匹配 250/250 命中、类型分派全为 \texttt{comp-fluid<->lowspeed-fluid}、\texttt{unclassified=0}、全流体算例不得判为 porous \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{结构侧位级回归（M6-wing）}
+
+\begin{quote}\ttfamily\small
+regress/m6wing/run\_regression.sh \phantom{xxxx}\# 用 baseline/ 比对（快）\\
+M6\_REBUILD\_REF=1 regress/m6wing/run\_regression.sh \phantom{x}\# 顺便重建原始参考解
+\end{quote}
+
+脚本在 4 块 M6 机翼算例、\texttt{np1}、\texttt{t\_end}=0.501（51 步）下，把在树
+求解器与 OpenCFD-EC 1.16a 参考解\textbf{逐字节}比较：二进制文件
+\texttt{flow3d.dat}、\texttt{SA3d.dat}、\texttt{wall\_dist.dat}、
+\texttt{partation-auto.dat}、\texttt{part\_grid.dat}（\texttt{cmp}）与文本文件
+\texttt{Step\_mess.dat}、\texttt{bc3d.inc}、\texttt{mesh-quality.dat}
+（\texttt{diff}），最后打印 \texttt{flow3d.dat} 的 md5 并期望等于
+\texttt{dc134a2d196422043ecad7c86ac8f898}；全绿时输出
+\texttt{M6-WING REGRESSION: PASS}（退出码 0）。环境变量：\texttt{M6\_WORK}
+（临时目录）、\texttt{M6\_NP}（进程数）、\texttt{M6\_OPT}（参考解编译选项）、
+\texttt{M6\_J}（\texttt{make -j}）。已知无害差异只有 \texttt{output\_para.out}
+（不在比较集合内，原始程序会多打印已被删除的 \texttt{IF\_TurboMachinary} 等键）。
+
+\subsection{回归纪律}
+
+\begin{itemize}\itemsep2pt
+  \item \textbf{任何结构侧数值改动都必须先跑 M6-wing 位级回归}：要么保持
+        \texttt{IDENTICAL}，要么在提交说明与
+        \texttt{docs/93\_changelog.tex} 中明确写出``为什么必须变化''并同步更新
+        \texttt{baseline/}（含 \texttt{md5sums.txt}）。
+  \item 非结构侧的验证用算例解析解/半解析解 + 与前一版本逐位对照（例如
+        \texttt{regress} 之外的算例都应能复现 README 中的表格数值）。
+  \item 手册/参数表与代码必须\textbf{同一次提交}更新（
+        .trae/rules/project\_rules.md）。
+\end{itemize}
+
+\section{常见问题（FAQ）}\label{sec:faq}
+
+\noindent\textbf{1. 结构侧启动即报 \texttt{Cannot match namelist object name ...}。}
+\texttt{control.ec} 里出现了值不是字面量的赋值（例如把源码符号常量
+\texttt{Scheme\_MUSCL2C} 写进组内），或关键字拼错。namelist 组内只能写整数/实数/
+字符串字面量；\texttt{\$end} 之后的文本根本不参与解析，放符号常量没事。见
+附录~\ref{app:params} 表~\ref{tab:struct-params}。
+
+\noindent\textbf{2. ``我改了参数，但结果没变''。}
+非结构侧未知关键字只打印 WARNING 后忽略（键名拼错等于没写）；结构侧请核对本次
+运行的 \texttt{output\_para.out}（它记录实际生效的全部参数）。
+
+\noindent\textbf{3. 耦合第一步就把非结构侧打崩。}
+先检查两件事：（a）两侧\textbf{参考状态是否一致}（\texttt{mix.control} 与
+\texttt{.control} 的 \texttt{rho}/\texttt{mu}）；（b）量级是否相差过大
+（例如结构侧 Ma=3 来流 vs 非结构侧 1.7 m/s 入口）。处理：减小
+\texttt{iface\_relax}、加大 \texttt{iface\_ramp}（冷启动缓释），再把
+\texttt{n\_uns\_steps} 调大。
+
+\noindent\textbf{4. 界面压差是 kPa 级、且``冻''住不降。}
+这是两侧同时施加压力的过约束症状；当前实现已在结构侧改为只用背压构造 ghost
+（Dirichlet--Neumann 分区），正常应回到 Pa 量级（\texttt{couple\_channel}
+约 4.1 Pa）。若仍异常，用 \texttt{docs/compare\_iface.py} 复核并检查是否误用了
+旧版数据/脚本。
+
+\noindent\textbf{5. 绝对压力整体偏移，但速度/梯度都对。}
+见 \S\ref{sec:uns} 的``压力电平''：压力方程是纯 Neumann，靠边界锚定；同时检查
+对流系数的量纲（质量通量 kg/s 不能再乘 $\rho$）。
+
+\noindent\textbf{6. 多孔算例的梯度只有解析值约 60\%。}
+几乎都是多 cell zone 网格的 cell-id 排序写错（分割方向索引不是最慢），
+见 \S\ref{app:cz} 的硬约束框；用带回归守卫的诊断脚本确认 zone 的几何位置。
+
+\noindent\textbf{7. 跑完发现没有末态存档。}
+\texttt{save\_interval} 必须 $\le$ \texttt{n\_couple}（耦合算例），结构侧单跑则看
+\texttt{Kstep\_save} 与 \texttt{t\_end} 的关系。
+
+\noindent\textbf{8. \texttt{mpirun} 返回非零退出码。}
+原始参考程序不调用 \texttt{MPI\_Finalize}（见 \texttt{memory-bank/constraints.md}）；
+M6-wing 回归脚本因此只用文件比较判定成败，不看退出码。
+
+\noindent\textbf{9. 温度场被拉向 0。}
+\texttt{velocity-inlet}/\texttt{mass-flow-inlet} 少写了入口静温 token；求解能量
+方程时必须给出。
+
+\noindent\textbf{10. 网格看起来``小了一千倍''（雷诺数、压差都不对）。}
+网格以 mm 导出时漏了 \texttt{mesh\_scale = 1.0e-3}。
+
+\section{更新记录}\label{sec:changelog}
+
+\input{\detokenize{93_changelog}}
+
+\appendix
+\input{\detokenize{91_appendix_params}}
+
+\end{document}

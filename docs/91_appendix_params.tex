@@ -1,0 +1,380 @@
+% !TeX root = 程序使用手册.tex
+%=============================================================================
+% 91_appendix_params.tex -- 附录 A：参数总表
+% \input 自 docs/程序使用手册.tex（在 \appendix 之后）。
+% 维护规则（.trae/rules/project_rules.md）：新增/修改任何控制参数时，
+% 必须同步本文件的对应表行。
+%=============================================================================
+
+\section{参数总表}\label{app:params}
+
+本附录汇总三类控制文件的全部关键字、默认值与含义，是``按名字查参数''的
+唯一权威清单：
+
+\begin{itemize}\itemsep2pt
+  \item \textbf{A.1} 结构侧 \texttt{control.ec}（Fortran namelist 组 \texttt{control\_ec}）
+  \item \textbf{A.2} 非结构侧 \texttt{*.control}（\texttt{key = value} 风格）
+  \item \textbf{A.3} 耦合 \texttt{mix.control}（参考状态 ＋ 耦合循环）
+  \item \textbf{A.4} \texttt{bc} 行语法与全部边界类型
+  \item \textbf{A.5} \texttt{cell\_zone}（多孔/热物性）子关键字
+  \item \textbf{A.6} \texttt{tbc} / \texttt{tbc\_plane} / \texttt{lid}
+\end{itemize}
+
+\begin{center}\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.20\textwidth}>{\raggedright\arraybackslash}p{0.24\textwidth}>{\raggedright\arraybackslash}p{0.50\textwidth}@{}}
+\toprule
+文件 & 风格 & 解析器 \\
+\midrule
+\texttt{control.ec} & \texttt{\$control\_ec}\dots\texttt{\$end} namelist &
+\texttt{mod\_struct\_init:read\_parameter\_ec} \\
+\texttt{*.control} & \texttt{key = value}，\texttt{\#} 注释 &
+\texttt{mod\_uns\_control:read\_control} \\
+\texttt{mix.control} & \texttt{key = value}，\texttt{\#} 注释 &
+\texttt{mod\_reference\_state:read\_mix\_control} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{结构侧 \texttt{control.ec}（namelist \texttt{control\_ec}）}
+
+\textbf{格式硬规则}：只有 \texttt{\$control\_ec} 与 \texttt{\$end} 之间的文本
+被解析；\texttt{\$end} \textbf{之后的内容一律忽略}（历史 OpenCFD-EC 文件在那里
+放参考段落，属死文本）。组内\textbf{值必须是字面量}：源码里的符号常量
+（如 \texttt{Scheme\_MUSCL2C}）写在组内会使读取以
+\texttt{Cannot match namelist object name scheme\_muscl2c} 直接中止
+（已实测）；只能写表~\ref{tab:struct-codes} 中的整数码。键按名字匹配，
+可任意次序、任意子集给出，未给出的键取``默认''列。可直接以
+\texttt{docs/control.ec.template} 为起点。
+
+{\small
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.24\textwidth}>{\raggedright\arraybackslash}p{0.15\textwidth}>{\raggedright\arraybackslash}p{0.55\textwidth}@{}}
+\caption{结构侧 \texttt{control.ec} 参数总表}\label{tab:struct-params}\\
+\toprule
+参数 & 默认 & 含义 \\
+\midrule
+\endfirsthead
+\multicolumn{3}{@{}l}{\small\itshape 表~\ref{tab:struct-params}（续）}\\
+\toprule
+参数 & 默认 & 含义 \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\texttt{Ma}                     & 1.0    & 自由来流马赫数 \\
+\texttt{Re}                     & 1000.0 & 雷诺数 $= \rho_{ref} U_{ref} L_{ref}/\mu$ \\
+\texttt{gamma}                  & 1.4    & 比热比 \\
+\texttt{AoA}                    & 0.0    & 攻角 [deg] \\
+\texttt{AoS}                    & 0.0    & 侧滑角 [deg] \\
+\texttt{T\_inf}                 & 288.15 & 粘性律（Sutherland）参考温度 [K] \\
+\texttt{Twall}                  & $-1.0$ & 壁面定温 [K]；$<0$ 表示绝热 \\
+\texttt{p\_outlet}              & $-1.0$ & 亚声速出口静压 [Pa 绝对]；$<0$ 表示零阶外插 \\
+\texttt{PrL}                    & 0.7    & 层流 Prandtl 数 \\
+\texttt{PrT}                    & 0.9    & 湍流 Prandtl 数 \\
+\texttt{Iflag\_init}            & 0      & 0 自由来流初值；1 从 \texttt{flow3d.dat} 续算；$-1$ 零流场 \\
+\texttt{t\_end}                 & 100.0  & 无量纲终止时间 \\
+\texttt{Kstep\_save}            & 1000   & 每 N 步写一次 \texttt{flow3d.dat} \\
+\texttt{Kstep\_show}            & 1      & 每 N 步打印残差 \\
+\texttt{Kstep\_average}         & 0      & 每 N 步做流场平均（0 = 不做） \\
+\texttt{Kstep\_smooth}          & $-1$   & 每 N 步流场光滑（$<0$ = 不做） \\
+\texttt{Kstep\_init\_smooth}    & 0      & 初始时刻光滑次数 \\
+\texttt{Iflag\_local\_dt}       & 1      & 1 局部时间步；0 全局时间步 \\
+\texttt{dt\_global}             & 0.01   & 全局时间步长（\texttt{Iflag\_local\_dt}=0 时使用） \\
+\texttt{CFL}                    & 1.0    & CFL 数（局部时间步的 CFL 目标） \\
+\texttt{dtmax}, \texttt{dtmin}  & 10.0, 1e-9 & 时间步上下限 \\
+\texttt{Time\_Method}           & 0      & $-1$ 双时间 LU-SGS；0 LU-SGS；1 Euler；3 RK3 \\
+\texttt{If\_Residual\_smoothing} & 0     & 残差光滑开关（0/1） \\
+\texttt{w\_LU}                  & 1.0    & LU-SGS 松弛因子 \\
+\texttt{If\_dtime\_mesh}        & 1      & 网格质量差时自动缩小时间步 \\
+\texttt{Iflag\_Scheme}          & 5      & 内点空间格式码，见表~\ref{tab:struct-codes} \\
+\texttt{Iflag\_Flux}            & 5      & 通量格式码，见表~\ref{tab:struct-codes} \\
+\texttt{IFlag\_Reconstruction}  & 0      & 重构方式码（0 原始 / 1 守恒 / 2 特征） \\
+\texttt{Bound\_Scheme}          & 4 (MUSCL2C) & 边界点格式码；写 $-1$ 表示跟随 \texttt{Iflag\_Scheme} \\
+\texttt{IF\_Scheme\_Positivity} & 1      & 重构后压力/密度可能为负时局部退回 1 阶迎风 \\
+\texttt{IFLAG\_LIMIT\_FLOW}     & 1      & 流场限幅总开关 \\
+\texttt{Ldmin}, \texttt{Ldmax}  & 1e-6, 1000 & 密度限幅 \\
+\texttt{Lpmin}, \texttt{Lpmax}  & 1e-6, 1000 & 压力限幅 \\
+\texttt{Lumax}                  & 1000   & 速度限幅 \\
+\texttt{LSAmax}                 & 1000   & SA 变量限幅 \\
+\texttt{Mesh\_File\_Format}     & 0      & 0 二进制 \texttt{Mesh3d.dat}；1 文本 \texttt{Mesh3d.x} \\
+\texttt{Num\_Mesh}              & 1      & 网格重数（1 = 单重） \\
+\texttt{Pre\_Step\_Mesh(1:3)}   & 0,0,0  & 各重网格的预推进步数 \\
+\texttt{Cood\_Y\_UP}            & 1      & 1 Y 轴向上；0 Z 轴向上 \\
+\texttt{Periodic\_dX/dY/dZ}     & 0.0    & 周期边界的几何平移量 \\
+\texttt{Ref\_S}, \texttt{Ref\_L} & 1.0, 1.0 & 力/力矩系数的参考面积、参考长度 \\
+\texttt{Centroid(1:3)}          & 0,0,0  & 力矩参考点 \\
+\texttt{Iflag\_savefile}        & 0      & 保持 0：写原生 Plot3D 快照 \texttt{flow3d.dat}（联合重启依赖它） \\
+\texttt{IF\_Debug}              & 0      & 调试输出开关 \\
+\texttt{Pdebug(1:4)}            & 1,1,1,1 & 分项调试开关 \\
+\texttt{NUM\_THREADS}           & 1      & OpenMP 线程数 \\
+\texttt{Step\_Inner\_Limit}     & 20     & 双时间内迭代步数上限 \\
+\texttt{Res\_Inner\_Limit}      & 1e-10  & 双时间内迭代残差限 \\
+\texttt{Iflag\_turbulence\_model} & 0    & 0 无；1 Baldwin--Lomax；2 SA；3 SST \\
+\texttt{Kt\_inf}, \texttt{Wt\_inf} & 1e-5, 0.01 & SST 模型的初始 $k_t$、$w_t$ \\
+\texttt{CP1\_NSA}, \texttt{CP2\_NSA} & 0.2, 100.0 & 新 SA 模型常数 \\
+\texttt{MUT\_MAX}               & $-1.0$ & $v_t/v_s$ 限幅；$<0$ 不限 \\
+\texttt{If\_viscous}            & 1      & 0 无粘；1 有粘 \\
+\end{longtable}
+}
+
+\begin{table}[h]
+\centering\small
+\caption{结构侧整数格式码对照}\label{tab:struct-codes}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.30\textwidth}>{\raggedright\arraybackslash}p{0.66\textwidth}@{}}
+\toprule
+参数 & 取值 \\
+\midrule
+\texttt{Iflag\_Scheme} & 0 UD1；1 NND2；2 UD3；3 MUSCL2U；4 MUSCL2C；5 MUSCL3；6 OMUSCL2；7 WENO5；8 UD5；9 WENO7 \\
+\texttt{Iflag\_Flux} & 1 Steger--Warming；2 HLL；3 HLLC；4 Roe；5 Van Leer；6 AUSM \\
+\texttt{IFlag\_Reconstruction} & 0 Original；1 Conservative；2 Characteristic \\
+\texttt{Time\_Method} & $-1$ dual-LU-SGS；0 LU-SGS；1 Euler；3 RK3 \\
+\texttt{Iflag\_turbulence\_model} & 0 无；1 BL；2 SA；3 SST \\
+\texttt{bc3d.inp} 类型码 & 2 Wall；3 Symmetry；4 Farfield；5 Inflow；6 Outflow；501 Periodic \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{非结构侧 \texttt{*.control}}\label{app:uns-params}
+
+\texttt{key = value} 风格，一行一个关键字，\texttt{\#} 之后为注释；行内多余的
+空格被忽略，键名不区分大小写。未识别的键只打印
+\texttt{WARNING: unknown control keyword} 并忽略（向后兼容），因此拼错的键
+\textbf{会静默失效}——请对照本表检查。\texttt{bc} / \texttt{cell\_zone} 行可
+重复（上限分别为 32 / 32 条）。
+
+{\small
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.22\textwidth}>{\raggedright\arraybackslash}p{0.14\textwidth}>{\raggedright\arraybackslash}p{0.58\textwidth}@{}}
+\caption{非结构侧 \texttt{*.control} 参数总表}\label{tab:uns-params}\\
+\toprule
+参数 & 默认 & 含义 \\
+\midrule
+\endfirsthead
+\multicolumn{3}{@{}l}{\small\itshape 表~\ref{tab:uns-params}（续）}\\
+\toprule
+参数 & 默认 & 含义 \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\texttt{rho}          & 1.0   & 流体密度 [kg/m$^3$]（常密度假设） \\
+\texttt{mu}           & 0.01  & 动力粘性系数 [Pa$\cdot$s] \\
+\texttt{alpha\_u}     & 0.7   & 动量方程欠松弛因子 \\
+\texttt{alpha\_p}     & 0.3   & 压力修正欠松弛因子 \\
+\texttt{outer\_max}   & 2000  & SIMPLE 外迭代步数上限 \\
+\texttt{outer\_tol}   & 1e-6  & 外迭代收敛残差限 \\
+\texttt{lin\_tol}     & 1e-8  & 线性方程组迭代收敛限 \\
+\texttt{lin\_max}     & 200   & 线性方程组迭代上限 \\
+\texttt{conv\_blend}  & 0.0   & 0 一阶迎风；1 限幅二阶迎风（延迟修正）；中间值为混合 \\
+\texttt{nonorth\_corr} & 1.0  & 非正交扩散修正：0 仅正交，1 全修正（延迟、滞后） \\
+\texttt{ppe\_precond} & ic0   & 压力 Poisson 方程 CG 预处理：\texttt{jacobi} 或 \texttt{ic0}（不完全 Cholesky） \\
+\texttt{out\_format}  & vtu   & 结果格式：\texttt{vtu}（VTK XML）或 \texttt{tecplot}（TecIO 二进制 \texttt{.plt}）；别名 \texttt{out\_fmt} \\
+\texttt{transient}    & false & false = 稳态 SIMPLE；true = 瞬态 PISO/PIMPLE \\
+\texttt{time\_scheme} & 1     & 1 隐式 Euler；2 BDF2（首步用 Euler 启动） \\
+\texttt{dt}           & 0.0   & 时间步长（\texttt{transient=true} 时必须 $>0$） \\
+\texttt{n\_time\_max} & 0     & 最大时间步数 \\
+\texttt{n\_correct}   & 2     & PISO 压力修正扫掠次数（$\ge 1$） \\
+\texttt{n\_out\_every} & 0    & 每 N 个时间步写一次 VTU（0 = 只写末态） \\
+\texttt{pimple}       & false & \texttt{transient} 且 \texttt{pimple} 为真时走 \texttt{pimple\_run} \\
+\texttt{n\_outer\_iter} & 1   & 每时间步的外迭代次数（$\ge 1$；1 = 带动量松弛的 PISO） \\
+\texttt{restart}      & false & true 时从 \texttt{restart\_file} 读场并重启 \\
+\texttt{restart\_file} & （空） & 场 dump 文件路径（\texttt{restart}=true 时必需） \\
+\texttt{partition\_file} & （空） & 预置分区映射：与当前 nprocs / 网格一致则复用（跳过 METIS） \\
+\texttt{dump\_file}   & （空） & 运行结束时写出的场 dump 路径（链式重启用） \\
+\texttt{mesh\_scale}  & 1.0   & 网格坐标整体缩放；以毫米导出的网格写 \texttt{1.0e-3} \\
+\texttt{inlet\_ramp}  & 1     & \texttt{mass-flow-inlet} 速度在前 N 次外迭代内线性爬升（0/1 = 不爬升） \\
+\texttt{cp}           & 1005.0 & 比热容 $c_p$ [J/kg/K] \\
+\texttt{k\_cond}      & 0.026 & 导热系数 $k$ [W/m/K] \\
+\texttt{tref}         & 0.0   & Boussinesq 参考温度 $T_{ref}$ \\
+\texttt{beta}         & 0.0   & 热膨胀系数 $\beta$ \\
+\texttt{gravity}      & 0,0,0 & 重力加速度矢量（指向地心）[m/s$^2$] \\
+\texttt{body\_force}  & 0,0,0 & 均匀体积力 [N/m$^3$]（如明渠平均压力梯度替代） \\
+\texttt{boussinesq}   & false & 打开浮力耦合：动量加 $-\rho\beta(T-T_{ref})\mathbf{g}V$ \\
+\texttt{thermal\_model} & lte & \texttt{lte}（单温度方程）或 \texttt{ltne}（流体/固体双温度） \\
+\texttt{init\_t}      & 0.0   & 初始均匀温度 $T_0$ \\
+\texttt{t\_pert}      & 0.0   & 初始温度扰动幅值，$T = T_0 + A\sin(\pi (x-x_{min})/L_x)$ \\
+\texttt{bc}           & ---   & 边界条件行（可重复），语法见 \S\ref{app:bc} \\
+\texttt{lid}          & ---   & 壁面拖动（附到同 zone 的 wall 边界），语法见 \S\ref{app:tbc} \\
+\texttt{tbc}          & ---   & 分区温度边界条件，语法见 \S\ref{app:tbc} \\
+\texttt{tbc\_plane}   & ---   & 平面过滤温度边界条件，语法见 \S\ref{app:tbc} \\
+\texttt{cell\_zone}   & ---   & 体区类型与多孔/热物性，语法见 \S\ref{app:cz} \\
+\end{longtable}
+}
+
+\subsection{耦合 \texttt{mix.control}}\label{app:mix-params}
+
+耦合驱动（\texttt{bin/mixsolver\_mpi}）在第 1 个参数位置读取本文件；所有进程
+都要能读到同一份文件（先转 SI $\to$ 交换 $\to$ 各自转回，见
+\texttt{mod\_interface\_units}）。前 4 个键给出{\bfseries 参考状态}，由两个求解器
+共享；其余键控制{\bfseries 耦合循环}。
+
+{\small
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.22\textwidth}>{\raggedright\arraybackslash}p{0.14\textwidth}>{\raggedright\arraybackslash}p{0.58\textwidth}@{}}
+\caption{耦合 \texttt{mix.control} 参数总表}\label{tab:mix-params}\\
+\toprule
+参数 & 默认 & 含义 \\
+\midrule
+\endfirsthead
+\multicolumn{3}{@{}l}{\small\itshape 表~\ref{tab:mix-params}（续）}\\
+\toprule
+参数 & 默认 & 含义 \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\texttt{rho\_ref} & 1.225 & 参考密度 [kg/m$^3$] \\
+\texttt{T\_ref}   & 288.15 & 参考温度 [K] \\
+\texttt{L\_ref}   & 1.0    & 参考长度 [m] \\
+\texttt{u\_ref}   & 0.0    & 参考速度 [m/s]；$0$ 表示取参考声速 $a_{ref}$ \\
+\texttt{n\_couple} & 3     & 弱耦合迭代次数（每个耦合步 = 两侧各推进若干子步） \\
+\texttt{n\_uns\_steps} & 50 & 每个耦合步内非结构侧 SIMPLE 外迭代次数 \\
+\texttt{n\_struct\_steps} & 1 & 每个耦合步内结构侧伪时间子步数 \\
+\texttt{iface\_relax} & 1.0 & 非结构侧界面速度欠松弛因子：$u_{BC} = \omega u_{struct} + (1-\omega) u_{uns}$ \\
+\texttt{iface\_ramp} & 1  & $\omega$ 的线性爬升步数：$\omega = \texttt{iface\_relax}\cdot\min(1, iter/\texttt{iface\_ramp})$ \\
+\texttt{save\_interval} & 0 & 每 N 个耦合步存档（\texttt{flow3d.dat} ＋ 耦合状态）；0 = 不存档。\textbf{复现算例须设 $\le$ \texttt{n\_couple}} \\
+\texttt{couple\_restart} & 0 & 1 = 联合重启：结构侧强制从 \texttt{flow3d.dat} 续算，非结构侧从耦合状态续算 \\
+\end{longtable}
+}
+
+由参考状态派生的量（只读，启动时打印）：
+
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+量 & 公式 & 默认值 \\
+\midrule
+\texttt{a\_ref}   & $\sqrt{\gamma R T_{ref}}$              & 340.297 m/s \\
+\texttt{p\_ref}   & $\rho_{ref} R T_{ref}$                 & $1.0134\times10^{5}$ Pa \\
+\texttt{p\_scale} & $\rho_{ref} u_{ref}^2$（结构侧压力尺度）  & 由 \texttt{u\_ref} 决定 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+界面交换契约（阶段 11 定稿的 Dirichlet--Neumann 分区，详见
+\texttt{cases/couple\_channel/README.md}）：结构$\to$非结构\textbf{只传速度}
+（界面压力取零梯度），非结构$\to$结构只传\textbf{背压} $p_b$。结构侧用与亚声速
+出口相同的线性化 Riemann 反射构造 ghost 单元，强度
+$\alpha = 0.3\min(1, iter/\texttt{iface\_ramp})$；其中 $0.3$ 是
+\texttt{src/main.f90} 里的硬编码 \texttt{ALPHA\_MAX}，\textbf{不受}
+\texttt{iface\_relax} 影响。两侧交换的 $\rho,u,T$ 仅用于诊断输出。
+
+\subsection{\texttt{bc} 行语法与边界类型}\label{app:bc}
+
+语法：\texttt{bc = <zone> <type> [args\dots]}，其中 \texttt{<zone>} 是 Fluent
+面 zone 的编号（zone id），\texttt{<type>} 见表~\ref{tab:bc-types}。同一 zone
+只保留\textbf{最后}一条有效设置；\texttt{lid} / \texttt{tbc} 会反向查找该
+zone 已有的条目。最多 32 条 \texttt{bc} 行。
+
+{\small
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.27\textwidth}>{\raggedright\arraybackslash}p{0.67\textwidth}@{}}
+\caption{\texttt{bc} 支持的全部边界类型（\texttt{mod\_uns\_control:parse\_bc}）}\label{tab:bc-types}\\
+\toprule
+关键字（别名） & 参数与语义 \\
+\midrule
+\endfirsthead
+\multicolumn{2}{@{}l}{\small\itshape 表~\ref{tab:bc-types}（续）}\\
+\toprule
+关键字（别名） & 参数与语义 \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\texttt{wall} & 无参数。无滑移壁面（粘性） \\
+\texttt{symmetry} & 无参数。对称面：法向速度为零、切向自由 \\
+\texttt{velocity-inlet}\newline (\texttt{velocity\_inlet}, \texttt{inlet}) & \texttt{<ux> <uy> <uz> [T\_in]}。给定\textbf{矢量}入口速度 [m/s]；可选第 4 个 token 为入口静温（\texttt{bc\_face\_T} 的 Dirichlet 值，求解能量方程时必须给出，否则温度被拉向 0） \\
+\texttt{mass-flow-inlet}\newline (\texttt{mass\_flow\_inlet}, \texttt{mass-inlet}) & \texttt{<mdot> [T\_in]}。$mdot>0$ 为指向域内的质量通量 [kg/m$^2$/s]，面速度按 $\mathbf{u}_f = -(mdot/\rho)\mathbf{n}_{out}$ 施加；可选第 4 个 token 为入口静温 \\
+\texttt{pressure-outlet}\newline (\texttt{pressure\_outlet}, \texttt{outlet}) & \texttt{<p>}。出口压力 [Pa]。常密度下仅起\textbf{表压锚点}作用（整场平移，不影响速度与梯度），但取值有收敛上限且正负不对称：正值鲁棒区约 $+15$ Pa、负值到约 $-200$ Pa，$+100$ 及以上必发散 \\
+\texttt{pressure-far-field}\newline (\texttt{farfield}, \texttt{far-field}) & \texttt{<p\_far> <ux> <uy> <uz>}。入流（$\mathbf{u}\cdot\mathbf{n}<0$）时速度固定为来流值，出流时按 owner 格心零阶外插；压力恒为 Dirichlet $p_{far}$ \\
+\texttt{outflow}\newline (\texttt{fully-developed-outlet}) & 无参数。充分发展出口：$u$、$p$、$T$ 法向零梯度，无固定压力值；每次迭代按入口总量重标定出口通量，使总出流恰等于总入流（保证纯 Neumann PPE 相容） \\
+\texttt{slip-wall}\newline (\texttt{slipwall}, \texttt{slip}) & 无参数。滑移壁面（$\mathbf{u}\cdot\mathbf{n}=0$，切向自由），用于 $\mu\to0$ 的无粘算例 \\
+\texttt{interface}（不可手写） & 耦合界面（内部码 \texttt{BC\_INTERFACE}=9）：面速度/压力来自对侧求解器。由耦合驱动在初始化时自动登记到 \texttt{.cas} 中名为 interface 的面 zone 上；在 \texttt{*.control} 里写它会被报为未知类型 \\
+\end{longtable}
+}
+
+\subsection{\texttt{cell\_zone}：体区类型与多孔/热物性}\label{app:cz}
+
+语法（\texttt{mod\_uns\_control:parse\_cell\_zone}）：
+
+\begin{quote}\ttfamily\small
+cell\_zone = <id|name> [fluid|porous] [perm=..] [inertial=..] [porosity=..] \\
+\phantom{cell\_zone = }[perm\_xx=..] [perm\_yy=..] [perm\_zz=..] \\
+\phantom{cell\_zone = }[disp\_l=..] [disp\_t=..] [bj\_alpha=..] \\
+\phantom{cell\_zone = }[k\_s=..] [cp\_s=..] [rho\_s=..] [h\_sf=..] [a\_sf=..]
+\end{quote}
+
+块类型可以省略（\texttt{CZ\_AUTO}：块类型由 VC 标签 / 流体默认值决定，只给出
+系数）；最多 32 条。子关键字默认值见表~\ref{tab:cz-keys}。
+
+{\small
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.20\textwidth}>{\raggedright\arraybackslash}p{0.12\textwidth}>{\raggedright\arraybackslash}p{0.62\textwidth}@{}}
+\caption{\texttt{cell\_zone} 子关键字}\label{tab:cz-keys}\\
+\toprule
+子键 & 默认 & 含义 \\
+\midrule
+\endfirsthead
+\multicolumn{3}{@{}l}{\small\itshape 表~\ref{tab:cz-keys}（续）}\\
+\toprule
+子键 & 默认 & 含义 \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\texttt{perm}     & 0.0   & 各向同性渗透率 [m$^2$] \\
+\texttt{perm\_xx} \texttt{perm\_yy} \texttt{perm\_zz} & 0.0 & 对角各向异性渗透率 [m$^2$]；为 0 时回落到 \texttt{perm}（仅支持轴对齐各向异性） \\
+\texttt{inertial} & 0.0   & 惯性（Forchheimer）系数 [1/m] \\
+\texttt{porosity} & 1.0   & 孔隙率（0$\sim$1） \\
+\texttt{disp\_l}  & 0.0   & 纵向热弥散系数 [m] \\
+\texttt{disp\_t}  & 0.0   & 横向热弥散系数 [m] \\
+\texttt{bj\_alpha} & 0.0  & 流体/多孔界面 Beavers--Joseph 滑移系数；0 = 关闭（应力连续） \\
+\texttt{k\_s}     & 0.0   & 固相导热系数 [W/m/K] \\
+\texttt{cp\_s}    & 0.0   & 固相比热 [J/kg/K] \\
+\texttt{rho\_s}   & 0.0   & 固相密度 [kg/m$^3$] \\
+\texttt{h\_sf}    & 0.0   & 流固换热系数 [W/m$^2$/K]（LTNE 用） \\
+\texttt{a\_sf}    & 0.0   & 比表面积 [m$^2$/m$^3$]（LTNE 用） \\
+\end{longtable}
+}
+
+\begin{center}\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.94\textwidth}@{}}
+\toprule
+\textbf{网格排序硬约束}：多 cell zone 网格（如流体 ＋ 多孔 ``x 串联''）的
+cell-id 必须使{\bfseries 分割方向索引最慢}，让每个 zone 对应一段{\bfseries 连续}
+id 区间。写成 \texttt{1+i+j*NX+k*NX*NY}（$k$ 最慢）会把 x 串联写成 z 并联的
+两条全长薄片，症状是梯度只有解析值的约 60\%、$\max|u|$ 超过入口值、zone 互换后
+结果逐位相同。 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{\texttt{tbc} / \texttt{tbc\_plane} / \texttt{lid}}\label{app:tbc}
+
+三者都是{\bfseries 修饰行}：不新建边界，而是反向查找该 zone \textbf{已有的}
+\texttt{bc} 条目并补充属性（找不到即报错退出）。
+
+{\small
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.30\textwidth}>{\raggedright\arraybackslash}p{0.64\textwidth}@{}}
+\caption{温度/拖动修饰行语法}\label{tab:tbc-keys}\\
+\toprule
+语法 & 语义 \\
+\midrule
+\endfirsthead
+\multicolumn{2}{@{}l}{\small\itshape 表~\ref{tab:tbc-keys}（续）}\\
+\toprule
+语法 & 语义 \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\texttt{tbc = <zone> <ttype> [tval|qval]} & 整 zone 温度边界。\texttt{ttype}：0 = 绝热（默认）、1 = 定温（须给 \texttt{tval} [K]）、2 = 定热流（须给 \texttt{qval} [W/m$^2$]，$q>0$ 向域内加热）。作用于该 zone 已有的 \texttt{bc} 条目 \\
+\texttt{tbc\_plane = <zone> <dir>}\newline \texttt{<coord> <ttype> [tval|qval]} & 平面过滤：只对该 zone 中 \texttt{dir} 方向坐标 $\approx$ \texttt{coord} 的 \textbf{wall} 面生效（\texttt{dir}：1 = x，2 = y，3 = z），其余面保持 \texttt{tbc} 设置。每个 zone 最多 4 个平面；用法见 \texttt{cases/cavity\_temp.control} \\
+\texttt{lid = <zone> <dir> <coord>}\newline \texttt{<ux> <uy> <uz>} & 壁面拖动（顶盖驱动一类）：只对 \texttt{dir} 方向坐标 $\approx$ \texttt{coord} 的 wall 面施加切向速度矢量 $\mathbf{u}_{lid}$。要求该 zone 已有 \texttt{wall} 型 \texttt{bc} 条目，否则报 \texttt{lid refers to a zone without a wall bc} \\
+\bottomrule
+\end{longtable}
+}
+
+\noindent\textbf{示例}（二维方腔，zone 5 = 四壁）：
+
+\begin{quote}\ttfamily\small
+bc = 5 wall \\
+tbc\_plane = 5 2 0.0 1 1.0 \# 底壁 y=0 定温 T=1 \\
+tbc\_plane = 5 2 1.0 1 0.0 \# 顶盖 y=1 定温 T=0 \\
+lid = 5 2 1.0 1.0 0.0 0.0 \# 顶盖以 ux=1 拖动
+\end{quote}
