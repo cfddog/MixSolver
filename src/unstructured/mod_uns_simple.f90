@@ -124,9 +124,12 @@ contains
          itl_max = 0
          ressum = 0.0_dp
 
-         ! mass-flow-inlet cold-start ramp (inlet_ramp<=1 disables it)
-         if ( ctrl%inlet_ramp > 1 ) &
+         ! cold-start ramp: scale the mass-flow-inlet speed AND the
+         ! pressure-Dirichlet (outlet) value together (inlet_ramp<=1 disables)
+         if ( ctrl%inlet_ramp > 1 ) then
             call set_inlet_ramp_factor( real(it,dp) / real(ctrl%inlet_ramp,dp) )
+            call set_pval_ramp_factor( real(it,dp) / real(ctrl%inlet_ramp,dp) )
+         end if
 
          ! 1. momentum equations -------------------------------------------------
          do comp = 1, 3
@@ -902,7 +905,13 @@ contains
          if ( c1 == 0 ) cycle
          c0 = m%f(i)%c0
 
-         F    = ctrl%rho * fld%flux(i)
+         ! Face mass flux (kg/s).  fld%flux already carries rho (see
+         ! flux_rhiechow and the temperature assembly comment); multiplying
+         ! by rho again here over-weights interior convection by a factor rho
+         ! and is inconsistent with the boundary convective coefficient below
+         ! (F = rho*(u_f.S_f)), which would leave a spurious O((rho-1)*rho*u^2)
+         ! pressure offset stamped by the open boundaries.
+         F    = fld%flux(i)
          dvec = g%xc(:,c1) - g%xc(:,c0)
          dn   = norm2( dvec )
          ! effective (Brinkman) viscosity: mu_eff = mu / porosity

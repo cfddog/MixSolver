@@ -5,6 +5,48 @@
 
 ---
 
+## 2026-10-07 | 阶段 11 补充：`pval`（出口压力）取值敏感性实测 + 文档纠错
+
+- **背景**：追问 `pressure-outlet` 的 `pval`（表压）能否取 100/1000/10000。
+- **实测**（全流体 baseline、默认 `inlet_ramp=100`）：ρ 为常数 ⇒ `pval` 只是**表压锚点**，
+  收敛后整场压力均匀平移、速度/梯度不变（`+15`→p≡15.000、`−100`→p≡−100.000）。
+  但 **`pval` 有收敛上限且正负不对称**：正值鲁棒区仅 ≈+15 Pa、负值到 ≈−200 Pa；
+  **+20/+22/+100/+1000/+10000 一律发散**（`+100` 复现 5/5；`−100` 复现 5/5 收敛）；
+  慢化 `inlet_ramp` 不救 `+100`（ramp=300/1000/3000 仍发散）。
+- **机理线索**：失稳首现于**温度**（`pval=100` 首迭代 Tmin 300→≈114 K 后 NaN），而温度
+  方程无显式 p 依赖 ⇒ 暴露**压力电平的非规范不变性**（与早期 −250 Pa 偏置同族），待立项。
+- **文档**：README §5.3 表行纠错（原“±100 亦收敛”不成立）＋ 新增 §5.3.1。
+- 涉及文件：`cases/couple_porous/README.md`、`memory-bank/{worklog,activeContext}.md`。
+
+---
+
+## 2026-10-07 | 阶段 11：uns 绝对压力 ≈−250 Pa 偏置修复（根因＝对流系数重复乘 ρ）＋ 出口压力 ramp
+
+- **目标**：修掉 uns 全场绝对压力 ≈−251 Pa 偏置（机理已定位），并顺带修出口
+  `pressure-outlet` 改值即发散。
+- **根因**：`mod_uns_simple.f90` `momentum_assembly` 内部面对流系数
+  `F = ctrl%rho*fld%flux(i)` **重复乘 ρ**——`fld%flux` 已是**质量通量 kg/s**
+  （PPE `rhs -= flux`、温度装配 `FT = cp*flux`、边界面 `F = ρ*(u_f·S_f)` 三处佐证）。
+  内部对流被放大 ρ 倍、与边界面不一致 ⇒ 开放边界盖章的偏移由 O(u²) 放大为
+  O((ρ−1)ρu²)，正是量到的系数 `0.176943 = ρ−1`（ρ=1.177）。**修法①**：
+  `F = fld%flux(i)`。
+- **修法②（出口鲁棒性）**：出口/远场压力 Dirichlet 原先冷启动即满值（入口 `inlet_ramp`
+  ⇒ 首迭代 ap 极小 ⇒ `pval/(ρu²)`~70 ⇒ 第二步 du_max 71.5→6.5e5→NaN）⇒
+  `mod_uns_bc` 新增模块级 `g_pval_ramp_factor`/`set_pval_ramp_factor`，`bc_face_p`
+  对 `BC_POUTLET/BC_FARFIELD` 用 `pf = pval*g_pval_ramp_factor`；`mod_uns_simple(_mpi)`
+  在 `inlet_ramp>1` 时与 `set_inlet_ramp_factor` 同值调用（ramp 完成因子=1，收敛解不变）。
+- **验证**：baseline 平台 −251.17→**≈0 Pa**、`u₁/u_in` 0.9168→**1.000000**、
+  床组平移 −251→**+0.009 Pa**（梯度 −3021.7 Pa/m 不变）、出口 `±10` **全部收敛**、
+  c2/c3/nx50/nx200 平台 ≈0、m6wing 结构化位级回归 **PASS**（`flow3d.dat` md5
+  `dc134a2d196422043ecad7c86ac8f898` 不变）、`units_test` 3/0、`coupling_test` np2 6/0；
+  耦合首排（np2/400iter）−9.67%→**−1.51%**、参考 @x=100 p 48.5→**299.9 Pa**、
+  界面跳变 −0.49 Pa；`make all`/`mpi` RC=0（改动仅 3 文件）。→ **阶段 11 全部完成。**
+- 涉及文件：`src/unstructured/mod_uns_simple.f90`、`src/unstructured/mod_uns_simple_mpi.f90`、
+  `src/unstructured/mod_uns_bc.f90`、`cases/couple_porous/README.md`、
+  `memory-bank/{activeContext,progress,worklog}.md`。
+
+---
+
 ## 2026-10-07 | 阶段 11：界面类型自动分派表（分类 + 报告；不改数值行为）
 
 - **目标**：把 `main.f90` 里硬编码的界面处理抽象为「按两侧 solver + cell-zone
@@ -32,7 +74,7 @@
 - **验证**：`match_test`(grid_BC) 250/250 全 `comp-fluid<->lowspeed-fluid`、
   断言 PASS；`couple_channel` np2 → fluid、`couple_porous` np2 → porous；
   `regress/m6wing` PASS（`flow3d.dat` md5 不变）；全量 make RC=0。
-- **仍待办（同阶段 11 未勾销）**：uns 绝对压力 ≈−250 Pa 偏置修复。
+- ~~**仍待办（同阶段 11 未勾销）**：uns 绝对压力 ≈−250 Pa 偏置修复。~~ **2026-10-07 已完成**（见上一条）。
 - 涉及文件：`src/common/mod_interface.f90`、`src/coupling/mod_interface_match.f90`、
   `src/coupling/test_match.f90`、`src/structured/mod_struct_grid.f90`、
   `src/unstructured/mod_uns_driver.f90`、`src/unstructured/mod_uns_geometry.f90`、

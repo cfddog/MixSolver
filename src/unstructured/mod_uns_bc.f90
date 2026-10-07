@@ -14,13 +14,22 @@ module mod_uns_bc
    private
    public :: bc_t, build_bc, bc_face_vel, bc_face_p, bc_face_T, bc_type_name, &
              set_interface_vel, set_interface_p, set_interface_T, &
-             set_inlet_ramp_factor
+             set_inlet_ramp_factor, set_pval_ramp_factor
 
    ! Module-level ramp factor for mass-flow-inlet faces.
    ! simple_run/simple_run_mpi set it each outer iteration to
    !   min(1, iter / max(inlet_ramp,1))
    ! bc_face_vel multiplies the MASSINLET uspeed by this factor.
    real(dp), save :: g_inlet_ramp_factor = 1.0_dp
+
+   ! Module-level ramp factor for pressure-Dirichlet (POUTLET / FARFIELD)
+   ! faces.  During a cold start the mass-flow inlet is ramped to a tiny
+   ! velocity, so the convective scale rho*u^2 is tiny; a fixed outlet
+   ! pressure applied at full strength is then enormous by comparison and
+   ! blows up the first pressure correction.  simple_run/simple_run_mpi ramp
+   ! it in lock-step with the inlet (and it is 1 once the ramp is complete,
+   ! so the converged solution is unaffected).
+   real(dp), save :: g_pval_ramp_factor = 1.0_dp
 
    ! one boundary group (a set of boundary faces with common condition)
    type :: bcgroup_t
@@ -391,7 +400,8 @@ contains
       g = bcs%fgrp(i)
       if ( bcs%gb(g)%btype == BC_POUTLET .or. &
            bcs%gb(g)%btype == BC_FARFIELD ) then
-         pf = bcs%gb(g)%pval            ! Dirichlet: fixed free-stream pressure
+         pf = bcs%gb(g)%pval * g_pval_ramp_factor   ! Dirichlet free-stream p
+                                                    ! (ramped on cold start)
       else if ( bcs%gb(g)%btype == BC_INTERFACE ) then
          ! The peer solver supplies the face VELOCITY on this patch (weak
          ! coupling): this is a velocity-Dirichlet boundary, so pressure must
@@ -541,6 +551,16 @@ contains
       real(dp), intent(in) :: f
       g_inlet_ramp_factor = max( 0.0_dp, min( 1.0_dp, f ) )
    end subroutine set_inlet_ramp_factor
+
+   !----------------------------------------------------------------------------
+   ! set_pval_ramp_factor -- update the module-level pressure-Dirichlet ramp
+   ! factor (POUTLET/FARFIELD).  Ramped in lock-step with the inlet for a
+   ! stable cold start with a non-zero outlet pressure; = 1 when converged.
+   !----------------------------------------------------------------------------
+   subroutine set_pval_ramp_factor( f )
+      real(dp), intent(in) :: f
+      g_pval_ramp_factor = max( 0.0_dp, min( 1.0_dp, f ) )
+   end subroutine set_pval_ramp_factor
 
    subroutine set_interface_vel( bcs, faces, u )
       type(bc_t), intent(inout) :: bcs

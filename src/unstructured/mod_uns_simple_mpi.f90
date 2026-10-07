@@ -113,9 +113,12 @@ contains
          itl_max = 0
          ressum = 0.0_dp
 
-         ! mass-flow-inlet cold-start ramp (inlet_ramp<=1 disables it)
-         if ( ctrl%inlet_ramp > 1 ) &
+         ! cold-start ramp: scale the mass-flow-inlet speed AND the
+         ! pressure-Dirichlet (outlet) value together (inlet_ramp<=1 disables)
+         if ( ctrl%inlet_ramp > 1 ) then
             call set_inlet_ramp_factor( real(it,dp) / real(ctrl%inlet_ramp,dp) )
+            call set_pval_ramp_factor( real(it,dp) / real(ctrl%inlet_ramp,dp) )
+         end if
 
          ! 0. halo exchange: u, p, T, gu, gp, gt before assembly ---------------
          call exchange_all_fields( hi, fld, ierr )

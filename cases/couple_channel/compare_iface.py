@@ -24,6 +24,11 @@ T_REF = 300.0
 U_INF = 34.7224           # m/s, Ma=0.1 * a_ref
 H = 0.05
 X_IFACE = 0.100
+# Both meshes use dx = 2 mm, so the sampling window must be exactly one plane
+# wide: [X_IFACE, X_IFACE+DX) picks the single first cell-centre plane
+# (x = 101 mm).  A wider window (e.g. 2.5 mm) would also catch x = 103 mm,
+# whose pressure is ~220 Pa lower, and manufacture a fictitious jump.
+DX = 0.002
 
 
 def read_vtu_hex(fn):
@@ -122,14 +127,14 @@ def uns_profile(cx, cy, p, u, x0, x1, ny=20):
 def main():
     # ---- reference full channel at x=100 ----
     cx, cy, cz, p, u, t = read_vtu_hex('uns_full/unMesh.vtu')
-    yref, uref, pref, ncell = uns_profile(cx, cy, p, u, X_IFACE, X_IFACE + 0.0025)
+    yref, uref, pref, ncell = uns_profile(cx, cy, p, u, X_IFACE, X_IFACE + DX)
     print('reference @x=100 (n=%d): mean u=%.3f  mean p=%.1f Pa'
           % (ncell, uref.mean(), pref))
 
     # ---- coupled uns first layer at its inlet ----
     cx2, cy2, cz2, p2, u2, t2 = read_vtu_hex('unMesh_coupled.vtu')
     xmin = cx2.min()
-    yuns, uuns, puns, n2 = uns_profile(cx2, cy2, p2, u2, xmin, xmin + 0.0025)
+    yuns, uuns, puns, n2 = uns_profile(cx2, cy2, p2, u2, X_IFACE, X_IFACE + DX)
     print('coupled uns @x=%.3f (n=%d): mean u=%.3f  mean p=%.1f Pa'
           % (xmin, n2, uuns.mean(), puns))
 

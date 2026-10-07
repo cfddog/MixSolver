@@ -1,6 +1,31 @@
 # 当前上下文 (activeContext)
 
-> 最后更新：2026-10-07（**阶段 11 界面类型自动分派表完成并验证——仅分类+报告，不改数值**）
+> 最后更新：2026-10-07（**uns 绝对压力 ≈−250 Pa 偏置修复并验证；阶段 11 全部完成**）
+
+> **2026-10-07 阶段 11「uns 绝对压力 ≈−250 Pa 偏置」✅（修复并验证）**：
+> **根因**＝`mod_uns_simple.f90` `momentum_assembly` 内部面**对流系数重复乘 ρ**
+> （原 `F = ctrl%rho*fld%flux(i)`；`fld%flux` 已是**质量通量 kg/s**——PPE
+> `rhs -= flux`、温度装配 `FT = cp*flux`、边界面 `F = ρ*(u_f·S_f)` 三处佐证）⇒ 内部
+> 对流被放大 ρ 倍、与边界面不一致，使开放边界盖章的偏移由 O(u²) 放大为
+> O((ρ−1)ρu²)——正是量到的系数 `0.176943 = ρ−1`（ρ=1.177）。**修法①**：
+> `F = fld%flux(i)`。**修法②**（顺带修出口鲁棒性）：出口/远场压力 Dirichlet 原先在
+> 冷启动即按满值施加（入口用 `inlet_ramp` ⇒ 首迭代 u、ap 极小 ⇒ `pval/(ρu²)`~70
+> ⇒ 第二步爆）⇒ 新增 `mod_uns_bc` 模块级 `g_pval_ramp_factor`/`set_pval_ramp_factor`，
+> `bc_face_p` 对 POUTLET/FARFIELD 用之，`mod_uns_simple(_mpi)` 在 `inlet_ramp>1` 时与
+> 入口同值调用（ramp 完成因子=1，收敛解不变）。**验证**：baseline 平台 −251.17→
+> **≈0 Pa**、`u₁/u_in` 0.9168→**1.000000**、床组平移 −251→**+0.009 Pa**（梯度
+> −3021.7 Pa/m 不变）、出口 `±10` **全部收敛**、c2/c3/nx50/nx200 平台 ≈0、
+> 耦合首排（np2/400iter）−9.67%→**−1.51%**、参考 @x=100 p 48.5→**299.9 Pa**、
+> m6wing 结构化位级回归 **PASS**（`flow3d.dat` md5 `dc134a2d196422043ecad7c86ac8f898`
+> 不变）、`units_test` 3/0、`coupling_test` np2 6/0；`make all`/`mpi` RC=0。改动仅 3
+> 文件（`mod_uns_simple.f90`、`mod_uns_simple_mpi.f90`、`mod_uns_bc.f90`）。详见
+> `cases/couple_porous/README.md` §5.3。**阶段 11 全部完成。**
+
+> **2026-10-07 追加：`pval`（pressure-outlet 表压）取值敏感性实测**——ρ 为常数 ⇒ `pval`
+> 只是表压锚点，收敛后整场压力均匀平移（`+15`→p≡15、`−100`→p≡−100），速度/梯度不变；
+> 但 **`pval` 有收敛上限且正负不对称**（正 ≈+15 Pa、负 ≈−200 Pa；`100/1000/10000` 一律
+> 发散，`+100` 复现 5/5 发散、`−100` 5/5 收敛），慢化 `inlet_ramp` 不救 `+100`。失稳首现
+> 于温度 ⇒ 疑似**压力电平非规范不变性**，待立项。详见 `cases/couple_porous/README.md` §5.3.1。
 
 > **2026-10-07 阶段 11「界面类型自动分派表」✅（完成并验证）**：
 > `Interface_FACE_TYPE` 增 `cz_type/loc_face/iface_type`；新增 `classify_interface`
@@ -15,7 +40,8 @@
 > 验证：`match_test`(grid_BC) 250/250 全 `comp-fluid<->lowspeed-fluid`、断言 PASS；
 > `couple_channel` np2 → fluid、`couple_porous` np2 → porous；`regress/m6wing`
 > PASS（`flow3d.dat` md5 `dc134a2d196422043ecad7c86ac8f898` 不变）；全量 make RC=0。
-> 阶段 11 剩余唯一项 = uns 绝对压力 ≈−250 Pa 偏置修复（机理已定位）。
+> 阶段 11 剩余唯一项 = uns 绝对压力 ≈−250 Pa 偏置修复（机理已定位）
+> → **2026-10-07 已完成**（见本文件顶部「uns 绝对压力偏置」条 ＋ README §5.3）。
 
 > **自检缺口①②③④已全部修 2026-10-06**：
 > ① `Makefile` 让 `src/coupling/*` 与 `src/main.f90` 在 ser 树也用 `$(MPIFC)` 编译
