@@ -1,0 +1,30 @@
+# Betchen 2006 PLUG case, Da=1e-2 (default Re_H=1)
+# ----------------------------------------------------------------
+# Channel y in [0,H] (H=0.01 m); x = 3H fluid | 2H porous | 3H fluid.
+# Re_H = rho*U0*H/mu = 1  =>  U0 = mu/(rho*H) = 1.5684e-3 m/s
+# Da = K/H^2 = 1e-2 => K=1e-6 m^2.  Parabolic inlet per paper replaced by
+# uniform U0 (current velocity-inlet BC is zone-uniform); upstream 3H lets a
+# fully-developed profile re-form before the bed.  Forchheimer negligible at
+# Re_K~1e-4 -> inertial=0.
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 3000
+outer_tol = 1.0e-8
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 300.0
+
+cell_zone = 3 perm=1.0e-6 porosity=0.7
+
+bc = 6 symmetry
+bc = 7 wall
+bc = 8 wall
+bc = 9 velocity-inlet 1.5684e-3 0.0 0.0 300.0
+bc = 10 pressure-outlet 0.0

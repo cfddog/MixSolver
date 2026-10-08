@@ -5,7 +5,32 @@
 
 ---
 
-## 2026-10-08 | 文档：`程序使用手册.tex`（23 页）＋ 附录 A 参数总表 ＋ 更新记录 ＋ `control.ec.template`
+## 2026-10-08 | 验证：Betchen 2006 三界面验证算例试跑 + BJ 参考解对拍
+
+- **背景**：`/mnt/c/temp/validate_case/` 提供 Betchen 2006 论文的三个界面验证算例
+  规划（MD + CSV 目标表），要求**不改源码**用现 `bin/uns_solver` 试跑，并完成
+  BJ 参考解（BJ_1/BJ_2.csv）对比。
+- **算例1 BJ**（`gen_bj.py`/`bj_dae2,3.cas`+control）：流上多孔下通道 Re_H=1、
+  Da=1e-2/1e-3，默认连续内部面（=Betchen 式 (13)/(14)）。速度收敛；对拍
+  `compare_bj.py`：**峰值 1.408 vs 1.387（Da1e-2）、1.459 vs 1.457（Da1e-3）**，
+  整条 u(y)/U0 L2 = 参考 RMS 的 **4.09% / 2.88%** → 复现成功。
+- **算例2 PLUG**（`gen_plug.py`，3H/2H/3H 三段 + 高Re 5H/5H/50H）：复现「三段
+  线性压力（多孔段 R²=1.000）+ 界面压力梯度不连续」。入口仅均匀（论文为
+  充分发展剖面，现 BC 不支持空间分布）。
+- **算例3 HT**（`gen_ht.py`，Calmidi-Mahajan LTNE 底部加热铝泡沫）：情形A 完全
+  收敛（dT→0 @1377、Tf/Ts 300→310K）；**情形B（+2mm 空气隙多 cell zone）Ts
+  全场保持 300K（仅 Tf 热到 307K）——疑固相能量方程底加热壁面热未按多 zone 接线，
+  待查**。
+- **经验教训**：① CAS `(13` 区 id 令牌按**十六进制**解析（`tok_int` 用 `(Z...)`），
+  zone id `10` 必须写成 `a`，否则读到 16（沿用单数字 id 的旧 `gen_bj.py` 不暴露）。
+  ② 参考 CSV 需按 y 排序（曾误按 u 排导致全 0）。③ 参考 U0 = **纯流体段均值**，
+  不是入口 U0。
+- **涉及文件（新增）**：`cases/betchen/{gen_bj,gen_plug,gen_ht}.py`、
+  `bj_dae2,3.{cas,control}`、`plug_dae2,3,hir.{cas,control}`、`ht_a,ht_b.{cas,control}`、
+  `compare_bj.py`、`plot_{bj,plug,ht}.py`、`images/bj_compare_ref.png`。
+- **未涉及源码改动**；PLUG/HT 数字化 Fig7/9 参考数据缺失，仅定性判定。
+
+---
 
 - **背景**：`docs/程序使用手册.tex` 及三个附属文件此前**均不存在**（progress.md
   「文档（随功能同步）」待办项），阶段 11 收尾后补齐；并按 `project_rules`

@@ -1,0 +1,29 @@
+# Betchen 2006 BJ case, Da=1e-2
+# ----------------------------------------------------------------
+# Channel x in [0,8H] (H=0.01 m), y in [0,2H]; lower half porous upper fluid.
+# Re_H = rho*U0*H/mu = 1  =>  U0 = mu/(rho*H) = 1.5684e-3 m/s
+# Da = K/H^2 = 1e-2  =>  K = 1e-2*H^2 = 1e-6 m^2
+# Interface (13)/(14): default internal face = velocity+stress continuity.
+# Neighbouring case Da=1e-3 (bj_dae3.control) uses K=1e-7.
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 3000
+outer_tol = 1.0e-8
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 300.0
+
+cell_zone = 3 perm=1.0e-6 porosity=0.7
+
+bc = 5 symmetry
+bc = 6 wall
+bc = 7 wall
+bc = 8 velocity-inlet 1.5684e-3 0.0 0.0 300.0
+bc = 9 pressure-outlet 0.0
