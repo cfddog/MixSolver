@@ -31,22 +31,45 @@
 \endhead
 \bottomrule
 \endlastfoot
+2026-10-09 & 11 &
+\textbf{对拍采样口径修正}（不改源码）：\texttt{cases/betchen} 的 PLUG 对比脚本原用
+\texttt{np.interp} 把数字化参考 CSV 中落在我们第一个单元内部（$x/H<0.075$，如
+0.032/0.064）的采样点\textbf{截断}成第一列单元值，而 VTU 只有单元中心数据，
+于是``入口 u''被读成单元值（1.483）而非 BC 施加的\textbf{面值}（精确 1.5\,$U_0$）；
+同时 \texttt{images/plug\_compare\_ref.png} 一直停在旧（均匀入口）VTU 上未重绘。
+现 \texttt{vs\_ref.py}/\texttt{compare\_plug.py} 剔除这些点并打印 \texttt{note}，
+\texttt{inlet\_profile.py} 增印同样采样的解析离散积分（NY=21 为 0.99449，而非 1.0），
+两个绘图脚本一律由当前 VTU 重新生成。另用 x 方向加密 3 倍
+（\texttt{gen\_plug.py <out>.cas x 60,40,60}，$\Delta x$ 0.15H$\to$0.05H）
+证明第一列偏差 $-1.2\%\to-0.2\%$ 是入口单元 $O(\Delta x)$ 误差而非 BC 误差。 &
+\texttt{cases/betchen/README.md} \S3.4.1（新）,
+\texttt{cases/betchen/\{vs\_ref,compare\_plug,inlet\_profile\}.py} &
+修正后的同一二进制 UNI$\to$PAR 对拍：入口列 $\max|u-6\xi(1-\xi)|$
+\textbf{0.398$\to$0.018}（平顶中心 1.102 / 壁面格 0.328 $\to$ 抛物 1.483 / 0.136）；
+整体中心线 u L2 0.579\%$\to$\textbf{0.494\%}（Da=1e-2）、2.266\%$\to$2.271\%
+（Da=1e-3，由界面过渡层主导），p L2 2.205\%$\to$\textbf{2.157\%} / 1.790\%$\to$\textbf{1.741\%}；
+加密网格第一列中心 $u/U_0$ 1.4826$\to$1.4965、$x/H{=}0.075$ 列 1.5002
+（$\max|u-6\xi(1-\xi)|$=0.0017），网格加密与入口单元误差按一阶收敛
+\\
 2026-10-08 & 11 &
 新增 \texttt{velocity-inlet-parabolic} 边界（\texttt{BC\_VINLET\_PARAB}=10）：沿面内法向
 直接施加充分发展抛物剖面 $|u_f|=6U_{mean}\xi(1-\xi)$、$\xi=(x_{axis}-origin)/span$，
 剖面均值恰为 $U_{mean}$（流量与均匀入口一致，只改形状），供论文型``充分发展入口''算例
 使用；动量/温度/LTNE 固相识别/BC 报告全部接入。\textbf{动机}：Betchen PLUG 算例入口
-原用均匀速度，第一列平顶 ($u/U_0\approx1.10$、列内均值 $0.944U_0$) 使 PLUG
+原用均匀速度，第一列平顶 ($u/U_0\approx1.10$、壁面格 0.33) 使 PLUG
 Da=1e-3 中心线 u L2=7.0\%（入口采样点偏差 1.10 vs 1.50）。 &
 \texttt{src/unstructured/mod\_uns\_control.f90},
 \texttt{src/unstructured/mod\_uns\_bc.f90},
 \texttt{src/unstructured/mod\_uns\_simple.f90},
 \texttt{cases/betchen/\{plug\_dae2,plug\_dae3,plug\_hir\}.control} &
 \texttt{cases/betchen/README.md} \S3.4/\S4.4：
-同一二进制只改入口一行 ⇒ PLUG Da=1e-2 u L2 \textbf{8.06\%→0.63\%}
-（max$|\Delta u|$ 0.401→0.021）、Da=1e-3 \textbf{7.02\%→2.23\%}（0.402→0.097）、
-p L2 2.57\%→2.37\% / 1.83\%→1.76\%；入流剖面第 4 列 (x/H=0.525) 与解析
-$6\xi(1-\xi)$ 逐点差 $\le0.004$（0.3\% 峰值 1.5U0，$\int u\,dy/(U_0H)=1.001$）；均匀入口路径\textbf{逐位无回归}
+同一二进制只改入口一行 ⇒ 入口列 $\max|u-6\xi(1-\xi)|$ \textbf{0.398→0.018}、
+中心线 u L2 0.579\%→\textbf{0.494\%}（Da=1e-2；max$|\Delta u|$ 0.0150→0.0135，
+位置在多孔界面过渡层 $x/H$=3.05）、2.266\%→2.271\%（Da=1e-3；max$|\Delta u|$=0.097
+在 $x/H\approx$2.96）、p L2 2.205\%→\textbf{2.157\%} / 1.790\%→\textbf{1.741\%}；
+入流剖面第 4 列 ($x/H$=0.525) 与解析 $6\xi(1-\xi)$ 逐点差 $\le0.004$；
+\textbf{采样口径修正见 2026-10-09 条}（旧稿的 8.06\%→0.63\% 系参考采样点被
+\texttt{np.interp} 截断到入口单元所致）；均匀入口路径\textbf{逐位无回归}
 （新二进制+旧入口行重跑 \texttt{plug\_dae3} 的 VTU md5 与旧产物完全一致），
 MPI np2 vs 串行 max$|\Delta u|$=2.8e-9
 \\

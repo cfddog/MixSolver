@@ -69,15 +69,37 @@ for a in sys.argv[1:]:
     # reference x is already in H units
     ui = np.interp(rx_u, x, uu)
     pi = np.interp(rx_p, x, pq)
-    au = np.abs(ui - ru)
-    ap = np.abs(pi - rp)
-    m2 = rx_u >= 2.0
-    m3 = (rx_u >= 3.0) & (rx_u <= 5.0)
+    # NOTE on the inlet: our VTU holds CELL-CENTRED values, so the first data
+    # column sits at x1 = x[0] (e.g. 0.075H on the 20-cells/segment mesh).  The
+    # digitised reference often has samples UPSTREAM of x1 (0.032H / 0.064H);
+    # np.interp there clamps to our first cell value -- which is *not* the
+    # imposed face value (the profile is set exactly on the face at x=0, the
+    # first cell still carries an O(dx) inlet-cell error, ~1.2% at dx=0.15H and
+    # 0.2% at dx=0.05H).  Such samples are therefore excluded from the metrics
+    # instead of silently clamping (they are still printed, marked by '*').
+    ku = rx_u >= x[0]
+    kp = rx_p >= x[0]
+    ux, ur, uo = rx_u[ku], ru[ku], ui[ku]          # kept (downstream of x[0])
+    px, pr, po = rx_p[kp], rp[kp], pi[kp]
+    au = np.abs(uo - ur)
+    ap = np.abs(po - pr)
+    m2 = ux >= 2.0
+    m3 = (ux >= 3.0) & (ux <= 5.0)
     print('== %s   (%s)' % (lab, os.path.basename(vtu)))
-    print('   u/U   : L2/max=%.3f%%  L2(x>=2H)/max=%.3f%%  max|du|=%.4f  '
-          'mean|du|(2H..)=%.4f' % (100 * np.sqrt((au ** 2).mean()) / ru.max(),
-                                   100 * np.sqrt((au[m2] ** 2).mean()) / ru[m2].max(),
-                                   au.max(), au[m2].mean()))
+    if (~ku).any():
+        print('   note: u ref sample(s) at x/H = %s lie upstream of our first '
+              'cell centre %.3f (VTU is cell-centred, face value at x=0 is '
+              'exact) -> excluded from L2'
+              % (', '.join('%.3f' % v for v in rx_u[~ku]), x[0]))
+    if (~kp).any():
+        print('   note: p ref sample(s) at x/H = %s lie upstream of %.3f -> '
+              'excluded from L2'
+              % (', '.join('%.3f' % v for v in rx_p[~kp]), x[0]))
+    print('   u/U   : L2/max=%.3f%%  L2(x>=2H)/max=%.3f%%  max|du|=%.4f '
+          '(at x/H=%.2f)  mean|du|(2H..)=%.4f'
+          % (100 * np.sqrt((au ** 2).mean()) / ru.max(),
+             100 * np.sqrt((au[m2] ** 2).mean()) / ur[m2].max(),
+             au.max(), ux[au.argmax()], au[m2].mean()))
     print('           ref  x/H: ' + ' '.join('%6.2f' % v for v in rx_u))
     print('           ours    : ' + ' '.join('%6.3f' % v for v in ui))
     print('           ref     : ' + ' '.join('%6.3f' % v for v in ru))

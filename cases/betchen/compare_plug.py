@@ -82,14 +82,25 @@ for vtu, ucsv, pcsv, lab, col in cases:
     x, uu, pq = centerline(cc, ucn, pp)
     rx_u, ru = get_ref(os.path.join(REF, ucsv))
     rx_p, rp = get_ref(os.path.join(REF, pcsv))
-    # interpolate mine onto ref x
+    # interpolate mine onto ref x.  Our data are cell-centred, so the first
+    # column is at x[0]; reference samples upstream of it (plug_1 at 0.032H,
+    # plug_2 at 0.064H, vs our 0.075H) would be clamped by np.interp to the
+    # first-cell value (~1.483) while the *imposed face* value is exactly 1.5 --
+    # an O(dx) inlet-cell error, not a BC error (see README 3.4).  Mask them out
+    # of the metrics; they are still drawn (the plotted curve simply starts at
+    # x[0]).
     ui = np.interp(rx_u, x, uu)
     pi = np.interp(rx_p, x, pq)
-    l2u = np.sqrt(np.mean((ui - ru) ** 2)) / (np.abs(ru).max())
-    l2p = np.sqrt(np.mean((pi - rp) ** 2)) / (np.abs(rp).max() + 1e-30)
+    ku, kp = rx_u >= x[0], rx_p >= x[0]
+    if (~ku).any() or (~kp).any():
+        print('   note: %d u / %d p ref sample(s) lie upstream of our first '
+              'cell centre x/H=%.3f -> excluded from L2 (np.interp would clamp '
+              'them to the inlet-cell value)' % ((~ku).sum(), (~kp).sum(), x[0]))
+    l2u = np.sqrt(np.mean((ui[ku] - ru[ku]) ** 2)) / (np.abs(ru).max())
+    l2p = np.sqrt(np.mean((pi[kp] - rp[kp]) ** 2)) / (np.abs(rp).max() + 1e-30)
     # exclude the developing inlet region for the velocity metric (x/H>=2)
-    m = rx_u >= 2.0
-    l2u2 = np.sqrt(np.mean((ui[m] - ru[m]) ** 2)) / (np.abs(ru[m]).max())
+    m = rx_u[ku] >= 2.0
+    l2u2 = np.sqrt(np.mean((ui[ku][m] - ru[ku][m]) ** 2)) / (np.abs(ru[ku][m]).max())
     print('== %s' % lab)
     print('   velocity u/U: L2(mx)/maxU=%6.3f%%   L2(x/H>=2)/maxU=%6.3f%%   '
           'ref-full=%6.3f%%' % (100*l2u, 100*l2u2, 100*(ui.max()-ru.min())))

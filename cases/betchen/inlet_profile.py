@@ -9,10 +9,16 @@
 #        python3 inlet_profile.py plug_dae3.vtu=PAR 1.5684e-3
 #
 # Note: velocities are cell-centred, so the outermost samples are at
-# y/H = 1/(2*NY) and 1-1/(2*NY); int(u dy)/(U0 H) over that range is printed
-# as a rough check that the profile mean is U0 (it approaches 1 for a
-# developed/parabolic profile, and is < 1 right at a flat inlet because the
-# wall cells are already being dragged).
+# y/H = 1/(2*NY) and 1-1/(2*NY).  int(u dy)/(U0 H) is printed together with the
+# SAME discrete integral of the analytic parabola sampled at the same y's
+# ('disc' below): the continuous target 1.0 is NOT reachable from cell-centred
+# data because the wall margins y/H<1/(2NY) and >1-1/(2NY) are missing (they
+# cost ~0.55% at NY=21, i.e. disc=0.99449).  Compare 'our' with 'disc', not 1.0.
+#
+# The FIRST column is the inlet cell: the profile is imposed exactly on the face
+# at x=0, but the first cell centre sits dx/2 downstream and its value carries an
+# O(dx) inlet-cell error (centre u/U0 = 1.483 at dx=0.15H, 1.497 at dx=0.05H),
+# so do not read the first column as "the BC is wrong" -- refine x instead.
 import re
 import sys
 import numpy as np
@@ -64,11 +70,14 @@ for a in sys.argv[1:]:
         uu = u[m] / u0
         o = np.argsort(yy)
         xi = yy[o]
+        ana = 6 * xi * (1 - xi)
         print('   x/H=%.3f  y/H : %s'
               % (xc, ' '.join('%5.2f' % v for v in xi)))
         print('             ana : %s'
-              % ' '.join('%5.3f' % v for v in 6 * xi * (1 - xi)))
+              % ' '.join('%5.3f' % v for v in ana))
         print('             our : %s'
               % ' '.join('%5.3f' % v for v in uu[o]))
-        print('             int(u dy)/(U0 H) = %.5f   (target 1.00000)'
-              % (np.trapezoid(uu[o], yy[o])))
+        print('             max|our-ana| = %.4f   int(u dy)/(U0 H) = %.5f '
+              '(disc %.5f)'
+              % (np.abs(uu[o] - ana).max(), np.trapezoid(uu[o], yy[o]),
+                 np.trapezoid(ana, xi)))
