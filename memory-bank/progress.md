@@ -1,8 +1,28 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-08（**多孔/流体界面压力面值一致化 + Darcy 汇 1/ε 修复，A/B 验证通过**）
+> 最后更新：2026-10-08（**新增 `velocity-inlet-parabolic` 充分发展入口，PLUG 入流对齐论文抛物剖面，u L2 8.1%→0.6%**）
 
 ## 已完成
+
+- [x] **新增 `velocity-inlet-parabolic` 边界（2026-10-08，含源码改动）**：
+  - **动机**：PLUG 剩余偏差主因是**入口剖面**——论文用充分发展
+    $u(y)=6U_0y/H(1-y/H)$，而 `velocity-inlet` 只能给均匀速度（首列平顶
+    $u/U_0\approx1.10$、均值 $0.944U_0$），参考中心线 1.50 vs 我们 1.10。
+  - **实现**：`BC_VINLET_PARAB=10`（`mod_uns_control.f90` 解析 + 别名
+    `parabolic-inlet` 等）；`mod_uns_bc.f90` 设 `umean/span/axis/origin`，沿**面内法向**
+    施加 $|\mathbf u_f|=6U_{mean}\xi(1-\xi)$、$\xi=\mathrm{clamp}((x_{axis}-origin)/span,0,1)$，
+    方向指入域内（同 `mass-flow-inlet` 用外法向），温度走 `bc_face_T` Dirichlet；
+    `mod_uns_simple.f90` 动量 case 列表与 LTNE 固相入口识别同步。
+  - **验证**（`cases/betchen`，同一二进制仅改 `.control` 一行 UNI→PAR）：
+    Da=1e-2 u L2 8.06%→**0.63%**（max$|\Delta u|$ 0.401→0.021）、p L2 2.57%→2.37%；
+    Da=1e-3 u L2 7.02%→**2.23%**（0.402→0.097）、p L2 1.83%→1.76%；
+    剖面与解析 $6\xi(1-\xi)$ 逐点差 $\le0.004$（0.3% 峰值，$\int u\,dy/(U_0H)=1.001$）；入口压降仅变 ~0.2% ⇒ 增益纯来自**形状**；
+    均匀入口路径逐位无回归（VTU md5 `4c03d1cc…` 不变）；MPI np2 vs 串行
+    max$|\Delta u|$=2.8e-9。残余 0.097 在多孔界面过渡层（x/H≈2.96），与入口无关。
+  - **涉及文件**：`src/unstructured/{mod_uns_control,mod_uns_bc,mod_uns_simple}.f90`、
+    `cases/betchen/{plug_dae2,plug_dae3,plug_hir}.control`、
+    `cases/betchen/inlet_profile.py`（新）、`cases/betchen/README.md` §3.4/§4.4、
+    `docs/程序使用手册.tex` §5.9、`docs/91_appendix_params.tex` 表 4、`docs/93_changelog.tex`。
 
 - [x] **多孔/流体界面压力面值一致化 + Darcy 汇 1/ε 修复（2026-10-08，含源码改动）**：
   - **症状**（承接下方"三算例试跑"登记的 PLUG 待办）：界面两侧逐列速度锯齿，
@@ -371,8 +391,9 @@
   （`mod_uns_simple.f90`）。**结果**（`abtest_interface_pressure.sh` PRE/POST 对拍）：
   Da=1e-2 u L2 2.94%→**0.58%**、p L2 15.8%→**2.6%**；Da=1e-3 13.7%→**2.3%**、
   21.8%→**1.8%**；Re_H=1000 抖动 0.142→**0.022**。
-  **剩余待办**：① 支持抛物线入流（现仅均匀，是 2–7% 压力残差主因）；② 界面加密
-  网格收敛性（`gen_plug.py n1,n2,n3`）；③ BJ 滑移系数；④ 参考解归一化约定整理。
+  **剩余待办**：① ~~支持抛物线入流~~ **（2026-10-08 完成：`velocity-inlet-parabolic`，
+  三算例已切换，Da=1e-2 u L2 8.06%→0.63%、Da=1e-3 7.02%→2.23%；压力残差不再由入口解释）**；
+  ② 界面加密网格收敛性（`gen_plug.py n1,n2,n3`）；③ BJ 滑移系数；④ 参考解归一化约定整理。
   相关脚本：`cases/betchen/compare_plug.py` + `images/plug_compare_ref.png`。
   （修复前的定量对比记录见 `cases/betchen/README.md` §3/§7。）
 

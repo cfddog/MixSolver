@@ -39,6 +39,11 @@ module mod_uns_bc
       real(dp)             :: pval     = 0.0_dp
       real(dp)             :: mdot     = 0.0_dp   ! mass-flux inlet kg/m^2/s
       real(dp)             :: uspeed   = 0.0_dp   ! inlet speed mdot/rho (m/s)
+      ! --- parabolic (fully-developed) velocity inlet (BC_VINLET_PARAB) ---
+      real(dp)             :: prfl_mean   = 0.0_dp ! profile mean speed Umean
+      real(dp)             :: prfl_span   = 1.0_dp ! span over xi = 0..1
+      real(dp)             :: prfl_origin = 0.0_dp ! coordinate where |u| = 0
+      integer              :: prfl_axis   = 2      ! 1=x, 2=y, 3=z
       logical              :: has_lid  = .false.
       integer              :: lid_dir  = 0
       real(dp)             :: lid_coord = 0.0_dp
@@ -114,6 +119,20 @@ contains
             gb%uvel   = sp%uvel
             gb%pval   = sp%pval
             gb%mdot   = sp%mdot
+            ! pure-polynomial (fully-developed) inlet profile parameters
+            gb%prfl_mean   = sp%umean
+            gb%prfl_span   = sp%uspan
+            gb%prfl_origin = sp%uorigin
+            gb%prfl_axis   = sp%uaxis
+            if ( sp%btype == BC_VINLET_PARAB ) then
+               if ( gb%prfl_span <= 0.0_dp .or. gb%prfl_axis < 1 .or. &
+                    gb%prfl_axis > 3 ) then
+                  write(*,'(a)') 'ERROR: velocity-inlet-parabolic needs ' // &
+                     'span > 0 and axis 1|2|3'
+                  ier = 14
+                  return
+               end if
+            end if
             ! mass-flux inlet: convert to an inlet speed magnitude; the
             ! per-face direction is taken from the outward face normal in
             ! bc_face_vel (u_f = -uspeed * n_outward).
@@ -262,6 +281,13 @@ contains
                bc_type_name( gb%btype ), '  faces: ', gb%nf
             if ( gb%btype == BC_VINLET ) &
                write(*,'(a,3(es10.3,1x))') '    velocity        : ', gb%uvel
+            if ( gb%btype == BC_VINLET_PARAB ) then
+               write(*,'(a,es10.3,a,es10.3)') '    mean speed Umean: ', &
+                  gb%prfl_mean, '   span H = ', gb%prfl_span
+               write(*,'(a,i0,a,es10.3,a)') '    profile axis    : ', &
+                  gb%prfl_axis, '   vanishing at ', gb%prfl_origin, &
+                  '  (u = 6*Umean*xi*(1-xi), normal inflow)'
+            end if
             if ( gb%btype == BC_MASSINLET ) then
                write(*,'(a,es12.4,a)') '    mass flux m''   : ', gb%mdot, ' kg/m^2/s'
                write(*,'(a,es10.3,a)') '    inlet speed     : ', gb%uspeed, ' m/s (normal)'
@@ -307,7 +333,7 @@ contains
       real(dp),     intent(out) :: uf(3)
 
       integer  :: g
-      real(dp) :: un, nvec(3)
+      real(dp) :: un, nvec(3), xi, uspc
 
       g = bcs%fgrp(i)
 
@@ -329,6 +355,20 @@ contains
 
       case ( BC_VINLET )
          uf = bcs%gb(g)%uvel
+
+      case ( BC_VINLET_PARAB )
+         ! Fully-developed (parabolic) inlet: profile along the INWARD normal.
+         !   |u_f| = 6 * Umean * xi * (1 - xi),  xi = (x_axis - origin)/span
+         ! xi is clamped to [0,1] (a patch lying slightly outside the nominal
+         ! channel keeps |u_f| >= 0 instead of going negative); over the span
+         ! the profile averages exactly Umean, so the volume flow equals a
+         ! uniform 'velocity-inlet Umean' on the same patch.
+         nvec = sf / norm2( sf )
+         xi   = ( xf(bcs%gb(g)%prfl_axis) - bcs%gb(g)%prfl_origin ) &
+                / bcs%gb(g)%prfl_span
+         xi   = max( 0.0_dp, min( 1.0_dp, xi ) )
+         uspc = 6.0_dp * bcs%gb(g)%prfl_mean * xi * ( 1.0_dp - xi )
+         uf   = -uspc * nvec
 
       case ( BC_MASSINLET )
          ! Uniform-normal mass-flux inlet.  sf points outward from the fluid
@@ -477,7 +517,7 @@ contains
          q_face     = 0.0_dp
          T_face     = T_cell
 
-      case ( BC_VINLET )
+      case ( BC_VINLET, BC_VINLET_PARAB )
          ! inlet fixed temperature (Dirichlet); tval defaults to 0
          is_neumann = .false.
          T_face     = bcs%gb(g)%tval

@@ -280,6 +280,7 @@ zone 已有的条目。最多 32 条 \texttt{bc} 行。
 \texttt{wall} & 无参数。无滑移壁面（粘性） \\
 \texttt{symmetry} & 无参数。对称面：法向速度为零、切向自由 \\
 \texttt{velocity-inlet}\newline (\texttt{velocity\_inlet}, \texttt{inlet}) & \texttt{<ux> <uy> <uz> [T\_in]}。给定\textbf{矢量}入口速度 [m/s]；可选第 4 个 token 为入口静温（\texttt{bc\_face\_T} 的 Dirichlet 值，求解能量方程时必须给出，否则温度被拉向 0） \\
+\texttt{velocity-inlet-parabolic}\newline (\texttt{velocity\_inlet\_parabolic}, \texttt{parabolic-inlet}, \texttt{inlet-parabolic}) & \texttt{<Umean> <span> <axis> <origin> [T\_in]}。充分发展（抛物）入口：沿\textbf{面内法向}施加 $|\mathbf{u}_f| = 6\,U_{mean}\,\xi(1-\xi)$，$\xi = \mathrm{clamp}((x_{axis}-origin)/span,0,1)$（\texttt{axis}：1 = x、2 = y、3 = z；\texttt{origin} 是速度为零的坐标，\texttt{span} 是剖面跨越的尺度），方向指向域内（与 \texttt{mass-flow-inlet} 同用外法向）。剖面均值恰为 $U_{mean}$，故总流量与 \texttt{velocity-inlet} $U_{mean}$ 相同，仅形状不同；非法参数（$span\le0$、$axis\notin\{1,2,3\}$、缺 token）在解析阶段报错退出 \\
 \texttt{mass-flow-inlet}\newline (\texttt{mass\_flow\_inlet}, \texttt{mass-inlet}) & \texttt{<mdot> [T\_in]}。$mdot>0$ 为指向域内的质量通量 [kg/m$^2$/s]，面速度按 $\mathbf{u}_f = -(mdot/\rho)\mathbf{n}_{out}$ 施加；可选第 4 个 token 为入口静温 \\
 \texttt{pressure-outlet}\newline (\texttt{pressure\_outlet}, \texttt{outlet}) & \texttt{<p>}。出口压力 [Pa]。常密度下仅起\textbf{表压锚点}作用（整场平移，不影响速度与梯度），但取值有收敛上限且正负不对称：正值鲁棒区约 $+15$ Pa、负值到约 $-200$ Pa，$+100$ 及以上必发散 \\
 \texttt{pressure-far-field}\newline (\texttt{farfield}, \texttt{far-field}) & \texttt{<p\_far> <ux> <uy> <uz>}。入流（$\mathbf{u}\cdot\mathbf{n}<0$）时速度固定为来流值，出流时按 owner 格心零阶外插；压力恒为 Dirichlet $p_{far}$ \\

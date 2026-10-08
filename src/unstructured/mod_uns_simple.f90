@@ -1042,9 +1042,11 @@ contains
          F  = ctrl%rho * dot_product( uf, g%sf(:,i) )
 
          select case ( bcs%gb(gi)%btype )
-         case ( BC_WALL, BC_SYMMETRY, BC_VINLET, BC_SLIPWALL, BC_MASSINLET, &
-                BC_INTERFACE )
+         case ( BC_WALL, BC_SYMMETRY, BC_VINLET, BC_VINLET_PARAB, BC_SLIPWALL, &
+                BC_MASSINLET, BC_INTERFACE )
             ! fixed face velocity: implicit diffusion (+outflow safety);
+            ! (VINLET_PARAB: same Dirichlet treatment, face value = parabolic
+            !  profile along the inward normal)
             ! (MASSINLET: uf = -(mdot/rho) n, prescribed normal inflow)
             ! (INTERFACE: velocity is Dirichlet-set by the coupling peer;
             !  without this branch the prescribed velocity never enters the
@@ -1903,6 +1905,7 @@ contains
          ! The solid phase has no through-flow: at flow-inlet faces the shared
          ! thermal BC does not apply -- use an adiabatic (zero-flux) condition.
          if ( bcs%gb(gi)%btype == BC_VINLET .or. &
+              bcs%gb(gi)%btype == BC_VINLET_PARAB .or. &
               bcs%gb(gi)%btype == BC_MASSINLET ) then
             is_neumann = .true.
             q_face     = 0.0_dp

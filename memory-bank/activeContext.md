@@ -1,6 +1,25 @@
 # 当前上下文 (activeContext)
 
-> 最后更新：2026-10-08（**多孔/流体界面压力面值一致化 + Darcy 汇 1/ε 修复，A/B 验证通过**）
+> 最后更新：2026-10-08（**新增 `velocity-inlet-parabolic` 充分发展入口，PLUG 入流对齐论文抛物剖面，u L2 8.1%→0.6%**）
+
+> **2026-10-08 ✅ 新边界 `velocity-inlet-parabolic`（PLUG 入口改论文抛物剖面，u L2 8.1%→0.6%）**：
+> 上一条登记的待办①已做完。**实现**：`BC_VINLET_PARAB=10`（`mod_uns_control.f90`
+> 解析/别名/名称；`mod_uns_bc.f90` 增 `umean/span/axis/origin` 字段 + `bc_face_vel`
+> profile 分支 + 报告；`mod_uns_simple.f90` 动量 case 列表 + LTNE 固相入口识别）。
+> 语法 `bc = <zone> velocity-inlet-parabolic <Umean> <span> <axis> <origin> [T_in]`，
+> 沿**面内法向**施加 $|\mathbf u_f| = 6U_{mean}\xi(1-\xi)$、
+> $\xi=\mathrm{clamp}((x_{axis}-origin)/span,0,1)$，方向指入域内。
+> **验证**：同一二进制只改 `.control` 一行 UNI→PAR ⇒ PLUG Da=1e-2 u L2 **8.06%→0.63%**
+> （max$|\Delta u|$ 0.401→0.021、p L2 2.57%→2.37%）、Da=1e-3 **7.02%→2.23%**
+> （0.402→0.097、1.83%→1.76%）；入口剖面（`cases/betchen/inlet_profile.py`，新）
+> 与解析 $6\xi(1-\xi)$ 逐点差 $\le0.004$（0.3% 峰值）、列内均值 1.0000·U0；入口压降仅变 ~0.2%
+> ⇒ 增益纯来自**剖面形状**；**均匀入口路径逐位无回归**（VTU md5 `4c03d1cc…` 不变）；
+> **MPI np2 vs 串行** max$|\Delta u|$=2.8e-9、max$|\Delta p|$=1.0e-11。
+> 残余 max|du|=0.097（Da=1e-3）位于多孔界面过渡层 x/H≈2.96，与入口无关。
+> 详见 `cases/betchen/README.md` §3.4/§4.4、`docs/93_changelog.tex`、
+> 手册 §5.9 + 附录表 4（`xelatex` 4 遍 → 24 页零 error）。
+> **下一步候选**：① 界面加密网格收敛性（`gen_plug.py n1,n2,n3`）；② 多孔区有效黏度
+> 约定（$\mu_{eff}$ vs $\mu/\varepsilon$）核对；③ BJ 滑移系数；④ pval 非规范不变性。
 
 > **2026-10-08 ✅ 界面压力一致化 + Darcy 汇修复（"PLUG 对比不佳"已达标）**：
 > 上一条登记的待办已定位并修好。**两个根因**：① 界面压力面值用距离加权插值，在

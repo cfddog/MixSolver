@@ -6,6 +6,9 @@
 !     bc = <zone> wall
 !     bc = <zone> symmetry
 !     bc = <zone> velocity-inlet <ux> <uy> <uz>
+!     bc = <zone> velocity-inlet-parabolic <Umean> <span> <axis> <origin> [<T>]
+!                  (fully-developed profile along the inward face normal:
+!                   |u| = 6*Umean*xi*(1-xi), xi = (x_axis-origin)/span)
 !     bc = <zone> pressure-outlet <p>
 !     bc = <zone> outflow           (fully-developed: zero gradient, global
 !                                    mass scaling enforces outflow = inflow)
@@ -19,7 +22,8 @@ module mod_uns_control
    implicit none
    private
    public :: ctrl_t, read_control, read_mesh_scale, BC_NONE, BC_WALL, BC_SYMMETRY, &
-             BC_VINLET, BC_POUTLET, BC_FARFIELD, BC_SLIPWALL, BC_MASSINLET, &
+             BC_VINLET, BC_VINLET_PARAB, BC_POUTLET, BC_FARFIELD, BC_SLIPWALL, &
+             BC_MASSINLET, &
              BC_OUTFLOW, BC_INTERFACE, &
              bc_type_name, resolve_cell_zones, cell_zone_t, &
              CZ_AUTO, CZ_FLUID, CZ_POROUS
@@ -41,6 +45,14 @@ module mod_uns_control
                                               ! face velocity/pressure come from
                                               ! the peer solver via the exchange
                                               ! layer (stored in bc_t%iface_*).
+   integer, parameter :: BC_VINLET_PARAB = 10 ! parabolic (fully-developed) inlet:
+                                              ! |u_f| = 6*Umean*xi*(1-xi) applied
+                                              ! along the INWARD face normal, with
+                                              ! xi = (x(axis)-origin)/span clamped
+                                              ! to [0,1].  The mean of the profile
+                                              ! over the span is exactly Umean, so
+                                              ! the volume flow equals that of the
+                                              ! uniform 'velocity-inlet Umean'.
 
    integer, parameter :: MAXBC    = 32
    integer, parameter :: MAXCZ    = 32
@@ -94,6 +106,14 @@ module mod_uns_control
       real(dp) :: uvel(3)  = 0.0_dp     ! inlet velocity
       real(dp) :: pval     = 0.0_dp     ! outlet pressure
       real(dp) :: mdot     = 0.0_dp     ! mass-flux inlet (kg/m^2/s, positive in)
+      ! --- parabolic (fully-developed) velocity inlet (BC_VINLET_PARAB) ---
+      ! |u_f| = 6*umean*xi*(1-xi) along the inward face normal, with
+      ! xi = (x(axis) - uorigin) / uspan clamped to [0,1] ("origin" is the
+      ! coordinate where the profile vanishes, e.g. the channel wall y=0).
+      real(dp) :: umean    = 0.0_dp     ! Umean of the profile (= uniform u)
+      real(dp) :: uspan    = 0.0_dp     ! span over which the profile spans 0..1
+      real(dp) :: uorigin   = 0.0_dp    ! coordinate where |u| = 0
+      integer  :: uaxis    = 2          ! profile coordinate: 1=x, 2=y, 3=z
       logical  :: has_lid  = .false.    ! moving-wall plane filter present
       integer  :: lid_dir  = 0          ! 1=x, 2=y, 3=z
       real(dp) :: lid_coord = 0.0_dp
@@ -930,6 +950,46 @@ contains
             read( val, *, iostat = ios ) spec%zone, bname, spec%uvel, spec%tval
             ios = 0
          end if
+      case ( 'velocity-inlet-parabolic', 'velocity_inlet_parabolic', &
+             'parabolic-inlet', 'parabolic_inlet', 'inlet-parabolic' )
+         ! Fully-developed (parabolic) velocity inlet:
+         !   "<zone> velocity-inlet-parabolic <Umean> <span> <axis> <origin> [<T>]"
+         ! The face velocity magnitude follows |u_f| = 6*Umean*xi*(1-xi) with
+         ! xi = (x(axis) - origin)/span (clamped to [0,1]) and is applied
+         ! normal to the patch, pointing INTO the domain (like mass-flow-inlet
+         ! it uses the outward face normal: u_f = -|u_f| * n_outward).  Its
+         ! span-average is exactly Umean, so the volume flow equals that of
+         ! "velocity-inlet <Umean> 0 0 ..." on the same patch -- only the
+         ! shape changes (this is the Betchen/paper fully-developed inlet).
+         ! The optional last token is the inlet static temperature (same as
+         ! velocity-inlet; defaults to 0, must be given when T is solved).
+         spec%btype = BC_VINLET_PARAB
+         read( val, *, iostat = ios ) spec%zone, bname, spec%umean, &
+              spec%uspan, spec%uaxis, spec%uorigin, spec%tval
+         if ( ios /= 0 ) then
+            ! fewer than 7 records: retry without the temperature token
+            ! (list-directed input assigns the leading items before it hits
+            ! the end of record, but re-read for clarity/robustness)
+            spec%tval = 0.0_dp
+            read( val, *, iostat = ios ) spec%zone, bname, spec%umean, &
+                 spec%uspan, spec%uaxis, spec%uorigin
+            if ( ios /= 0 ) then
+               write(*,'(a)') 'ERROR: velocity-inlet-parabolic needs ' // &
+                  'Umean span axis origin: ' // trim(val)
+               ier = 6
+            end if
+         end if
+         if ( ier == 0 ) then
+            if ( spec%uspan <= 0.0_dp ) then
+               write(*,'(a)') 'ERROR: velocity-inlet-parabolic span must be > 0: ' &
+                  // trim(val)
+               ier = 6
+            else if ( spec%uaxis < 1 .or. spec%uaxis > 3 ) then
+               write(*,'(a)') 'ERROR: velocity-inlet-parabolic axis must be 1, 2 or 3: ' &
+                  // trim(val)
+               ier = 6
+            end if
+         end if
       case ( 'pressure-outlet', 'pressure_outlet', 'outlet' )
          spec%btype = BC_POUTLET
          read( val, *, iostat = ios ) spec%zone, bname, spec%pval
@@ -1176,11 +1236,12 @@ contains
    !----------------------------------------------------------------------------
    function bc_type_name( btype ) result( name )
       integer, intent(in) :: btype
-      character(len=22) :: name
+      character(len=26) :: name
       select case ( btype )
       case ( BC_WALL );      name = 'wall'
       case ( BC_SYMMETRY );  name = 'symmetry'
       case ( BC_VINLET );    name = 'velocity-inlet'
+      case ( BC_VINLET_PARAB ); name = 'velocity-inlet-parabolic'
       case ( BC_POUTLET );   name = 'pressure-outlet'
       case ( BC_FARFIELD );  name = 'pressure-far-field'
       case ( BC_SLIPWALL );  name = 'slip-wall'

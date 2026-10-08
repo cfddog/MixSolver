@@ -32,6 +32,25 @@
 \bottomrule
 \endlastfoot
 2026-10-08 & 11 &
+新增 \texttt{velocity-inlet-parabolic} 边界（\texttt{BC\_VINLET\_PARAB}=10）：沿面内法向
+直接施加充分发展抛物剖面 $|u_f|=6U_{mean}\xi(1-\xi)$、$\xi=(x_{axis}-origin)/span$，
+剖面均值恰为 $U_{mean}$（流量与均匀入口一致，只改形状），供论文型``充分发展入口''算例
+使用；动量/温度/LTNE 固相识别/BC 报告全部接入。\textbf{动机}：Betchen PLUG 算例入口
+原用均匀速度，第一列平顶 ($u/U_0\approx1.10$、列内均值 $0.944U_0$) 使 PLUG
+Da=1e-3 中心线 u L2=7.0\%（入口采样点偏差 1.10 vs 1.50）。 &
+\texttt{src/unstructured/mod\_uns\_control.f90},
+\texttt{src/unstructured/mod\_uns\_bc.f90},
+\texttt{src/unstructured/mod\_uns\_simple.f90},
+\texttt{cases/betchen/\{plug\_dae2,plug\_dae3,plug\_hir\}.control} &
+\texttt{cases/betchen/README.md} \S3.4/\S4.4：
+同一二进制只改入口一行 ⇒ PLUG Da=1e-2 u L2 \textbf{8.06\%→0.63\%}
+（max$|\Delta u|$ 0.401→0.021）、Da=1e-3 \textbf{7.02\%→2.23\%}（0.402→0.097）、
+p L2 2.57\%→2.37\% / 1.83\%→1.76\%；入流剖面第 4 列 (x/H=0.525) 与解析
+$6\xi(1-\xi)$ 逐点差 $\le0.004$（0.3\% 峰值 1.5U0，$\int u\,dy/(U_0H)=1.001$）；均匀入口路径\textbf{逐位无回归}
+（新二进制+旧入口行重跑 \texttt{plug\_dae3} 的 VTU md5 与旧产物完全一致），
+MPI np2 vs 串行 max$|\Delta u|$=2.8e-9
+\\
+2026-10-08 & 11 &
 修复流体/多孔界面压力面值的不一致与 Darcy 汇系数：新增 \texttt{kink\_face\_pressure}
 （界面两侧各自单侧二次重构取平均，仅当两侧单元类型不同时替换距离加权插值），
 界面压力对"C0 连续、斜率跳变"的压力场恢复一致；\texttt{momentum\_assembly} 的

@@ -425,6 +425,16 @@ $\mu=1.846\times10^{-5}$ Pa$\cdot$s 对应 300 K、1 atm）。
   \item \textbf{能量方程必须给入口温度}：\texttt{velocity-inlet} /
         \texttt{mass-flow-inlet} 的第 4 个 token 是入口静温；不写时温度会被拉向 0
         （历史缺陷，已修复为可检测）。
+  \item \textbf{充分发展（抛物）入口}：\texttt{bc = <zone>
+        velocity-inlet-parabolic <Umean> <span> <axis> <origin> [T\_in]}
+        沿\textbf{面内法向}施加 $|u_f| = 6\,U_{mean}\,\xi(1-\xi)$，
+        $\xi = (x_{axis}-origin)/span$（$axis$：1 = x、2 = y、3 = z）；
+        剖面均值恰为 $U_{mean}$，故总流量与 \texttt{velocity-inlet}
+        $U_{mean}$ 相同，只改变\textbf{形状}。$span/origin$ 直接写
+        ``壁面到壁面''的几何量（如 H 与 0）。论文型算例（Betchen PLUG，
+        \texttt{cases/betchen}）用它直接给出 $u(y)=6U_0y/H(1-y/H)$，
+        省掉``均匀入口 + 长发展段''的做法；解析/数值验证见
+        \texttt{cases/betchen/README.md} \S3.4。
 \end{itemize}
 
 \subsection{MPI 分区与重启动}

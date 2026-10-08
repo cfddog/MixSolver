@@ -5,6 +5,45 @@
 
 ---
 
+## 2026-10-08 | 新增 `velocity-inlet-parabolic` 边界：PLUG 入流改论文抛物剖面（u L2 8.1%→0.6%）
+
+- **动机**：上一条把 PLUG 压力/速度从 2–7% 压到 ~0.6–2.3% 后，剩余偏差的候选主因是
+  **入口剖面**——论文 Abaqus 用充分发展 $u(y)=6U_0 y/H(1-y/H)$，而 `velocity-inlet`
+  只能给均匀速度（第一列平顶 $u/U_0\approx1.10$、列内均值 $0.944U_0$），
+  参考解中心线 1.50 vs 我们 1.10。
+- **实现**（沿面内法向、均值恰为 $U_{mean}$）：
+  - `mod_uns_control.f90`：`bc_type_name` 增 `velocity-inlet-parabolic` 及别名
+    `velocity_inlet_parabolic`/`parabolic-inlet`/`inlet-parabolic`；
+    `parse_bc` 增 `BC_VINLET_PARAB = 10` 分支，参数
+    `<Umean> <span> <axis> <origin> [T_in]`（`axis` 1/2/3 = x/y/z，`origin` 为速度为零的
+    坐标、`span` 为剖面跨越尺度），非法参数（缺 token、`span<=0`、`axis` 越界）解析期报错。
+  - `mod_uns_bc.f90`：`bc_spec_t`/`bc_setup` 增 `umean/span/axis/origin` 字段；
+    `bc_face_vel` 增分支——先算方向（沿法向指入域内，与 `mass-flow-inlet` 同用外法向），
+    再按 $\xi=\mathrm{clamp}((x_{axis}-origin)/span,0,1)$ 取
+    $|\mathbf u_f| = 6U_{mean}\xi(1-\xi)$；温度按 `bc_face_T` 的 Dirichlet 分支处理；
+    边界报告打印 `Umean / span / profile axis / vanishing at`。
+  - `mod_uns_simple.f90`：动量边界面 case 列表加入该类型；LTNE 固相入口温度识别同步。
+- **验证**（`cases/betchen`，同一二进制只改 `.control` 入口一行 UNI→PAR）：
+  - `plug_dae2`（Da=1e-2）u L2 **8.06%→0.63%**（max$|\Delta u|$ 0.401→0.021），
+    p L2 2.57%→2.37%；`plug_dae3`（Da=1e-3）u L2 **7.02%→2.23%**
+    （0.402→0.097）、p L2 1.83%→1.76%；`plug_hir` 一并切换（仍只作定性）。
+  - 剖面形状：`cases/betchen/inlet_profile.py`（新增）打印第 1–4 列 $u(y)/U_0$ 与解析
+    $6\xi(1-\xi)$ 逐点差 $\le 0.004$（0.3% 峰值），第 4 列（x/H=0.525）列内均值 1.0000·U0。
+  - **流量不变**：入口压降/`dp/dx` 仅变 ~0.2% ⇒ 增益全部来自剖面**形状**（非流量）。
+  - **无回归**：新二进制 + 旧（均匀）入口行重跑 `plug_dae3`，VTU md5 与旧产物
+    **逐位相同**（`4c03d1cc0b4264f21bbbc97cc7bfc760`）；均匀入口路径行为不变。
+  - **MPI**：np2 vs 串行 max$|\Delta u|$=2.8e-9、max$|\Delta p|$=1.0e-11（该网格机器零）。
+  - 残余 max|du|=0.097（Da=1e-3）位于多孔界面过渡层（x/H≈2.96），与入口无关。
+- **文档**：`cases/betchen/README.md` §3.4（新）/§4.4（新）/§2 复现表；`docs/程序使用手册.tex`
+  §5.9 新增“充分发展（抛物）入口”条目；`docs/91_appendix_params.tex` 表 4 增一行
+  （关键字/别名/参数/语义）；`docs/93_changelog.tex` 增逆序条目。
+  `cd docs && xelatex 程序使用手册.tex` 连跑 4 遍 → **24 页**（原 23），末遍零 error /
+  零 undefined（注：本机 pdfLaTeX 的 `fandol` fontset 不可用，与本改动无关，用 xelatex）。
+- **新增文件**：`cases/betchen/inlet_profile.py`（剖面自检脚本，与 `cmp_centerline.py`
+  同风格：命令行 `vtu=<标签>[=<U0>]`）。
+
+---
+
 ## 2026-10-08 | 修复：多孔/流体界面压力面值一致化 + Darcy 汇 1/ε（PLUG 参考解对拍达标）
 
 - **承接上一条**（"PLUG 参考解对比不佳"）已完成定位与修复；症状：界面两侧逐列速度
