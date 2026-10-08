@@ -5,9 +5,11 @@
 # NOTE: no fluid|porous type token here -- the block type is inferred from
 # the VC tag, this line supplies the coefficients only (CZ_AUTO).
 #
-# Analytical pressure drop (mu_eff = mu/eps Brinkman effective viscosity):
-#   dp/dx = -(mu/eps/K) u
-#   dP    = 1.846e-5/0.4/1e-8 * 0.1 * 0.1 = 46.15 Pa
+# Analytical pressure drop.  Darcy sink of the volume-averaged momentum
+# equation is mu/K*u in the superficial velocity (the 1/eps of the Brinkman
+# term applies to the viscous/convective terms only, not to the Darcy drag):
+#   dp/dx = -(mu/K) u
+#   dP    = 1.846e-5/1e-8 * 0.1 * 0.1 = 18.46 Pa
 # Pore Reynolds number Re_p = rho u sqrt(K)/mu = 0.64 (Darcy regime).
 
 mesh_scale = 1.0

@@ -3,10 +3,10 @@
 # Same mesh/VC-tagged zone as plug_darcy.control, higher velocity and a
 # non-zero Forchheimer coefficient.
 #
-# Analytical pressure drop:
-#   dP = (mu/eps/K) u L + rho C_F u^2 L
-#      = 1.846e-5/0.4/1e-8 * 1.0 * 0.1 + 1.177*500*1.0*0.1
-#      = 461.5 + 58.85 = 520.35 Pa
+# Analytical pressure gradient (Darcy sink = mu/K*u, no 1/eps factor):
+#   dp/dx = -(mu/K) u - rho C_F |u| u       [C_F = inertial = cE/sqrt(K)]
+#         = -1.846e-5/1e-8 * 1.0 - 1.177*500*1.0^2 = -2434.5 Pa/m
+#   dP    = 184.6 + 58.85 = 243.45 Pa
 
 mesh_scale = 1.0
 rho = 1.177

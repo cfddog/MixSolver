@@ -1011,8 +1011,20 @@ contains
             rhs(c1) = rhs(c1) - noc
          end if
 
-         ! pressure force -p_f S_f
-         pf = fld%lf(i) * fld%p(c0) + (1.0_dp - fld%lf(i)) * fld%p(c1)
+         ! pressure force -p_f S_f.
+         ! At fluid/porous interface faces the plain distance-weighted
+         ! interpolation misses the (kinked) interface pressure by
+         ! O((s_por-s_flu)*d0*d1/(d0+d1)), which acts on the two adjacent cells
+         ! as an equal-and-opposite force dipole and drives the odd-even
+         ! velocity jitter seen next to the interface.  Use the kink-consistent
+         ! face pressure there (see kink_face_pressure); it collapses to the
+         ! plain interpolation for a locally linear field, so single-phase
+         ! cases are untouched.
+         if ( is_porous_cell(fld,c0) .neqv. is_porous_cell(fld,c1) ) then
+            call kink_face_pressure( m, g, fld, i, pf )
+         else
+            pf = fld%lf(i) * fld%p(c0) + (1.0_dp - fld%lf(i)) * fld%p(c1)
+         end if
          Scomp = g%sf(comp,i)
          rhs(c0) = rhs(c0) - pf * Scomp
          rhs(c1) = rhs(c1) + pf * Scomp
@@ -1086,17 +1098,25 @@ contains
       end if
 
       ! ---- Darcy-Forchheimer porous source (phase 12) -------------------------
-      ! Momentum sink per volume:  S = -(mu_eff/K) u - rho*inertial*|u| u
+      ! Momentum sink per volume:  S = -(mu/K) u - rho*inertial*|u| u
       !   - linear Darcy term -> implicit (added to diagonal ap)
       !   - nonlinear Forchheimer term -> explicit (lagged velocity, into rhs)
       ! K is the diagonal permeability tensor component along the current
       ! momentum direction (axis-aligned anisotropy; off-diagonal terms would
       ! need a block-coupled momentum assembly and are not supported).
       ! Fluid cells have perm_dir=0 and inertial=0, so they are skipped.
+      ! NB the Darcy coefficient carries NO porosity: this is the
+      ! "divided-by-porosity" form of the volume-averaged momentum equation
+      !   rho/eps d(u)/dt + rho/eps^2 div(u u) = -grad p + mu/eps lap(u)
+      !                                           - mu/K u - rho cE/sqrt(K)|u|u
+      ! i.e. the sink acts on the SUPERFICIAL (seepage) velocity with mu/K
+      ! (Brinkman/Vafai-Kim convention, mu_eff = mu/eps for the viscous term
+      ! above and in the faces).  Scaling it by 1/eps as well multiplies the
+      ! plug pressure drop by 1/eps (1.43 here) and is inconsistent with the
+      ! Betchen 2006 reference solution (dp/dx = (mu/K) U/Da-form).
       do kk = 1, m%ncells
          if ( fld%perm_dir(comp,kk) > 0.0_dp ) then
-            ap(kk) = ap(kk) + ( ctrl%mu / fld%porosity(kk) ) &
-                            / fld%perm_dir(comp,kk) * g%vol(kk)
+            ap(kk) = ap(kk) + ctrl%mu / fld%perm_dir(comp,kk) * g%vol(kk)
          end if
          if ( fld%inertial(kk) > 0.0_dp ) then
             umag = sqrt( fld%u(1,kk)**2 + fld%u(2,kk)**2 + fld%u(3,kk)**2 )

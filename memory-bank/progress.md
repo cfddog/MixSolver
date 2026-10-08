@@ -1,8 +1,33 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-08（**Betchen 2006 三验证算例试跑 + BJ 参考解对比完成**）
+> 最后更新：2026-10-08（**多孔/流体界面压力面值一致化 + Darcy 汇 1/ε 修复，A/B 验证通过**）
 
 ## 已完成
+
+- [x] **多孔/流体界面压力面值一致化 + Darcy 汇 1/ε 修复（2026-10-08，含源码改动）**：
+  - **症状**（承接下方"三算例试跑"登记的 PLUG 待办）：界面两侧逐列速度锯齿，
+    Da=1e-3 达 ±40%、Re_H=1000 达 ±10%，**随网格细化不收敛**；压力高 ~1.2–1.3×。
+  - **根因①**：界面压力 C0 连续但斜率跳变（多孔侧多 Darcy 汇），距离加权插值
+    `pf=lf·p(c0)+(1−lf)·p(c1)` 在界面面上有 O(30ρU0²) 误差，等值反号进入两侧单元
+    动量 ⇒ 力偶极子 ⇒ 无阻尼 odd-even 模态（并污染压力梯度/Rhie-Chow 通量）。
+  - **根因②**：`momentum_assembly` 的 Darcy 汇多乘 1/ε（应为 μ/K·u）。
+  - **修法**：`mod_uns_fields.f90` 新增 `kink_face_pressure`（界面两侧各自单侧二次
+    重构取平均，仅两侧单元类型不同时启用），`compute_gradients` 与
+    `momentum_assembly`（−p_f·S_f）共用 ⇒ 不动点 = 两侧真实斜率；`mod_uns_simple.f90`
+    的 Darcy 汇改 μ/K·u。
+  - **验证**（`cases/betchen/abtest_interface_pressure.sh`，7 算例 PRE/POST 对拍）：
+    PLUG Da=1e-2 u L2 2.94%→**0.58%**、p L2 15.8%→**2.6%**、抖动 0.147→**0.018**；
+    Da=1e-3 13.7%→**2.3%**、21.8%→**1.8%**、0.781→**0.074**；Re_H=1000 抖动
+    0.142→**0.022**；`fluid`（同网格无多孔块）两版 VTU 与日志 md5 完全相同、
+    全字段差分 0（no-op）；`bj2/bj3` L2 3.54%/2.87%（均机器零收敛）；
+    `porous_plug` 一维塞 dp/dx −461.5→**−184.6** Pa/m（解析 −184.6，150.0%→0.0%）。
+  - **涉及文件**：`src/unstructured/mod_uns_fields.f90`、
+    `src/unstructured/mod_uns_simple.f90`、`cases/betchen/README.md`（新）、
+    `cases/betchen/{cmp_centerline,vs_ref,fdiff_vtu}.py`（新）、
+    `cases/betchen/abtest_interface_pressure.sh`（新）、
+    `cases/porous_plug/fit_pp.py`（新）、`cases/betchen/gen_plug.py`（增 `n1,n2,n3`）、
+    `cases/{betchen,porous_plug}/images/*.png`、`cases/porous_plug/README.md` 与
+    5 个 `.control` 注释、`docs/93_changelog.tex`。
 
 - [x] **Betchen 2006 界面验证：三算例试跑 + BJ 参考解对拍（2026-10-08，无源码改动）**：
   - 输入/脚本在 `cases/betchen/`（`gen_{bj,plug,ht}.py`、`.cas`、`.control`、
@@ -336,18 +361,20 @@
 ### Betchen 2006 界面验证（2026-10-08 试跑）
 - [x] **BJ 参考解对比（Da=1e-2/1e-3）**：峰值 1.408/1.459 vs 参考 1.387/1.457，
   L2 = 参考 RMS 的 4.09%/2.88% → 复现成功（`cases/betchen/compare_bj.py`）。
-- [~] **PLUG 参考解对比（Da=1e-2=plug-1、Da=1e-3=plug-2）对比不佳，记为后续待办**：
+- [x] **PLUG 参考解对比（Da=1e-2=plug-1、Da=1e-3=plug-2）—— 2026-10-08 已修复达标**：
   对拍 `/mnt/c/temp/validate_case/plug_{1,2}_{u,p}.csv`（中心线 `u/U`、`p/(ρU²)`
-  沿 `x/H`，入口为抛物线 `6U(y/H)(1-y/H)`）。**问题**：
-  ① 充分发展段 u/U 吻合（1.497 vs 1.503）但**多孔/界面段速度偏差大**
-     （plug-1 ~4%、plug-2 界面处出现振荡尖峰 1.52→1.06，ref 平滑 1.24→1.14）；
-  ② **压力绝对电平整体偏高 ~1.2–1.3×**（plug-1 入口 423 vs 345、plug-2 3035 vs
-     2264），两个 Da 倍率相近 ⇒ 疑**渗透系数/有效黏度约定差异**（我方
-     `mu_eff=mu/ε` 且 `inertial=0`，参考为外禀式 `ε·mu/K` 且带 `cE`），
-     也可能是中心线 vs 面均值取样差异。
-  **待下一步**：① 核对 `mod_uns_simple.f90` 多孔源项/有效黏度约定；② 支持抛物线
-  入流；③ 界面加密网格复跑；④ 复核压力归一化（U 为抛物线均值而非均匀入口 U0）。
+  沿 `x/H`）。**原问题**：① 多孔/界面段速度偏差大、界面处出现振荡尖峰；② 压力
+  绝对电平整体偏高 ~1.2–1.3×。**根因**（2026-10-08 定位）：① 界面压力面值用距离
+  加权插值，在"C0 连续、斜率跳变"的压力场上有 O(30ρU0²) 误差 ⇒ 力偶极子 ⇒
+  无阻尼 odd-even 速度锯齿；② Darcy 汇多乘 1/ε（应为 μ/K·u）。**修法**：新增
+  `kink_face_pressure`（`mod_uns_fields.f90`）+ Darcy 汇改 μ/K·u
+  （`mod_uns_simple.f90`）。**结果**（`abtest_interface_pressure.sh` PRE/POST 对拍）：
+  Da=1e-2 u L2 2.94%→**0.58%**、p L2 15.8%→**2.6%**；Da=1e-3 13.7%→**2.3%**、
+  21.8%→**1.8%**；Re_H=1000 抖动 0.142→**0.022**。
+  **剩余待办**：① 支持抛物线入流（现仅均匀，是 2–7% 压力残差主因）；② 界面加密
+  网格收敛性（`gen_plug.py n1,n2,n3`）；③ BJ 滑移系数；④ 参考解归一化约定整理。
   相关脚本：`cases/betchen/compare_plug.py` + `images/plug_compare_ref.png`。
+  （修复前的定量对比记录见 `cases/betchen/README.md` §3/§7。）
 
 ### 阶段 11（流 B、C1、C2、分派表、绝对压力偏置 **均已完成**）
 - [x] 弃用并删除 IF_InnerFlow / IF_TurboMachinary 全套机制（2026-10-06 完成，位级回归通过）

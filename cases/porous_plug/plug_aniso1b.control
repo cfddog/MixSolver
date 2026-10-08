@@ -6,8 +6,9 @@
 # the VC tag, this line supplies the coefficients only (CZ_AUTO).
 #
 # Tensor-path consistency: perm_xx only (yy,zz fall back to scalar perm=0)
-#   dp/dx = -(mu/eps/K) u
-#   dP    = 1.846e-5/0.4/1e-8 * 0.1 * 0.1 = 46.15 Pa
+# Darcy sink = mu/K*u (no 1/eps factor):
+#   dp/dx = -(mu/K) u
+#   dP    = 1.846e-5/1e-8 * 0.1 * 0.1 = 18.46 Pa
 # Pore Reynolds number Re_p = rho u sqrt(K)/mu = 0.64 (Darcy regime).
 
 mesh_scale = 1.0

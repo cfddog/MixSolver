@@ -23,8 +23,12 @@ if len(sys.argv) > 2 and sys.argv[2] == 'hir':
 else:
     dx1, dx2, dx3 = 3 * H, 2 * H, 3 * H       # default
     NSEG = 20
+# per-segment cell counts in x (optional 3rd argument "n1,n2,n3")
+NS1 = NS2 = NS3 = NSEG
+if len(sys.argv) > 3 and sys.argv[3]:
+    NS1, NS2, NS3 = [int(v) for v in sys.argv[3].split(',')]
 LX = dx1 + dx2 + dx3
-NX, NY = 3 * NSEG, 21     # 20 cells per segment in x, 21 in y (paper grid)
+NX, NY = NS1 + NS2 + NS3, 21  # cells per segment in x, 21 in y (paper grid)
 LZ = 0.002
 out = sys.argv[1]
 MX, MY = NX + 1, NY + 1
@@ -53,24 +57,24 @@ def cell(i, j):
 def xnode(i):
     if i < 0 or i > NX:
         raise ValueError
-    # piecewise-uniform x: 3H / 2H / 3H each split into NSEG
-    def xi(i0, L):
-        return L * i0 / NSEG
-    if i <= NSEG:
-        return xi(i, dx1)
-    if i <= 2 * NSEG:
-        return dx1 + xi(i - NSEG, dx2)
-    return dx1 + dx2 + xi(i - 2 * NSEG, dx3)
+    # piecewise-uniform x: dx1/dx2/dx3 split into NS1/NS2/NS3 cells
+    def xi(i0, L, n):
+        return L * i0 / n
+    if i <= NS1:
+        return xi(i, dx1, NS1)
+    if i <= NS1 + NS2:
+        return dx1 + xi(i - NS1, dx2, NS2)
+    return dx1 + dx2 + xi(i - NS1 - NS2, dx3, NS3)
 
 
 def hx(v):
     return format(v, 'x')
 
 
-nseg1, nseg2 = NSEG, NSEG          # cells in fluid-1, porous, fluid-3
-nc1 = NSEG * NY                     # fluid zone 2
-nc2 = NSEG * NY                     # porous zone 3
-nc3 = NSEG * NY                     # fluid zone 4
+nseg1, nseg2 = NS1, NS2            # cells in fluid-1, porous, fluid-3
+nc1 = NS1 * NY                     # fluid zone 2
+nc2 = NS2 * NY                     # porous zone 3
+nc3 = NS3 * NY                     # fluid zone 4
 NF_YINT = (NY - 1) * NX
 NF_XINT = (NX - 1) * NY
 NF_INT = NF_YINT + NF_XINT
@@ -117,7 +121,7 @@ L.append('')
 c2 = cell(0, 0)
 z22 = cell(nseg1 - 1, NY - 1)
 z30 = z22 + 1
-z32 = cell(2 * nseg1 - 1, NY - 1)
+z32 = cell(nseg1 + nseg2 - 1, NY - 1)
 z40 = z32 + 1
 z42 = cell(NX - 1, NY - 1)
 L.append('(0 "Zone 2 %d cells %d..%d, fluid seg1")'

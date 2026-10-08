@@ -31,6 +31,22 @@
 \endhead
 \bottomrule
 \endlastfoot
+2026-10-08 & 11 &
+修复流体/多孔界面压力面值的不一致与 Darcy 汇系数：新增 \texttt{kink\_face\_pressure}
+（界面两侧各自单侧二次重构取平均，仅当两侧单元类型不同时替换距离加权插值），
+界面压力对"C0 连续、斜率跳变"的压力场恢复一致；\texttt{momentum\_assembly} 的
+Darcy 汇由 $(\mu/\varepsilon)/K\,\mathbf u$ 改为 $\mu/K\,\mathbf u$（体积平均动量方程
+中 $1/\varepsilon$ 只作用于时间/对流/粘性项，Darcy 汇用表观速度） &
+\texttt{src/unstructured/mod\_uns\_fields.f90},
+\texttt{src/unstructured/mod\_uns\_simple.f90} &
+\texttt{cases/betchen/abtest\_interface\_pressure.sh}（\texttt{git stash} 出 pre-fix
+二进制，7 个算例 PRE/POST 对拍，逐列/全场比较）：PLUG Da=$10^{-2}$ 与数字化参考解
+$u$ 的 L2 由 $2.94\%\to0.58\%$、$p$ 的 L2 $15.8\%\to2.6\%$；Da=$10^{-3}$ 由
+$13.7\%\to2.3\%$、$21.8\%\to1.8\%$；界面逐列抖动 $0.147\to0.018$、
+$0.781\to0.074$；Re$_H=1000$ 抖动 $0.142\to0.022$（$\pm10\%$ 锯齿消失）；
+\texttt{fluid}（同网格无多孔块）两版 VTU 与求解日志 md5 完全相同、全字段差分 0
+（no-op）；\texttt{porous\_plug} 一维塞 dp/dx $-461.5\to-184.6$ Pa/m
+（解析 $-184.6$，误差 $150.0\%\to0.0\%$） \\
 2026-10-08 & 文档 &
 建立本手册（\texttt{程序使用手册.tex}）、附录 A 参数总表、
 \texttt{control.ec.template}、本更新记录；补 \texttt{cases/couple\_channel/README.md}

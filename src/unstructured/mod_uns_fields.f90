@@ -23,7 +23,8 @@ module mod_uns_fields
    implicit none
    private
    public :: fields_t, init_fields, compute_gradients, grad_scalar, &
-             grad_vector, setup_porous_fields
+             grad_vector, setup_porous_fields, is_porous_cell, &
+             kink_face_pressure
 
    type :: fields_t
       real(dp), allocatable :: u(:,:)      ! (3,ncells) velocity
@@ -165,10 +166,24 @@ contains
       allocate( phif(m%nfaces) )
 
       ! ---- pressure ------------------------------------------------------------
+      ! Interior faces: linear interpolation, EXCEPT at fluid/porous interface
+      ! faces where the pressure slope kinks; there the kink-consistent value
+      ! (one-sided quadratic reconstruction, see kink_face_pressure) is used.
+      ! Consequences: the Green-Gauss pressure gradient of the cells adjacent to
+      ! the interface becomes the correct one-sided slope instead of a value
+      ! biased by the interpolation error at the kink; the momentum pressure
+      ! force (same helper) uses the true interface pressure, so no spurious
+      ! cell-to-cell (odd-even) velocity response is driven at the interface;
+      ! and the Rhie-Chow flux uses the same consistent gradient.
       do i = 1, m%nfaces
          if ( m%f(i)%c1 > 0 ) then
-            phif(i) = fld%lf(i)          * fld%p(m%f(i)%c0) &
-                    + (1.0_dp-fld%lf(i)) * fld%p(m%f(i)%c1)
+            if ( is_porous_cell(fld,m%f(i)%c0) .neqv. &
+                 is_porous_cell(fld,m%f(i)%c1) ) then
+               call kink_face_pressure( m, g, fld, i, phif(i) )
+            else
+               phif(i) = fld%lf(i)          * fld%p(m%f(i)%c0) &
+                       + (1.0_dp-fld%lf(i)) * fld%p(m%f(i)%c1)
+            end if
          else
             call bc_face_p( bcs, i, fld%p(m%f(i)%c0), phif(i) )
          end if
@@ -229,6 +244,80 @@ contains
       deallocate( phif )
 
    end subroutine compute_gradients
+
+   !----------------------------------------------------------------------------
+   ! True if cell kk belongs to a porous medium, i.e. any diagonal permeability
+   ! component or the Forchheimer coefficient is set.  Fluid cells have all of
+   ! perm_dir = 0 and inertial = 0 (see setup_porous_fields).  Used to locate
+   ! the fluid/porous interface faces, where the pressure profile has a slope
+   ! kink and the two-point interpolation of p is inconsistent.
+   !----------------------------------------------------------------------------
+   pure logical function is_porous_cell( fld, kk )
+      type(fields_t), intent(in) :: fld
+      integer,        intent(in) :: kk
+
+      is_porous_cell = any( fld%perm_dir(:,kk) > 0.0_dp ) &
+                       .or. fld%inertial(kk) > 0.0_dp
+
+   end function is_porous_cell
+
+   !----------------------------------------------------------------------------
+   ! Kink-consistent pressure at an interior fluid/porous interface face.
+   !
+   ! Across a fluid/porous interface the pressure profile is only C0: the
+   ! porous-side slope carries the Darcy sink (mu/K)*u on top of the fluid-side
+   ! slope, and for the Betchen plug case it is ~34x larger.  The plain
+   ! distance-weighted interpolation
+   !     pf_lin = lf*p(c0) + (1-lf)*p(c1)
+   ! then misses the true interface value by
+   !     du = d0*d1*(s_por - s_flu)/(d0+d1)          (d = centre-to-face distance)
+   ! which for the plug case is O(30 rho*U^2) -- far larger than the local
+   ! viscous pressure variation.  Because the same pf goes into the rhs of the
+   ! two cells with opposite sign it is a *force dipole*: it does not change the
+   ! net momentum, but it drives an odd-even (in x) velocity mode whose only
+   ! damping is the weak streamwise viscous/convective coupling.  That is the
+   ! cell-to-cell velocity jitter observed straddling the interface.
+   !
+   ! The cure is to use the value that is consistent with the pressure *profile*
+   ! on either side, i.e. the quadratic reconstruction from the cell gradients
+   !     pf_quad = 0.5*( p(c0) + d0*g(c0).n + p(c1) + d1*g(c1).n )
+   ! with d0 = (1-lf)*dn, d1 = -lf*dn, n = d/dn the c0 -> c1 direction.  For a
+   ! piecewise-linear (kinked) field the two one-sided reconstructions meet
+   ! exactly AT the interface value, so pf_quad is exact there, and for a
+   ! locally linear field g(c0).n = g(c1).n = s and pf_quad collapses to
+   ! lf*p(c0)+(1-lf)*p(c1) -- i.e. it never degrades a smooth pressure.
+   !
+   ! The cell gradients used here are the ordinary Green-Gauss ones, so at a
+   ! kink they carry the same bias (the GG gradient of the adjacent cell is
+   ! p_face_biased - p_upstream over the cell width).  That is deliberate: the
+   ! stored gradients are built from this same face value (compute_gradients),
+   ! so the self-consistent fixed point of (momentum pressure force, cell
+   ! gradient) is exactly the one-sided slope on each side -- the iteration
+   ! converges at rate 1/2 per (outer) iteration.  Using the plain pf_lin here
+   ! instead would leave the dipole in place.
+   !----------------------------------------------------------------------------
+   subroutine kink_face_pressure( m, g, fld, i, pf )
+      type(mesh_t),   intent(in)  :: m
+      type(geom_t),   intent(in)  :: g
+      type(fields_t), intent(in)  :: fld
+      integer,        intent(in)  :: i
+      real(dp),       intent(out) :: pf
+
+      integer  :: c0, c1
+      real(dp) :: dvec(3), dn, d0, d1, nhat(3)
+
+      c0   = m%f(i)%c0
+      c1   = m%f(i)%c1
+      dvec = g%xc(:,c1) - g%xc(:,c0)
+      dn   = norm2( dvec )
+      nhat = dvec / dn
+      d0   = ( 1.0_dp - fld%lf(i) ) * dn     ! centre(c0) -> face
+      d1   = -fld%lf(i) * dn                 ! centre(c1) -> face
+
+      pf = 0.5_dp * ( fld%p(c0) + d0 * dot_product( fld%gp(:,c0), nhat ) &
+                    + fld%p(c1) + d1 * dot_product( fld%gp(:,c1), nhat ) )
+
+   end subroutine kink_face_pressure
 
    !----------------------------------------------------------------------------
    ! Green-Gauss gradient of a cell-centred scalar given its face values:

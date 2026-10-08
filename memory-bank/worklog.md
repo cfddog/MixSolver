@@ -5,6 +5,41 @@
 
 ---
 
+## 2026-10-08 | 修复：多孔/流体界面压力面值一致化 + Darcy 汇 1/ε（PLUG 参考解对拍达标）
+
+- **承接上一条**（"PLUG 参考解对比不佳"）已完成定位与修复；症状：界面两侧逐列速度
+  锯齿，Da=1e-3 达 ±40%、Re_H=1000 达 ±10%，且**随网格细化不收敛**（odd-even 模态）；
+  压力整体高 ~1.2–1.3×。
+- **根因①（界面压力面值）**：界面压力 C0 连续、斜率跳变（多孔侧多出 Darcy 汇
+  μ/K·u），距离加权插值 `pf = lf·p(c0) + (1−lf)·p(c1)` 在界面面上有 O(30ρU0²) 误差；
+  该面值以等值反号进入两侧单元动量（−p_f·S_f）⇒ 力偶极子 ⇒ 驱动无阻尼 odd-even
+  速度模态；同时污染 Green-Gauss 压力梯度与 Rhie-Chow 通量。
+- **修法①**：`mod_uns_fields.f90` 新增 `kink_face_pressure`（两侧各自单侧二次重构
+  取平均：`0.5*(p(c0)+d0·g(c0)·n + p(c1)+d1·g(c1)·n)`），仅当
+  `is_porous_cell(c0) .neqv. is_porous_cell(c1)` 时替换线性插值；`compute_gradients`
+  与 `momentum_assembly`（−p_f·S_f）共用同一面值 ⇒ 不动点即两侧真实斜率。
+- **根因②（Darcy 汇系数）**：`momentum_assembly` 原写 `(μ/ε)/K·V`；体积平均动量方程
+  中 1/ε 只作用于时间/对流/粘性项，**Darcy 汇是 μ/K·u（表观速度）**，多乘 1/ε 使一维
+  塞压降放大 1/ε。**修法②**：改为 μ/K·u。
+- **验证**（`cases/betchen/abtest_interface_pressure.sh`：git stash 出 pre-fix 二进制，
+  hir/dae2/dae3/bj2/bj3/fluid/ppd 共 7 算例 PRE/POST 对拍）：
+  - PLUG Da=1e-2：u L2 2.94%→**0.58%**、p L2 15.8%→**2.6%**、抖动 0.147→**0.018**、
+    dp/dx 177.5→130.7（数字化参考 140.3）；Da=1e-3：13.7%→**2.3%**、
+    21.8%→**1.8%**、0.781→**0.074**；Re_H=1000 抖动 0.142→**0.022**（有符号
+    二阶差分由 ±0.14 交替变为单调过渡层）。
+  - `fluid`（同网格、无多孔块）：两版二进制的 VTU **与求解日志 md5 完全相同**、
+    全字段差分 max|du|=max|dp|=**0** ⇒ 单相路径 no-op。
+  - `bj2/bj3`（平行界面）：L2 4.09%→**3.54%**、2.88%→**2.87%**，两版均收敛到机器零。
+  - `ppd`（一维 Darcy 塞）：dp/dx −461.5→**−184.6** Pa/m（解析 −184.6，150.0%→**0.0%**）。
+- **新增工具**：`cases/betchen/{cmp_centerline.py,vs_ref.py,fdiff_vtu.py,gen_plug.py(改)}`、
+  `cases/betchen/abtest_interface_pressure.sh`、`cases/porous_plug/fit_pp.py`；
+  `gen_plug.py` 增第 3 参数 `n1,n2,n3`（分段网格数，供界面加密研究）。
+- **文档**：`cases/betchen/README.md`（症状/机理/修法/验证表/局限/复现）、
+  `cases/porous_plug/README.md`（Darcy 汇约定订正 + 解析表）、5 个
+  `plug_{darcy,forch,aniso1,aniso1b,aniso2}.control` 注释、`docs/93_changelog.tex`。
+
+---
+
 ## 2026-10-08 | 待办登记：PLUG 参考解对比不佳（Betchen 算例2）
 
 - 用 `cases/betchen/compare_plug.py` 对拍 `/mnt/c/temp/validate_case/plug_1/2_{u,p}.csv`
