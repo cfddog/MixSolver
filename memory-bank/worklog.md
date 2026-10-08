@@ -5,7 +5,16 @@
 
 ---
 
-## 2026-10-08 | 验证：Betchen 2006 三界面验证算例试跑 + BJ 参考解对拍
+## 2026-10-08 | 待办登记：PLUG 参考解对比不佳（Betchen 算例2）
+
+- 用 `cases/betchen/compare_plug.py` 对拍 `/mnt/c/temp/validate_case/plug_1/2_{u,p}.csv`
+  （中心线 u/U、p/(ρU²) 沿 x/H）。充分发展段吻合（1.497 vs 1.503），但：
+  - 多孔/界面段速度偏差大；plug-2 界面处出现振荡尖峰（网格未向界面加密）。
+  - 压力绝对电平整体高 ~1.2–1.3×（疑多孔有效黏度约定 / 抛物线入流 / 归一化）。
+- 登记为 progress.md「待办 → Betchen 2006」[~] 项；改图对比组合颜色/线型更清晰
+  （`images/plug_compare_ref.png`）。未改源码。
+
+---
 
 - **背景**：`/mnt/c/temp/validate_case/` 提供 Betchen 2006 论文的三个界面验证算例
   规划（MD + CSV 目标表），要求**不改源码**用现 `bin/uns_solver` 试跑，并完成
