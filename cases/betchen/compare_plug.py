@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # Betchen PLUG comparison: centerline velocity u/U and pressure p/(rho U^2)
 # along x/H against the provided reference (plug_1 = Da=1e-2, plug_2 =
-# Da=1e-3).  Reference inlet is parabolic fully-developed u=6U y/H(1-y/H),
-# whereas the current solver's velocity-inlet is zone-uniform -- so the
-# upstream fluid section will differ (ref centerline 1.5U vs ours ~1.0U);
-# the porous region and downstream are the meaningful comparison.
+# Da=1e-3).  Reference inlet is parabolic fully-developed u=6U y/H(1-y/H);
+# since 2026-10-08 the case files (plug_dae2/dae3/hir.control) impose that
+# same profile directly with 'velocity-inlet-parabolic <Umean> H 2 0.0',
+# so the upstream fluid section is comparable too (old uniform-inlet runs
+# had a flat u~1.1U first column vs the reference 1.5U); the porous region
+# and downstream remain the meaningful comparison.
 import re, os
 import numpy as np
 import matplotlib
