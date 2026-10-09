@@ -422,25 +422,38 @@
   与上一条一并评估。
 
 ### 界面条件按文献升级（2026-10-09 登记；输入 `C:\temp\interface_conditions`）
-- [ ] **界面温度/热流分配**（Betchen 2006 Eq.17/42、Zhang 2011 Eq.27–31）：
-  流体/多孔界面温度取 $\langle T\rangle_{por}=\varepsilon\langle T_f\rangle^f+
-  (1-\varepsilon)\langle T_s\rangle^s$，热流按**面积比（孔隙率）**分配
-  $\varepsilon k_f\partial_n T_{fl}=k_{fe}\partial_n\langle T_f\rangle^f$、
-  $(1-\varepsilon)k_f\partial_n T_{fl}=k_{se}\partial_n\langle T_s\rangle^s$
-  （等价 Betchen 并联导热离散 Eq.42）。当前实现是"整体 T 的纯 Dirichlet"
-  （`thermal_model=lte` 下与 Eq.17 一致），**LTNE 下缺这条加权**⇒ 若要把
-  `thermal_model=ltne` 用于跨组界面，必须先按上式改 `bc_face_T`/界面交换。
-- [ ] **界面压力**（Betchen Eq.43/44）：界面压力须由**法向动量平衡**给出
-  $\langle P\rangle_i^f\approx P_1-\dot m_i(\langle\mathbf u\rangle_i\cdot\mathbf n)
-  (1-\varepsilon)/(\varepsilon A_i)$（面积突变动力压项），且 **p–ṁ 需子迭代**
-  （"a small number of iterations at the end of each linearization loop"）。
-  当前用 `iface_p_anchor` 做**整体电平平移**（解决纯 Neumann PPE 的基准自由度），
-  与文献的**局部、速度平方相关**修正不是一回事 ⇒ 可在界面压力仍有 kPa 级跳变时补。
-- [ ] **界面切向速度**（Zhang Eq.24–26 = Ochoa-Tapia & Whitaker 应力跳变）：
-  $\mu_e/\varepsilon\,\partial_\ell\langle V\rangle_t|_p-\mu_f\partial_\ell V_t|_{fl}
-  =\beta(\mu/\sqrt K)V_t+\beta_1\rho_f V_t^2$。当前 `iface_velocity` 的
-  `normal`/`balance` 是工程折衷（`balance` 直接丢弃对侧切向后再按通量配平）；
-  若要放开切向（Beavers-Joseph 型滑移），应改按此式实现，而不是整矢量 Dirichlet。
+**（2026-10-09 阶段 14 落地：按 Zhang 2011 §3.5.1 实现，全部 opt-in，旧路径位级不变）**
+- [x] **界面速度（Zhang 2011 Eq.22/25/26）**—`iface_velocity = zhang`：
+  Eq.22 两侧共用界面速度；Eq.25 法向＝两侧倒数距离导纳加权调和平均
+  $V_n=(G_p\langle V\rangle_n^p+G_fV_n^{fl})/(G_p+G_f)$，$G_p=\mu_e/(\varepsilon d_p)$、
+  $G_f=\mu_f/d_f$；Eq.26 切向＝Ochoa-Tapia--Whitaker 应力跳变
+  $B=G_p+G_f+\beta\mu_e/\sqrt K$、$\beta_1\rho x^2+Bx-|Q_t|=0$（稳定根，$\beta_1=0$
+  退化为 Robin；$\beta\to0$＝应力连续调和平均，$\beta\to\infty$＝无滑移）。
+  $\beta$ 缺省取 $\varepsilon\alpha_{BJ}$（与内部面 \texttt{bj\_alpha} 分支一致）。
+  实现：`mod_iface_law:iface_zhang_vn/vt/velocity` ＋ `main.f90` 模式 3
+  （含 $\omega$ 爬升/欠松弛）；配套开关 `iface_beta/beta1/df_ratio`。
+  **关键离散发现**：界面是\textbf{黏性}封闭值而非对流入流，须配套
+  `iface_zhang_vel` 开关把动量装配的迎风项由 $-F u_f$ 改为 $-\min(F,0)u_f$
+  （否则 $F\gg D$ 的质量通量把 Eq.26 的 $O(10)$ m/s 切向滑移对流进第一层单元，
+  C\_P\_test 测得 $|u|_{\max}\to100$ m/s 发散）。开启后 30 耦合步稳定
+  （$|u|_{\max}=0.40\to5.4$ m/s，即物理 BJ 滑移量级）。
+- [x] **界面温度（Zhang 2011 Eq.27--29）**—`iface_t_model = zhang`：
+  $T_{fl}=\langle T\rangle^p=\varepsilon\langle T_f\rangle^f+(1-\varepsilon)\langle T_s\rangle^s$
+  （流体侧看到的是\textbf{体积平均}，既非 $T_f$ 也非 $T_s$），热流按面积比分配
+  $\varepsilon k_f\partial_nT_{fl}=k_{fe}\partial_n\langle T_f\rangle^f$、
+  $(1-\varepsilon)k_f\partial_nT_{fl}=k_{se}\partial_n\langle T_s\rangle^s$。
+  实现：`mod_iface_law:iface_zhang_T/iface_volavg_T`；LTNE 下把 $T_{fi}$/$T_{si}$
+  分别给流体/固相能量方程（`mod_uns_bc:iface_Ts` +
+  `bc_face_T(...,phase=2)`），交换回对侧的 `iT` 改为 Eq.27 的 $T_{fl}$。
+  **LTE 下 Eq.27 退化为原值**（$T_f=T_s$）⇒ 当前 LTE 算例无需开；
+  LTNE 跨组界面尚未有算例验证（下次接 `cases/ltne_disp` 类算例时验）。
+- [x] **界面压力（Betchen 2006 Eq.43/44）**—`iface_p_model = grad0|dirichlet|momentum`
+  （阶段 14）：`dirichlet` 把对侧界面压力按面作 Dirichlet（PPE 良态、界面质量流由
+  连续性解出）；`momentum` 再加 Eq.43/44 面积突变 $-\\dot m u_n(1-\varepsilon)/(\varepsilon A)$
+  ＋两侧倒距混合 ＋ $p$--$\dot m$ 阻尼子迭代（$G<1$ 才启用，见 `iface_p_gain`）。
+  **实测（C\_P\_test runB6/E）：压力收敛良好但切向速度出现伪模态
+  （$|u|_{\max}=10.9$ m/s）⇒ 压力-Dirichlet 单独使用不稳，须与切向封闭（Zhang
+  Eq.26）配套**；故当前推荐组合是 `iface_p_model=grad0` ＋ `iface_velocity=zhang`。
 
 ### Betchen 2006 界面验证（2026-10-08 试跑）
 - [x] **BJ 参考解对比（Da=1e-2/1e-3）**：峰值 1.408/1.459 vs 参考 1.387/1.457，

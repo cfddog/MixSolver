@@ -396,6 +396,52 @@ $\mu=1.846\times10^{-5}$ Pa$\cdot$s 对应 300 K、1 atm）。
         \texttt{momentum\_assembly}）。
 \end{itemize}
 
+\subsection{界面封闭（阶段 14，全部 opt-in）}\label{sec:ifaceclos}
+
+界面速度/压力/温度此前只有``工程折衷''处理（\texttt{full}/\texttt{normal}/
+\texttt{balance} ＋ 零梯度压力 ＋ 单一 Dirichlet 温度）。阶段 14 按文献实现了可选的
+封闭律，\texttt{mix.control} 里逐个开关；\textbf{默认全部关闭}，因此既有算例逐位不变。
+
+\begin{itemize}\itemsep3pt
+  \item \texttt{iface\_velocity = zhang}（Zhang 2011 Eq.22/25/26）：两侧共用\textbf{一个}
+        界面速度矢量（Eq.22）。法向由法向应力平衡给出（Eq.25）
+        $V_n=(G_p\langle V\rangle_n^p+G_fV_n^{fl})/(G_p+G_f)$，
+        $G_p=\mu_e/(\varepsilon d_p)$、$G_f=\mu_f/d_f$（两侧倒距/导纳加权调和平均）；
+        切向由 Ochoa-Tapia--Whitaker 应力跳变给出（Eq.26），记
+        $B=G_p+G_f+\beta\mu_e/\sqrt K$，则 $V_t=\lambda Q_t/|Q_t|$，
+        $\lambda=2|Q_t|/(B+\sqrt{B^2+4\beta_1\rho|Q_t|})$
+        （$\beta_1=0$ 退化为 Robin；$\beta\to0$＝应力连续的调和平均，
+        $\beta\to\infty$＝无滑移）。系数由 \texttt{iface\_beta}（缺省
+        $\varepsilon\alpha_{BJ}$）、\texttt{iface\_beta1}（缺省 0）给定，
+        \texttt{iface\_df\_ratio} 给 $d_f/d_p$（$d_f$ 不在交换协议内，须按对侧界面
+        网格尺度取，\texttt{C\_P\_test} 取 $\approx50$）。\textbf{提示}：该封闭把界面
+        速度当\textbf{黏性}值，动量装配的迎风项随之改为
+        \texttt{D*uf - min(F,0)*uf}（否则质量通量 $F$ 会把 $O(10)$ m/s 的切向滑移
+        对流入板内，实测 $|u|_{\max}\to$100 m/s 发散）；
+  \item \texttt{iface\_p\_model = grad0|dirichlet|momentum}：\texttt{dirichlet} 把对侧
+        界面压力按面作 Dirichlet（纯 Neumann PPE 变为良态、界面质量流由连续性解出）；
+        \texttt{momentum} 再加 Betchen 2006 Eq.43/44 的面积突变法向动量修正
+        （\texttt{iface\_pm\_subiter}/\texttt{iface\_p\_blend} 控制 $p$--$\dot m$
+        子迭代与两侧混合）。实测压力收敛良好但切向出现伪模态（$|u|_{\max}=10.9$ m/s）
+        $\Rightarrow$ 压力-Dirichlet 应与切向封闭配套使用；
+  \item \texttt{iface\_t\_model = zhang}（Zhang 2011 Eq.27--29）：流体侧看到的界面温度
+        是孔隙率\textbf{体积平均}
+        $T_{fl}=\langle T\rangle^p=\varepsilon\langle T_f\rangle^f
+        +(1-\varepsilon)\langle T_s\rangle^s$（既非 $T_f$ 也非 $T_s$ 单相温度），
+        总热流按面积比（孔隙率）分给两相：$\varepsilon k_f\partial_nT_{fl}
+        =k_{fe}\partial_n\langle T_f\rangle^f$、$(1-\varepsilon)k_f\partial_nT_{fl}
+        =k_{se}\partial_n\langle T_s\rangle^s$。实现上把 $T_{flP},T_{fP},T_{sP}$
+        代入三式联立闭式解（分母为串联电阻之和），$T_{fi}$ 给流体相能量方程、
+        $T_{si}$ 给固相能量方程（LTNE）。\textbf{LTE 下 $T_f=T_s$，Eq.27 退化为原来的
+        单值 Dirichlet}，故 LTE 算例无需开启。
+\end{itemize}
+
+闭式解与开关集中在 \texttt{src/common/mod\_iface\_law.f90}
+（\texttt{iface\_zhang\_vn/vt/velocity/T}、\texttt{iface\_volavg\_T}），
+单元测试：\texttt{make iface\_law\_test \&\& bin/iface\_law\_test}（11 项，
+含 Eq.25/26 的极限与二次根、Eq.27--29 的能量守恒与 LTE 退化）。
+
+
 \subsection{瞬态 PISO / PIMPLE}
 
 \texttt{transient = true} 且 \texttt{dt}$>0$ 时进入瞬态路径，\texttt{n\_correct}

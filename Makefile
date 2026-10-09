@@ -103,6 +103,8 @@ MAIN_MATCH_F  := $(wildcard src/coupling/test_match.f90)
 MAIN_UNITS_TEST_F := $(wildcard src/coupling/test_units_exchange.f90)
 # phase-6 MPI coupling-protocol test (links common + coupling only, MPI tree)
 MAIN_COUPL_TEST_F := $(wildcard src/coupling/test_coupling_exchange.f90)
+# phase-14 interface-closure unit test (common only: mod_iface_law is pure)
+MAIN_IFLAW_TEST_F := $(wildcard src/coupling/test_iface_law.f90)
 
 # Library sources = every module file except standalone mains.
 # MPI-only files ('*_mpi.f90') are excluded from the serial tree ONLY for the
@@ -133,9 +135,9 @@ UNS_LIB_S := $(filter-out \
   src/unstructured/mod_uns_partition.f90 \
   src/unstructured/mod_uns_mpi_core.f90,$(UNS_LIB_S))
 
-LIB_SRCS_S := $(call sort_boot,$(filter-out $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_UNS_MPI_F) $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F), \
+LIB_SRCS_S := $(call sort_boot,$(filter-out $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_UNS_MPI_F) $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F), \
                          $(COMMON_F) $(STRUCT_F) $(UNS_LIB_S) $(COUPL_F)))
-LIB_SRCS_M := $(call sort_boot,$(filter-out $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_UNS_MPI_F) $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F), \
+LIB_SRCS_M := $(call sort_boot,$(filter-out $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_UNS_MPI_F) $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F), \
                           $(COMMON_F) $(STRUCT_F) $(UNS_F) $(COUPL_F)))
 
 LIB_OBJ_S := $(patsubst src/%.f90,$(S)/%.o,$(LIB_SRCS_S))
@@ -168,6 +170,10 @@ UNITS_TEST_OBJ_S := $(filter $(S)/common/%.o $(S)/coupling/%.o,$(LIB_OBJ_S)) \
 # phase-6 MPI coupling-protocol test: common + coupling (MPI tree)
 COUPL_TEST_OBJ_M := $(filter $(M)/common/%.o $(M)/coupling/%.o,$(LIB_OBJ_M)) \
                     $(patsubst src/%.f90,$(M)/%.o,$(MAIN_COUPL_TEST_F))
+
+# phase-14 interface-closure unit test: common only (the closures are pure)
+IFLAW_TEST_OBJ_S := $(filter $(S)/common/%.o,$(LIB_OBJ_S)) \
+                    $(patsubst src/%.f90,$(S)/%.o,$(MAIN_IFLAW_TEST_F))
 
 # -----------------------------------------------------------------------------
 # Build directories
@@ -274,11 +280,18 @@ bin/coupling_test: $(COUPL_TEST_OBJ_M) | bin
 	  exit 1; }
 	$(MPIFC) $(FFLAGS_M) -o $@ $(COUPL_TEST_OBJ_M) $(LDLIBS_M)
 
+bin/iface_law_test: $(IFLAW_TEST_OBJ_S) | bin
+	@test -f src/coupling/test_iface_law.f90 || { \
+	  echo "ERROR: src/coupling/test_iface_law.f90 does not exist yet (phase 14)."; \
+	  exit 1; }
+	$(MPIFC) $(FFLAGS_S) -o $@ $(IFLAW_TEST_OBJ_S) $(LDLIBS_S)
+
 # -----------------------------------------------------------------------------
 # Phony targets
 # -----------------------------------------------------------------------------
 .PHONY: all mpi structured structured_mpi unstructured unstructured_mpi \
-        common common_mpi clean help match_test units_test coupling_test
+        common common_mpi clean help match_test units_test coupling_test \
+        iface_law_test
 
 all:        bin/mixsolver
 mpi:        bin/mixsolver_mpi
@@ -292,6 +305,7 @@ common_mpi: $(filter $(M)/common/%.o,$(LIB_OBJ_M))
 match_test: bin/match_test
 units_test: bin/units_test
 coupling_test: bin/coupling_test
+iface_law_test: bin/iface_law_test
 
 clean:
 	rm -rf build bin

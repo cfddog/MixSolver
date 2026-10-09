@@ -3,7 +3,66 @@
 > 规则：每次任务结束或关键决策后追加一条简要记录（日期 | 内容 | 涉及文件）。
 > 最近记录在最上方。
 
-## 2026-10-09 | 阶段 13 续：`C_P_test` 板内 `Tmin=286 K` 根因＝能量方程"定温＋出流"面双计焓（已修 + 已验证）
+## 2026-10-09 | 阶段 14：按 Zhang 2011 (§3.5.1, Eq.22–29) 实现流固界面速度/温度封闭（opt-in）
+
+- **起点**：用户要求"通过 zhang2011 公式 25–29 确定界面速度、温度"；文献摘录在
+  `C:\temp\interface_conditions\zhang2011_sec3.5_4.3.md`（§3.5.1 界面条件 + §4.3 共轭换热）。
+- **文献方程 → 闭式解（新增 `src/common/mod_iface_law.f90`）**：
+  - Eq.22 两侧**共用一个界面速度**；Eq.25 法向应力平衡 →
+    $V_n=(G_p\langle V\rangle_n^p+G_fV_n^{fl})/(G_p+G_f)$，$G_p=\mu_e/(\varepsilon d_p)$、
+    $G_f=\mu_f/d_f$（倒数距离/导纳加权调和平均）；
+  - Eq.26 切向应力跳变 → $B=G_p+G_f+\beta\mu_e/\sqrt K$，
+    $\beta_1\rho x^2+Bx-|Q_t|=0$，稳定根 $x=2|Q_t|/(B+\sqrt{B^2+4\beta_1\rho|Q_t|})$
+    （$\beta_1=0$ 退化为 Robin；$\beta=1/\alpha_{BJ}$，实现取 $\beta=\varepsilon\alpha_{BJ}$
+    以与内部面 `bj_alpha` 分支一致；判别式 $<0$ 时退回线性根）；
+  - Eq.27–29 界面温度：$T_{fl}=\langle T\rangle^p=\varepsilon T_f+(1-\varepsilon)T_s$，
+    热流按孔隙率分给两相；三方程联立闭式解（串联电阻之和作分母）：
+    $F=(T_{flP}-\varepsilon T_{fP}-(1-\varepsilon)T_{sP})/
+    \left(d_f/k_f+d_p(\varepsilon^2/k_{fe}+(1-\varepsilon)^2/k_{se})\right)$，
+    $T_{fl}=T_{flP}-Fd_f/k_f$、$T_{fi}=T_{fP}+\varepsilon Fd_p/k_{fe}$、
+    $T_{si}=T_{sP}+(1-\varepsilon)Fd_p/k_{se}$。
+- **单元测试** `src/coupling/test_iface_law.f90`：7 → **11 项全 PASS**
+  （(8) Eq.25 调和平均＋$d_f\to\infty/d_p\to0/d_f\to0$ 极限；(9) Eq.26 的
+  $\beta\to\infty$ 无滑移、$\beta_1$ 二次根、无实根退化；(10) Eq.22 矢量重构与
+  方向保持；(11) Eq.27–29 的 $\varepsilon T_{fi}+(1-\varepsilon)T_{si}=T_{fl}$、
+  两相热流 $=\varepsilon F/(1-\varepsilon)F$、和＝流体侧热流（能量守恒）、
+  LTE 退化为串阻调和平均、退化输入不产生 NaN）。测试中 `d_p` 局部变量曾
+  **遮蔽 `dp` kind 参数**（"Missing kind-parameter"）→ 改名 `d_p`。
+- **驱动接线**（`src/main.f90`）：`iface_velocity=zhang` 模式 3（含 $\omega$ 爬升/
+  欠松弛；β 缺省 $\varepsilon\alpha_{BJ}$ 或 1.0）、`iface_t_model=zhang` 的
+  per-phase 界面温度（LTNE：`mod_uns_bc:set_interface_T_ltne` +
+  `bc_face_T(...,phase=2)`），交换回对侧的 `iT` 改为 Eq.27 的体积平均
+  $T_{fl}$；`mod_reference_state` 新增 `iface_t_model/iface_beta/beta1/df_ratio`
+  解析与报告。
+- **关键离散发现（导致首次运行发散）**：把 Eq.26 的 $O(10)$ m/s 切向滑移
+  **整矢量 Dirichlet** 施加后，C\_P\_test 的 $|u|_{\max}\to100$ m/s（板被拽到主流速度）。
+  根因：界面面在动量装配里被当作"定速面"，迎风项用 $u_f$（含切向大值）且权重是
+  **质量通量 $F\gg D$**（$F=\rho u_nA$，$D=\mu A/(\varepsilon d_p)$，实测 $F/D\sim10$），
+  于是把滑移**对流**进第一层单元，再经 Eq.25/26 的正反馈放大。
+  **修法**：新增 `iface_zhang_vel`（`set_iface_zhang_vel(iface_vel_mode==3)`）开关，
+  界面面改用黏性 Dirichlet 迎风式 `rhs += D*uf - min(F,0)*uf`（出流迎风取内部值），
+  旧路径**一字不改**（默认关）。
+- **C\_P\_test 实测（`mix_f_zhang.control`：`iface_velocity=zhang`、
+  `iface_p_model=grad0`、$d_f/d_p=50$、$\omega=0.4$）**：
+  - 30 耦合步**稳定**：$|u|_{\max}$ $0.40\to5.4$ m/s（物理 BJ 滑移量级；对比
+    `balance` 基线 0.30 m/s、`iface_slip=bj` 的 42 m/s 发散）；
+  - 界面质量配平 $F_{\rm iface}=6.21\times10^{-2}$ vs $F_{\rm other}=-6.25\times10^{-2}$
+    ⇒ `du_n` 残差 $6.9\times10^{-4}$（通量 0.3%）；
+  - 结构侧界面 $p=1.0148\times10^{5}$ Pa、$T=300.15$ K，与基线
+    （1.0148e5 / 300.13 K）一致 ⇒ 主流解未被扰动；界面两侧温度 300.14/300.15 K；
+  - 60 耦合步续跑用于确认滑移量收敛（见 `runF60_zhang.log`）。
+- **参数提示**：$d_f$（对侧界面首层间距）不在交换协议里，是 Eqs.25/26 不动点的
+  控制参数（$u_i^\*\approx G_fu_f/(G_f+\beta\mu_e/\sqrt K)$）——$d_f/d_p$ 太小会让
+  对侧速度主导并把外循环推跑（实测 $=1$ 时 $|u|_{\max}\to100$）。C\_P\_test 的
+  结构网格界面尺度 $O(5\times10^{-3})$ m、板侧 $O(10^{-4})$ m ⇒ $d_f/d_p\approx50$。
+  长期应把 $d_f$ 纳入交换量。
+- 涉及文件：`src/common/mod_iface_law.f90`、`src/common/mod_reference_state.f90`、
+  `src/coupling/test_iface_law.f90`、`src/unstructured/mod_uns_bc.f90`、
+  `src/unstructured/mod_uns_simple.f90`、`src/main.f90`；算例
+  `/mnt/c/temp/validate_case/C_P_test/{mix_f_zhang,mix_f_zhang60}.control`、
+  日志 `runF_zhang.log`/`runF60_zhang.log`。
+
+
 
 - **起点（承接上一条遗留）**：多孔板 `Tmin=286 K` 低于全部边界温度（入口/界面/壁面
   均 300 K），且两侧界面温度 300.1 vs 286.5 K 不一致。先查界面条件方向（`bc_face_T`

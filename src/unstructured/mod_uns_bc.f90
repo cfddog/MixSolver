@@ -14,7 +14,11 @@ module mod_uns_bc
    private
    public :: bc_t, build_bc, bc_face_vel, bc_face_p, bc_face_T, bc_type_name, &
              set_interface_vel, set_interface_p, set_interface_T, &
-             set_inlet_ramp_factor, set_pval_ramp_factor
+             set_inlet_ramp_factor, set_pval_ramp_factor, &
+             bc_face_p_dirichlet, set_iface_p_dirichlet, iface_p_is_dirichlet, &
+             set_interface_slip, set_iface_slip_mode, iface_slip_is_on, &
+             set_interface_T_ltne, set_iface_t_ltne_mode, iface_t_ltne_is_on, &
+             set_iface_zhang_vel, iface_zhang_vel_is_on
 
    ! Module-level ramp factor for mass-flow-inlet faces.
    ! simple_run/simple_run_mpi set it each outer iteration to
@@ -30,6 +34,46 @@ module mod_uns_bc
    ! it in lock-step with the inlet (and it is 1 once the ramp is complete,
    ! so the converged solution is unaffected).
    real(dp), save :: g_pval_ramp_factor = 1.0_dp
+
+   ! ---- coupling-interface closure switches (phase 14) ---------------------
+   ! g_iface_p_dir : the interface pressure is a per-face DIRICHLET value
+   !                 (bcs%iface_p) instead of zero-gradient.  Set by the
+   !                 coupling driver when mix.control has iface_p_model =
+   !                 dirichlet|momentum.  When .true. the PPE treats those
+   !                 faces exactly like POUTLET/FARFIELD (af on the owner
+   !                 diagonal, p'_f = 0, flux correction) -> the otherwise
+   !                 pure-Neumann slab PPE becomes well posed, cell 1 is not
+   !                 pinned and the uniform interface-flux correction is not
+   !                 needed.  Default .false. = legacy zero-gradient.
+   ! g_iface_slip  : tangential stress-jump (Beavers-Joseph) friction at the
+   !                 interface faces; bcs%iface_slip_C holds the per-face
+   !                 conductance [kg/s] and bcs%iface_peer_vel the peer face
+   !                 velocity used as the free-fluid tangential target.
+   logical,  save :: g_iface_p_dir = .false.
+   logical,  save :: g_iface_slip  = .false.
+   ! g_iface_zhang_vel : the interface velocity comes from the Zhang 2011
+   !                 Eqs.22/25/26 law (opt-in, iface_velocity = zhang), i.e.
+   !                 it is a VISCOUS closure value -- not an advective inflow.
+   !                 The momentum assembly then treats the interface face as a
+   !                 pure viscous Dirichlet: the prescribed face velocity
+   !                 enters only through the diffusive coefficient D, while the
+   !                 mass-flux (upwind) term carries the INTERIOR value on
+   !                 outflow, i.e. rhs += D*uf - min(F,0)*uf instead of
+   !                 D*uf - F*uf.  Without this, the (physically O(10 m/s))
+   !                 tangential slip of Eq.26 is convected into the first slab
+   !                 cell with the full mass-flux weight F >> D and drags the
+   !                 porous slab toward the free stream (measured |u|max ->
+   !                 100 m/s on C_P_test).  Default .false. keeps the legacy
+   !                 path bit-identical.
+   logical,  save :: g_iface_zhang_vel = .false.
+   ! g_iface_T_ltne : with the LTNE thermal model the interface heat flux must
+   !                 be split between the porous phases by area ratio
+   !                 (porosity): the fluid-phase equation sees bcs%iface_T and
+   !                 the solid-phase equation bcs%iface_Ts, both supplied per
+   !                 face by the coupling driver from the Zhang 2011 Eq.27-29
+   !                 closure.  Default .false. = one shared Dirichlet value
+   !                 (legacy).
+   logical,  save :: g_iface_T_ltne = .false.
 
    ! one boundary group (a set of boundary faces with common condition)
    type :: bcgroup_t
@@ -78,6 +122,12 @@ module mod_uns_bc
       ! per-face temperature supplied by the peer solver (Dirichlet at the
       ! velocity-specified coupling interface)
       real(dp), allocatable :: iface_T(:)
+      ! per-face SOLID-PHASE interface temperature (phase 14, iface_t_model =
+      ! zhang + LTNE): the complement of the porosity-weighted split, Eq.27-29.
+      real(dp), allocatable :: iface_Ts(:)
+      ! ---- interface tangential stress jump (phase 14, iface_slip = bj) ----
+      real(dp), allocatable :: iface_slip_C(:)     ! (nfaces) conductance [kg/s]
+      real(dp), allocatable :: iface_peer_vel(:,:) ! (3,nfaces) peer face vel
    end type bc_t
 
 contains
@@ -260,10 +310,14 @@ contains
       ! allocate per-face interface data arrays (zero-initialised; the driver
       ! fills them via set_interface_vel / set_interface_p each coupling step)
       allocate( bcs%iface_vel(3, m%nfaces), bcs%iface_p(m%nfaces), &
-                bcs%iface_T(m%nfaces) )
+                bcs%iface_T(m%nfaces), bcs%iface_slip_C(m%nfaces), &
+                bcs%iface_peer_vel(3, m%nfaces), bcs%iface_Ts(m%nfaces) )
       bcs%iface_vel = 0.0_dp
       bcs%iface_p   = 0.0_dp
       bcs%iface_T   = 0.0_dp
+      bcs%iface_slip_C   = 0.0_dp
+      bcs%iface_peer_vel = 0.0_dp
+      bcs%iface_Ts       = 0.0_dp
 
       do i = 1, m%nzone
          if ( zone_is_interface( m, m%zone(i)%id ) ) &
@@ -387,10 +441,21 @@ contains
                                         ! globally in flux_rhiechow path)
 
       case ( BC_INTERFACE )
-         ! Coupling interface: face velocity is supplied by the peer solver
-         ! via the exchange layer (stored in iface_vel).  Defaults to zero
-         ! until set_interface_vel is called by the coupling driver.
-         uf = bcs%iface_vel(:,i)
+         ! Coupling interface.  Two regimes (phase 14):
+         !   iface_p_model = grad0 (legacy): the peer supplies the whole face
+         !     VELOCITY vector through the exchange layer (bcs%iface_vel), i.e.
+         !     this is a velocity-Dirichlet patch.
+         !   iface_p_model = dirichlet|momentum: the peer supplies the face
+         !     PRESSURE (bcs%iface_p, see bc_face_p), so the velocity here must
+         !     be EXTRAPOLATED from the owner cell exactly like pressure-outlet
+         !     -- deriving it from the stale exchanged vector instead makes the
+         !     PPE face flux and the momentum upwind term inconsistent with the
+         !     field (measured: divergent interface flux in C_P_test).
+         if ( g_iface_p_dir ) then
+            uf = uP
+         else
+            uf = bcs%iface_vel(:,i)
+         end if
 
       case ( BC_FARFIELD )
          ! Characteristic far-field convention (sf points outward from the
@@ -443,14 +508,23 @@ contains
          pf = bcs%gb(g)%pval * g_pval_ramp_factor   ! Dirichlet free-stream p
                                                     ! (ramped on cold start)
       else if ( bcs%gb(g)%btype == BC_INTERFACE ) then
-         ! The peer solver supplies the face VELOCITY on this patch (weak
-         ! coupling): this is a velocity-Dirichlet boundary, so pressure must
-         ! be zero-gradient here.  Imposing the peer pressure as Dirichlet at
-         ! the same faces over-constrains SIMPLE (p pinned at both the inlet
-         ! and the pressure outlet), the boundary momentum cannot balance and
-         ! the inlet velocity explodes.  iface_p stays stored for diagnostics
-         ! / future characteristic treatment but is not used.
-         pf = pP
+         if ( g_iface_p_dir ) then
+            ! phase 14 (iface_p_model = dirichlet|momentum): the peer solver
+            ! supplies a per-face DIRICHLET interface pressure (bcs%iface_p,
+            ! gauge Pa).  The interface VELOCITY is no longer Dirichlet on
+            ! these faces -- the momentum assembly switches to the
+            ! zero-gradient/outflow treatment and the interface mass flux is
+            ! solved from continuity (closing the partition the literature way:
+            ! Betchen 2006 Eq.16 + Eq.43/44, pressure is the interface
+            ! constraint on the porous side).
+            pf = bcs%iface_p(i)
+         else
+            ! Legacy: the peer supplies the face VELOCITY on this patch, so
+            ! pressure must be zero-gradient here (imposing both over-constrains
+            ! SIMPLE: p pinned at the inlet and the interface, the boundary
+            ! momentum cannot balance and the inlet velocity explodes).
+            pf = pP
+         end if
       else
          pf = pP                        ! zero normal gradient
       end if
@@ -466,12 +540,18 @@ contains
    ! heating into the domain), and T_face is set to T_cell so that the
    ! Green-Gauss gradient gives a zero normal gradient contribution.
    !----------------------------------------------------------------------------
-   subroutine bc_face_T( bcs, i, xf, T_cell, T_face, q_face, is_neumann )
+   subroutine bc_face_T( bcs, i, xf, T_cell, T_face, q_face, is_neumann, phase )
       type(bc_t),   intent(in)  :: bcs
       integer,      intent(in)  :: i
       real(dp),     intent(in)  :: xf(3), T_cell
       real(dp),     intent(out) :: T_face, q_face
       logical,      intent(out) :: is_neumann
+      ! phase: which porous phase the caller is assembling (0/absent = the
+      ! legacy single-temperature treatment; 2 = the solid-phase equation).
+      ! Only the coupling interface differentiates: with iface_t_model = zhang
+      ! under LTNE the fluid phase sees bcs%iface_T and the solid phase
+      ! bcs%iface_Ts (Zhang 2011 Eq.27-29, porosity-weighted flux split).
+      integer,      intent(in), optional :: phase
 
       integer  :: g, tt, ipl
       real(dp) :: tv, qv
@@ -570,9 +650,19 @@ contains
          ! The peer solver supplies the inflow temperature (velocity-specified
          ! coupling interface).  Dirichlet is mandatory: with a zero-gradient
          ! inflow the scalar has no exterior source and advection drains it.
+         ! Phase 14 (iface_t_model = zhang, LTNE): the porosity-weighted split
+         ! of Zhang 2011 Eq.27-29 gives each phase its own interface value --
+         ! the fluid phase bcs%iface_T, the solid phase bcs%iface_Ts -- so the
+         ! individual fluxes are eps*F and (1-eps)*F and their sum is exactly
+         ! the clear-fluid flux (energy conserving).
          is_neumann = .false.
          q_face     = 0.0_dp
          T_face     = bcs%iface_T(i)
+         if ( g_iface_T_ltne ) then
+            if ( present(phase) ) then
+               if ( phase == 2 ) T_face = bcs%iface_Ts(i)
+            end if
+         end if
       end select
 
    end subroutine bc_face_T
@@ -631,6 +721,106 @@ contains
          bcs%iface_T(faces(k)) = T(k)
       end do
    end subroutine set_interface_T
+
+   !----------------------------------------------------------------------------
+   ! set_interface_T_ltne -- per-face porous-phase interface temperatures from
+   ! the Zhang 2011 Eq.27-29 closure: Tf (fluid phase, Eq.28 share eps*F) and
+   ! Ts (solid phase, Eq.29 share (1-eps)*F).
+   !----------------------------------------------------------------------------
+   subroutine set_interface_T_ltne( bcs, faces, Tf, Ts )
+      type(bc_t), intent(inout) :: bcs
+      integer,    intent(in)    :: faces(:)
+      real(dp),   intent(in)    :: Tf(size(faces)), Ts(size(faces))
+      integer :: k
+      do k = 1, size(faces)
+         bcs%iface_T(faces(k))  = Tf(k)
+         bcs%iface_Ts(faces(k)) = Ts(k)
+      end do
+   end subroutine set_interface_T_ltne
+
+   !----------------------------------------------------------------------------
+   ! Interface closure switches (phase 14).  Set once by the coupling driver
+   ! after mix.control has been read; the standalone uns solver never touches
+   ! them, so its behaviour is bit-identical to the pre-phase-14 code.
+   !----------------------------------------------------------------------------
+   subroutine set_iface_p_dirichlet( flag )
+      logical, intent(in) :: flag
+      g_iface_p_dir = flag
+   end subroutine set_iface_p_dirichlet
+
+   logical function iface_p_is_dirichlet()
+      iface_p_is_dirichlet = g_iface_p_dir
+   end function iface_p_is_dirichlet
+
+   subroutine set_iface_slip_mode( flag )
+      logical, intent(in) :: flag
+      g_iface_slip = flag
+   end subroutine set_iface_slip_mode
+
+   logical function iface_slip_is_on()
+      iface_slip_is_on = g_iface_slip
+   end function iface_slip_is_on
+
+   subroutine set_iface_t_ltne_mode( flag )
+      logical, intent(in) :: flag
+      g_iface_T_ltne = flag
+   end subroutine set_iface_t_ltne_mode
+
+   logical function iface_t_ltne_is_on()
+      iface_t_ltne_is_on = g_iface_T_ltne
+   end function iface_t_ltne_is_on
+
+   subroutine set_iface_zhang_vel( flag )
+      logical, intent(in) :: flag
+      g_iface_zhang_vel = flag
+   end subroutine set_iface_zhang_vel
+
+   logical function iface_zhang_vel_is_on()
+      iface_zhang_vel_is_on = g_iface_zhang_vel
+   end function iface_zhang_vel_is_on
+
+   !----------------------------------------------------------------------------
+   ! set_interface_slip -- per-face tangential stress-jump conductance and the
+   ! peer (free-fluid) face velocity used as the tangential target.
+   !   C      : conductance [kg/s], C = mu*A/(d_f + sqrt(K)/alpha + eps*d_p)
+   !            (mod_iface_law:iface_slip_conductance)
+   !   u_peer : peer face velocity [m/s] (only its tangential part is used)
+   !----------------------------------------------------------------------------
+   subroutine set_interface_slip( bcs, faces, C, u_peer )
+      type(bc_t), intent(inout) :: bcs
+      integer,    intent(in)    :: faces(:)
+      real(dp),   intent(in)    :: C(size(faces))
+      real(dp),   intent(in)    :: u_peer(3, size(faces))
+      integer :: k
+      do k = 1, size(faces)
+         bcs%iface_slip_C(faces(k))     = C(k)
+         bcs%iface_peer_vel(:,faces(k)) = u_peer(:,k)
+      end do
+   end subroutine set_interface_slip
+
+   !----------------------------------------------------------------------------
+   ! bc_face_p_dirichlet -- .true. when face i is a pressure-DIRICHLET boundary
+   ! face, i.e. POUTLET / FARFIELD (always) or a coupling-interface face while
+   ! the phase-14 interface pressure model is active.  Used by ppe_assembly /
+   ! correct_fields so that the interface Dirichlet pressure gets the same
+   ! matrix, pinning and flux-correction treatment as the ordinary pressure
+   ! boundaries.
+   !----------------------------------------------------------------------------
+   logical function bc_face_p_dirichlet( bcs, i )
+      type(bc_t), intent(in) :: bcs
+      integer,    intent(in) :: i
+      integer :: g
+
+      bc_face_p_dirichlet = .false.
+      g = bcs%fgrp(i)
+      if ( g <= 0 ) return
+      select case ( bcs%gb(g)%btype )
+      case ( BC_POUTLET, BC_FARFIELD )
+         bc_face_p_dirichlet = .true.
+      case ( BC_INTERFACE )
+         bc_face_p_dirichlet = g_iface_p_dir
+      end select
+   end function bc_face_p_dirichlet
 
    !----------------------------------------------------------------------------
    ! True when the given face zone id is a coupling "interface" zone, i.e.

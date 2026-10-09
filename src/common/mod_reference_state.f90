@@ -105,6 +105,87 @@ module mod_reference_state
    ! struct's -- a pure datum shift, the gradients (and hence the uns
    ! solution) are unchanged.
    integer,  save :: g_iface_p_anchor = 0
+   ! Interface PRESSURE model (phase 14, opt-in; default 0 = legacy):
+   !   0 = 'grad0'     : interface pressure is zero-gradient on the uns side
+   !                     (bc_face_p returns pP).  The slab's PPE is then pure
+   !                     Neumann (no pressure BC anywhere), so its gauge datum
+   !                     is a free parameter -> iface_p_anchor / the uniform
+   !                     interface-flux correction (du_n) exist to patch that.
+   !   1 = 'dirichlet' : the peer (struct) interface pressure is imposed as a
+   !                     per-face DIRICHLET pressure on the coupling interface
+   !                     (converted to gauge).  The PPE becomes well posed
+   !                     without pinning cell 1, the interface mass flux is
+   !                     *solved* by continuity instead of being imposed and
+   !                     patched, and iface_p_anchor/du_n are bypassed.  The
+   !                     interface VELOCITY then must not be Dirichlet-ised on
+   !                     the same faces (over-constrained): the normal component
+   !                     switches to the zero-gradient/outflow treatment.
+   !   2 = 'momentum'  : 'dirichlet' plus the Betchen 2006 Eq.43/44 normal
+   !                     momentum balance across the flow-area change
+   !                     (1-eps)/eps * rho*u_n^2, the two-sided inverse-distance
+   !                     blend with the porous-side extrapolation
+   !                     (weight g_iface_p_blend) and the deferred p-mdot
+   !                     sub-iteration (g_iface_pm_subiter) of Betchen Sec.4.2.
+   integer,  save :: g_iface_p_model = 0
+   ! Interface TANGENTIAL (shear) treatment (phase 14, opt-in; 0 = off):
+   !   1 = 'bj'     : Beavers-Joseph / Ochoa-Tapia-Whitaker stress jump at the
+   !                  coupling interface through the series-resistance law
+   !                  C = mu*A/(d_f + sqrt(K)/alpha + eps*d_p) of mod_iface_law
+   !                  (the same law the solver applies to internal fluid/porous
+   !                  faces via bj_alpha; d_f is the peer gap, d_p the slab
+   !                  gap).
+   !   2 = 'noslip' : tangential velocity CONTINUITY at the interface (Betchen
+   !                  2006 Eq.13: u_fl = <u>_por) with the flush (no-slip)
+   !                  porous-side conductance C = mu_e*A/d_p.  This is the
+   !                  natural companion of iface_p_model (which supplies the
+   !                  normal/PART of the interface constraint, so the
+   !                  tangential part must be closed explicitly, Eq.16+Eq.13).
+   integer,  save :: g_iface_slip = 0
+   integer,  save :: g_iface_pm_subiter = 0      ! p-mdot sub-iterations
+                                                 ! (0 = pure deferred: one
+                                                 !  Eq.44 evaluation on the
+                                                 !  current interface flux;
+                                                 !  >=1 = damped local
+                                                 !  sub-iteration with
+                                                 !  omega = 1/(1+G))
+   real(dp), save :: g_iface_p_blend    = 0.5_dp ! weight of the porous-side
+                                                 ! interface-pressure estimate
+   real(dp), save :: g_iface_slip_alpha = -1.0_dp ! BJ alpha for the coupling
+                                                 ! interface; <0 => take the
+                                                 ! mean bj_alpha of the adjacent
+                                                 ! slab cells, else 1.0
+   ! Zhang 2011 interface closure (Sec.3.5.1; phase 14, opt-in).
+   !   0 = 'off' (default): legacy exchange (peer face state imposed directly).
+   !   1 = 'zhang'        : the interface VELOCITY is evaluated from Eqs.22/25/26
+   !                        -- the conductance-weighted normal balance and the
+   !                        tangential stress-jump balance -- and imposed as a
+   !                        full-vector Dirichlet on the porous side, i.e.
+   !                        iface_velocity = zhang (mode 3).  This is the
+   !                        literature closure for the tangential direction,
+   !                        replacing the ad-hoc 'balance'/'normal' modes.
+   ! The temperature side of the same section (Eqs.27-29) is switched
+   ! independently by g_iface_t_model.
+   integer,  save :: g_iface_zhang = 0
+   !   beta, beta1 : the Eq.26 excess (viscous / inertial) stress-jump
+   !   coefficients.  beta default 0 => derived as 1/bj_alpha (the standard
+   !   Beavers-Joseph correspondence), so iface_slip_alpha keeps its meaning.
+   real(dp), save :: g_iface_beta  = 0.0_dp
+   real(dp), save :: g_iface_beta1 = 0.0_dp
+   !   d_f/d_p used by Eqs.25/26 when the peer-side gap is not part of the
+   !   exchange (default 1 = use the slab-side gap for both).
+   real(dp), save :: g_iface_df_ratio = 1.0_dp
+   ! Interface TEMPERATURE model (phase 14, opt-in; 0 = off):
+   !   0 = 'off'   : legacy -- the peer temperature is imposed as a single
+   !                 Dirichlet value on the porous side and the porous cell
+   !                 temperature is handed back.
+   !   1 = 'zhang' : Zhang 2011 Eqs.27-29 -- the clear-fluid side sees the
+   !                 porosity-weighted VOLUME AVERAGE eps*<T_f>^f +
+   !                 (1-eps)*<T_s>^s (Eq.27; identical to the plain value under
+   !                 the LTE model), and the interface heat flux is split
+   !                 between the porous phases by area ratio (porosity):
+   !                 the fluid-phase equation receives eps*F (Eq.28), the
+   !                 solid-phase equation (1-eps)*F (Eq.29).
+   integer,  save :: g_iface_t_model = 0
    ! phase-10 auto-save / joint restart
    integer,  save :: g_save_interval = 0   ! 0 = off, >0 = save every N coupling iters
    integer,  save :: g_couple_restart = 0  ! 0 = cold start, 1 = joint restart
@@ -143,6 +224,13 @@ contains
    !   n_uns_steps_start   = <int>   same, unstructured side (0 = off)
    !   step_decay_every    = <int>   halving period in coupling iterations [1]
    !   iface_relax, iface_ramp, save_interval, couple_restart
+   !   iface_velocity  = full|normal|balance|zhang
+   !   iface_p_anchor  = 0|1
+   !   iface_p_model   = grad0|dirichlet|momentum   (phase 14)
+   !   iface_slip      = off|bj|noslip              (phase 14, mod_iface_law)
+   !   iface_t_model   = off|zhang                  (phase 14, Zhang Eq.27-29)
+   !   iface_pm_subiter, iface_p_blend, iface_slip_alpha
+   !   iface_beta, iface_beta1, iface_df_ratio      (phase 14, Zhang Eq.25/26)
    !---------------------------------------------------------------------------
    subroutine read_mix_control( filename, ier )
       character(len=*), intent(in)  :: filename
@@ -206,12 +294,14 @@ contains
             read( val, *, iostat = ios ) g_step_decay_every
             if ( g_step_decay_every < 1 ) g_step_decay_every = 1
          case ( 'iface_velocity', 'iface_vel_mode' )
-            ! 'full' (default) | 'normal' | '0' | '1'
+            ! 'full' (default) | 'normal' | 'balance' | 'zhang'
             select case ( trim(lowercase(adjustl(val))) )
             case ( 'normal', 'normal-only', 'normal_only', '1' )
                g_iface_vel_mode = 1
             case ( 'balance', 'outflow', '2' )
                g_iface_vel_mode = 2
+            case ( 'zhang', 'zhang2011', 'eq25', 'law25', 'zhang-l-25', '3' )
+               g_iface_vel_mode = 3
             case ( 'full', '0' )
                g_iface_vel_mode = 0
             case default
@@ -227,6 +317,78 @@ contains
             case default
                read( val, *, iostat = ios ) g_iface_p_anchor
             end select
+         case ( 'iface_p_model', 'iface_pmode' )
+            ! 'grad0' (default) | 'dirichlet' | 'momentum'
+            select case ( trim(lowercase(adjustl(val))) )
+            case ( 'grad0', 'zero-gradient', 'zerograd', 'none', 'off', '0' )
+               g_iface_p_model = 0
+            case ( 'dirichlet', 'p-dirichlet', 'pdir', '1' )
+               g_iface_p_model = 1
+            case ( 'momentum', 'betchen', 'eq44', '2' )
+               g_iface_p_model = 2
+            case default
+               read( val, *, iostat = ios ) g_iface_p_model
+               if ( ios /= 0 .or. g_iface_p_model < 0 .or. &
+                    g_iface_p_model > 2 ) then
+                  write(*,'(a)') 'WARNING: unknown iface_p_model value: ' &
+                                 // trim(val) // ' (using grad0)'
+                  g_iface_p_model = 0
+               end if
+            end select
+         case ( 'iface_slip', 'iface_slip_model' )
+            ! 'off' (default) | 'bj' (stress jump, mod_iface_law)
+            select case ( trim(lowercase(adjustl(val))) )
+            case ( 'off', 'none', 'no', '0' )
+               g_iface_slip = 0
+            case ( 'bj', 'beavers-joseph', 'beavers_joseph', 'stressjump', &
+                   'stress-jump', 'otw', '1' )
+               g_iface_slip = 1
+            case ( 'noslip', 'no-slip', 'cont', 'continuity', '2' )
+               g_iface_slip = 2
+            case default
+               read( val, *, iostat = ios ) g_iface_slip
+               if ( ios /= 0 .or. g_iface_slip < 1 .or. &
+                    g_iface_slip > 2 ) then
+                  write(*,'(a)') 'WARNING: unknown iface_slip value: ' &
+                                 // trim(val) // ' (using off)'
+                  g_iface_slip = 0
+               end if
+            end select
+         case ( 'iface_t_model', 'iface_tmodel', 'iface_t_law' )
+            ! 'off' (default) | 'zhang' (Eqs.27-29 volume average + flux split)
+            select case ( trim(lowercase(adjustl(val))) )
+            case ( 'off', 'none', 'no', 'legacy', '0' )
+               g_iface_t_model = 0
+            case ( 'zhang', 'zhang2011', 'eq27', 'volavg', 'volume-average', '1' )
+               g_iface_t_model = 1
+            case default
+               read( val, *, iostat = ios ) g_iface_t_model
+               if ( ios /= 0 .or. g_iface_t_model < 0 .or. &
+                    g_iface_t_model > 1 ) then
+                  write(*,'(a)') 'WARNING: unknown iface_t_model value: ' &
+                                 // trim(val) // ' (using off)'
+                  g_iface_t_model = 0
+               end if
+            end select
+         case ( 'iface_beta' )
+            read( val, *, iostat = ios ) rv
+            if ( ios == 0 ) g_iface_beta = max( 0.0_dp, rv )
+         case ( 'iface_beta1' )
+            read( val, *, iostat = ios ) rv
+            if ( ios == 0 ) g_iface_beta1 = max( 0.0_dp, rv )
+         case ( 'iface_df_ratio', 'iface_d_f_ratio', 'iface_gap_ratio' )
+            read( val, *, iostat = ios ) rv
+            if ( ios == 0 .and. rv > 0.0_dp ) g_iface_df_ratio = rv
+         case ( 'iface_pm_subiter' )
+            read( val, *, iostat = ios ) g_iface_pm_subiter
+            if ( ios /= 0 ) g_iface_pm_subiter = 0
+            if ( g_iface_pm_subiter < 0 ) g_iface_pm_subiter = 0
+         case ( 'iface_p_blend' )
+            read( val, *, iostat = ios ) rv
+            if ( ios == 0 ) g_iface_p_blend = max( 0.0_dp, min( 1.0_dp, rv ) )
+         case ( 'iface_slip_alpha', 'iface_alpha' )
+            read( val, *, iostat = ios ) rv
+            if ( ios == 0 ) g_iface_slip_alpha = rv
          case ( 'iface_relax' )
             read( val, *, iostat = ios ) g_iface_relax
          case ( 'iface_ramp' )
@@ -256,6 +418,19 @@ contains
       write(*,'(a,i0)')       '  couple_restart = ', g_couple_restart
       write(*,'(a,i0)')       '  iface_vel_mode = ', g_iface_vel_mode
       write(*,'(a,i0)')       '  iface_p_anchor = ', g_iface_p_anchor
+      write(*,'(a,i0,a)')     '  iface_p_model  = ', g_iface_p_model, &
+           merge(' (dirichlet)', '            ', g_iface_p_model == 1)
+      if ( g_iface_p_model == 2 ) &
+         write(*,'(a,i0,a,f5.2)') '    momentum: pm_subiter = ', &
+              g_iface_pm_subiter, '  p_blend = ', g_iface_p_blend
+      write(*,'(a,i0)')       '  iface_slip     = ', g_iface_slip
+      if ( g_iface_slip == 1 ) &
+         write(*,'(a,f8.4)')  '    bj alpha      = ', g_iface_slip_alpha
+      write(*,'(a,i0,a)')     '  iface_t_model  = ', g_iface_t_model, &
+           merge(' (zhang Eq.27-29)', '                 ', g_iface_t_model == 1)
+      if ( g_iface_vel_mode == 3 .or. g_iface_zhang == 1 ) &
+         write(*,'(a,2f10.4,a,f8.4)') '    zhang beta/beta1 = ', &
+              g_iface_beta, g_iface_beta1, '  d_f/d_p =', g_iface_df_ratio
       write(*,'(a)') '--- end reference state ---'
    end subroutine read_mix_control
 
@@ -273,13 +448,22 @@ contains
    subroutine get_coupling_params( n_couple, n_uns_steps, iface_relax, iface_ramp, &
                                    n_struct_steps, save_interval, couple_restart, &
                                    n_struct_steps_start, n_uns_steps_start, &
-                                   step_decay_every, iface_vel_mode, iface_p_anchor )
+                                   step_decay_every, iface_vel_mode, iface_p_anchor, &
+                                   iface_p_model, iface_slip, iface_pm_subiter, &
+                                   iface_p_blend, iface_slip_alpha, &
+                                   iface_t_model, iface_beta, iface_beta1, &
+                                   iface_df_ratio )
       integer,  intent(out) :: n_couple, n_uns_steps, iface_ramp
       integer,  intent(out), optional :: n_struct_steps
       integer,  intent(out), optional :: save_interval, couple_restart
       integer,  intent(out), optional :: n_struct_steps_start, n_uns_steps_start
       integer,  intent(out), optional :: step_decay_every
       integer,  intent(out), optional :: iface_vel_mode, iface_p_anchor
+      integer,  intent(out), optional :: iface_p_model, iface_slip
+      integer,  intent(out), optional :: iface_pm_subiter
+      real(dp), intent(out), optional :: iface_p_blend, iface_slip_alpha
+      integer,  intent(out), optional :: iface_t_model
+      real(dp), intent(out), optional :: iface_beta, iface_beta1, iface_df_ratio
       real(dp), intent(out) :: iface_relax
       n_couple    = g_n_couple
       n_uns_steps = g_n_uns_steps
@@ -293,6 +477,15 @@ contains
       if ( present(step_decay_every) )     step_decay_every     = g_step_decay_every
       if ( present(iface_vel_mode) )       iface_vel_mode       = g_iface_vel_mode
       if ( present(iface_p_anchor) )       iface_p_anchor       = g_iface_p_anchor
+      if ( present(iface_p_model) )        iface_p_model        = g_iface_p_model
+      if ( present(iface_slip) )           iface_slip           = g_iface_slip
+      if ( present(iface_pm_subiter) )     iface_pm_subiter     = g_iface_pm_subiter
+      if ( present(iface_p_blend) )        iface_p_blend        = g_iface_p_blend
+      if ( present(iface_slip_alpha) )     iface_slip_alpha     = g_iface_slip_alpha
+      if ( present(iface_t_model) )        iface_t_model        = g_iface_t_model
+      if ( present(iface_beta) )           iface_beta           = g_iface_beta
+      if ( present(iface_beta1) )          iface_beta1          = g_iface_beta1
+      if ( present(iface_df_ratio) )       iface_df_ratio       = g_iface_df_ratio
    end subroutine get_coupling_params
 
    !---------------------------------------------------------------------------

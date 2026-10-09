@@ -119,6 +119,7 @@ contains
       integer :: nfaces, n_uns_recv, n_uns_steps_d, iface_ramp_d
       integer :: n_struct_steps_d, isub, save_interval, couple_restart
       integer :: n_struct_steps_start_d, step_decay_d, n_sub
+      integer :: iface_p_model_d
       real(dp) :: iface_relax_d
       real(dp), allocatable :: rho_nd(:), u_nd(:), v_nd(:), w_nd(:), T_nd(:), p_nd(:)
       real(dp), allocatable :: urho(:), uu(:,:), uT(:), up(:)
@@ -131,7 +132,8 @@ contains
                                 save_interval = save_interval, &
                                 couple_restart = couple_restart, &
                                 n_struct_steps_start = n_struct_steps_start_d, &
-                                step_decay_every = step_decay_d )
+                                step_decay_every = step_decay_d, &
+                                iface_p_model = iface_p_model_d )
       n_uns_root = 1   ! uns root is global rank 1 (struct is rank 0)
       if ( n_struct_steps_start_d > n_struct_steps_d ) then
          write(*,'(a,i0,a,i0,a)') '[struct rank 0] struct substeps/coupling iter: ', &
@@ -232,6 +234,17 @@ contains
                                           nfaces, r)
             alpha_p = ALPHA_MAX * min(1.0_dp, &
                         real(iter,dp)/real(max(iface_ramp_d,1),dp))
+            ! Phase 14 (iface_p_model = dirichlet|momentum): the interface
+            ! pressure is now a DIRICHLET condition on the uns side, taken from
+            ! THIS side -- the struct is the pressure master.  Relaxing the
+            ! struct interface pressure towards the slab pressure as well would
+            ! close a two-way pressure loop (struct -> slab -> struct) whose
+            ! measured gain in C_P_test is ~5-10x per coupling iteration, i.e.
+            ! divergent.  With alpha = 0 the struct keeps extrapolating its own
+            ! interface pressure (consistent with the mainstream) while still
+            ! taking the slab mass flux through the ghost VELOCITY, which is
+            ! the Dirichlet-Neumann partition the literature prescribes.
+            if ( iface_p_model_d /= 0 ) alpha_p = 0.0_dp
             call struct_set_iface_bc(rho_nd2, u_nd2, v_nd2, w_nd2, T_nd2, p_nd2, nfaces, &
                                      alpha = alpha_p)
             deallocate(rho_nd2, u_nd2, v_nd2, w_nd2, T_nd2, p_nd2)
@@ -277,7 +290,15 @@ contains
       use mod_uns_geometry, only: geom_t
       use mod_uns_control, only: ctrl_t, BC_INTERFACE, BC_POUTLET, BC_FARFIELD
       use mod_uns_bc, only: bc_t, set_interface_vel, &
-                            set_interface_T, bc_face_vel
+                            set_interface_T, bc_face_vel, set_interface_p, &
+                            set_interface_slip, set_iface_p_dirichlet, &
+                            set_iface_slip_mode, set_interface_T_ltne, &
+                            set_iface_zhang_vel, &
+                            set_iface_t_ltne_mode, iface_t_ltne_is_on
+      use mod_iface_law, only: iface_slip_conductance, iface_p_momentum, &
+                               iface_p_blend, iface_p_flux_response, &
+                               iface_p_gain, iface_zhang_velocity, &
+                               iface_zhang_T
       use mod_uns_fields, only: fields_t
 #ifdef HAVE_MPI
       ! The uns field dump/restart lives in the MPI-only mod_uns_restart stack
@@ -308,6 +329,11 @@ contains
       integer :: n_uns_faces, iface_ramp, save_interval, couple_restart
       integer :: n_uns_steps_start, step_decay, n_uns_cur, iface_vel_mode
       integer :: iface_p_anchor
+      integer :: iface_p_model, iface_slip, iface_pm_sub
+      real(dp) :: iface_p_w, iface_slip_alpha
+      integer :: iface_t_model
+      real(dp) :: iface_beta, iface_beta1, iface_df_ratio
+      logical :: iface_p_dir
       real(dp) :: iface_relax, omega
       logical :: has_struct
       character(len=*), parameter :: uns_dump = 'unMesh_restart.dat'
@@ -318,8 +344,33 @@ contains
                                 n_uns_steps_start = n_uns_steps_start, &
                                 step_decay_every = step_decay, &
                                 iface_vel_mode = iface_vel_mode, &
-                                iface_p_anchor = iface_p_anchor )
+                                iface_p_anchor = iface_p_anchor, &
+                                iface_p_model = iface_p_model, &
+                                iface_slip = iface_slip, &
+                                iface_pm_subiter = iface_pm_sub, &
+                                iface_p_blend = iface_p_w, &
+                                iface_slip_alpha = iface_slip_alpha, &
+                                 iface_t_model = iface_t_model, &
+                                 iface_beta = iface_beta, &
+                                 iface_beta1 = iface_beta1, &
+                                 iface_df_ratio = iface_df_ratio )
       n_struct_root = 0   ! struct root is global rank 0
+      ! Phase-14 interface closure switches (module-level flags in mod_uns_bc;
+      ! the standalone uns solver leaves them at .false., so its behaviour is
+      ! unchanged).  iface_p_model /= 0 makes the coupling interface a
+      ! pressure-Dirichlet patch, which also switches the interface velocity
+      ! treatment inside the momentum assembly.
+      iface_p_dir = ( iface_p_model /= 0 )
+      call set_iface_p_dirichlet( iface_p_dir )
+      call set_iface_slip_mode( iface_slip == 1 )
+      ! iface_velocity = zhang: the interface velocity is a viscous closure
+      ! value (Zhang Eqs.22/25/26), so the interface face must not convect the
+      ! prescribed tangential slip into the first slab cell (see mod_uns_bc).
+      call set_iface_zhang_vel( iface_vel_mode == 3 )
+      if ( rank == 0 ) then
+         write(*,'(a,i0,a,i0,a,i0)') '[uns] iface_p_model = ', iface_p_model, &
+            '  iface_slip = ', iface_slip, '  pm_subiter = ', iface_pm_sub
+      end if
       ! When there is no struct group (nproc==1, n_struct_ranks==0) the
       ! exchange is skipped entirely.
       has_struct = ( nproc > 1 )
@@ -339,6 +390,22 @@ contains
          write(*,'(a,i0,a,i0)') '[uns rank ', rank, '] init FAILED ier=', ier
          call MPI_Abort( MPI_COMM_WORLD, ier, ierr )
          return
+      end if
+      ! ---- phase-14 Zhang 2011 interface closures ------------------------------
+      ! Velocity (Eqs.22/25/26) is handled per face in the coupling loop; the
+      ! temperature side (Eqs.27-29) needs the thermal model to decide whether
+      ! there is a flux to split (LTNE) or the volume average degenerates to
+      ! the exchanged value (LTE, T_f = T_s).
+      call set_iface_t_ltne_mode( iface_t_model == 1 .and. &
+                                  trim(ctrl%thermal_model) == 'ltne' )
+      if ( rank == 0 ) then
+         if ( iface_vel_mode == 3 .and. iface_p_dir ) &
+            write(*,'(a)') '[uns] WARNING: iface_velocity=zhang is overridden ' // &
+               'by iface_p_model=dirichlet|momentum (the pressure-Dirichlet ' // &
+               'interface extrapolates the velocity; use iface_p_model=grad0)'
+         if ( iface_t_model == 1 ) &
+            write(*,'(a,l1)') '[uns] iface_t_model=zhang, LTNE split on = ', &
+                              iface_t_ltne_is_on()
       end if
       write(*,'(a,i0,a,i0)') '[uns rank ', rank, '] init OK, ncells=', m%ncells
       if ( iter0 > 0 ) &
@@ -367,6 +434,16 @@ contains
             ! the loop goes unstable.  Shift the whole uns gauge field so the
             ! mean interface absolute pressure equals the struct's; a constant
             ! shift leaves every gradient (i.e. the uns solution) untouched.
+            !
+            ! Phase 14 note (iface_p_model = dirichlet|momentum): the anchor is
+            ! then NOT redundant -- and is in fact essential.  The interface
+            ! pressure becomes a Dirichlet value taken from the peer, so a
+            ! cold-start peer interface pressure that is O(10 kPa) off would be
+            ! imposed on the slab and the loop diverges.  The anchor first
+            ! re-datums the uns field onto the peer's level (a pure shift, no
+            ! solution change), after which the Dirichlet update is only the
+            ! small physical difference (the Eq.44 momentum term plus the
+            ! slab/face extrapolation difference) instead of an absolute value.
             if ( iface_p_anchor == 1 .and. n_uns_faces > 0 ) then
                block
                   type(reference_state_t) :: rr
@@ -392,12 +469,20 @@ contains
                omega = iface_relax * min( 1.0_dp, &
                             real(iter,dp) / real(max(iface_ramp,1),dp) )
                allocate( su_bc(3,n_uns_faces) )
-               if ( iface_vel_mode == 2 ) then
-                  ! 'balance': the peer velocity is ignored; the interface is
-                  ! the slab's own fully-developed outflow (zero gradient,
-                  ! i.e. the previous uns interface state).  Its total flux is
-                  ! then rescaled by the mass-balance correction below so that
-                  ! exactly the injected coolant leaves through it.
+               if ( iface_vel_mode == 2 .or. iface_p_dir ) then
+                  ! 'balance' (iface_velocity = balance): the peer velocity is
+                  ! ignored; the interface is the slab's own fully-developed
+                  ! outflow (zero gradient, i.e. the previous uns interface
+                  ! state).  Its total flux is then rescaled by the mass-balance
+                  ! correction below so that exactly the injected coolant leaves
+                  ! through it.
+                  ! Phase 14 (iface_p_model = dirichlet|momentum): the interface
+                  ! velocity must NOT be Dirichlet-ised either -- the pressure is
+                  ! the interface constraint -- so the same own extrapolation is
+                  ! used for the normal part (it also keeps the energy equation's
+                  ! interface enthalpy flux, which is built from iface_vel,
+                  ! equal to the actual transpiration flux instead of the peer's
+                  ! ~100 m/s tangential slip).
                   su_bc = iu
                else
                   su_bc = omega * su + (1.0_dp - omega) * iu
@@ -410,7 +495,7 @@ contains
                ! (zero-gradient).  Forcing the peer free-stream tangential
                ! slip (~100 m/s) into the porous slab would require
                ! dp/dx = mu*u/K ~ 5e5 Pa/m and drives the coupled loop to NaN.
-               if ( iface_vel_mode == 1 ) then
+               if ( iface_vel_mode == 1 .and. .not. iface_p_dir ) then
                   block
                      integer  :: fi2, kf2
                      real(dp) :: nvec2(3), un2, nrm2
@@ -428,7 +513,62 @@ contains
                      end do
                   end block
                end if
-               ! Interface partition (phase-11 flow B, Dirichlet-Neumann):
+               ! ---- Zhang 2011 Eqs.22/25/26: literature interface velocity ----
+               ! ONE interface velocity is shared by the two domains (Eq.22);
+               ! its normal part solves the two-sided normal stress balance
+               ! (Eq.25, a conductance/reciprocal-distance blend of the two
+               ! near-interface cell velocities) and its tangential part the
+               ! stress-jump balance (Eq.26, Ochoa-Tapia & Whitaker with the
+               ! excess viscous coefficient beta and the inertial beta1).  The
+               ! result is imposed as a full-vector Dirichlet on the slab, so
+               ! the interface has NO unconstrained tangential mode (the
+               ! divergence seen with 'balance'/'full', where the peer-free
+               ! tangential slip was either ignored or copied as ~100 m/s);
+               ! the peer velocity enters the blend instead of replacing the
+               ! local value.  beta defaults to eps*bj_alpha, the
+               ! correspondence that makes this law identical to the validated
+               ! internal fluid/porous face treatment of cases/beavers_joseph.
+               if ( iface_vel_mode == 3 .and. .not. iface_p_dir ) then
+                  block
+                     integer  :: fi3, kf3, c03
+                     real(dp) :: nv3(3), ar3, dp3, eps3, lam3, beta3, Vz(3)
+                     do fi3 = 1, n_uns_faces
+                        kf3  = ifaces(fi3)
+                        c03  = m%f(kf3)%c0
+                        ar3  = g%area(kf3)
+                        nv3  = g%sf(:,kf3) / ar3
+                        dp3  = norm2( g%xf(:,kf3) - g%xc(:,c03) )
+                        eps3 = max( fld%porosity(c03), 1.0e-6_dp )
+                        ! sqrt(K) along the interface normal (same reduction as
+                        ! the internal bj_alpha branch)
+                        lam3 = sqrt( max( dot_product( fld%perm_dir(:,c03), &
+                                                       nv3**2 ), 0.0_dp ) )
+                        beta3 = iface_beta
+                        if ( beta3 <= 0.0_dp ) then
+                           if ( iface_slip_alpha > 0.0_dp ) then
+                              beta3 = eps3 * iface_slip_alpha
+                           else if ( fld%bj_alpha(c03) > 0.0_dp ) then
+                              beta3 = eps3 * fld%bj_alpha(c03)
+                           else
+                              beta3 = 1.0_dp        ! Ochoa-Tapia: O(1)
+                           end if
+                        end if
+                        Vz = iface_zhang_velocity( &
+                           iu(:,fi3), su(:,fi3), nv3, dp3, &
+                           iface_df_ratio * dp3, ctrl%mu, ctrl%mu / eps3, &
+                           eps3, lam3, beta3, iface_beta1, ctrl%rho )
+                        ! Same cold-start ramp / under-relaxation as the legacy
+                        ! exchange: the law output is a *fixed-point* update of
+                        ! the interface state, so on a cold field it must be
+                        ! phased in against the slab's own value -- applying the
+                        ! full peer-driven value at iter 1 slams the interface
+                        ! (measured 21 m/s on C_P_test) and the slab's thin
+                        ! first cell, being strongly Dirichlet-pinned, then
+                        ! amplifies it toward the free stream.
+                        su_bc(:,fi3) = omega * Vz + (1.0_dp - omega) * iu(:,fi3)
+                     end do
+                  end block
+               end if
                ! the uns side imposes only the peer face VELOCITY here;
                ! interface pressure is zero-gradient (bc_face_p for
                ! BC_INTERFACE returns pP), while the struct side imposes the
@@ -457,6 +597,14 @@ contains
                   ! pressure gradient explodes.
                   has_p_bc = any( bcs%gb(:)%btype == BC_POUTLET ) .or. &
                              any( bcs%gb(:)%btype == BC_FARFIELD )
+                  ! phase 14: with iface_p_model /= grad0 the interface is a
+                  ! PRESSURE-Dirichlet patch and its velocity is extrapolated
+                  ! (bc_face_vel -> uP), exactly like pressure-outlet, so the
+                  ! PPE closes continuity through the af*p' term and no uniform
+                  ! flux correction is needed or wanted here: correcting an
+                  ! extrapolated flux just fights the PPE (measured divergent
+                  ! interface flux in C_P_test).
+                  if ( iface_p_dir .and. n_uns_faces > 0 ) has_p_bc = .true.
                   F_other = 0.0_dp
                   do kf = 1, m%nfaces
                      if ( m%f(kf)%c1 /= 0 ) cycle
@@ -499,8 +647,247 @@ contains
                if ( mod(iter,100)==0 .or. iter==1 ) &
                   write(*,'(a,i0,a,i0,a,f6.3)') '[uns rank ', rank, &
                         '] iter ', iter, ' iface omega = ', omega
+               ! ---- phase-14 interface pressure model --------------------------
+               ! iface_p_model = dirichlet|momentum: the peer (struct) interface
+               ! pressure is imposed per face as a DIRICHLET pressure.  The
+               ! slab's PPE then stops being pure-Neumann: its gauge datum is
+               ! fixed by the mainstream, the interface mass flux follows from
+               ! continuity, and iface_p_anchor / the du_n correction are no
+               ! longer needed (both bypassed above).  'momentum' adds the
+               ! Betchen 2006 Eq.43/44 normal-momentum correction across the
+               ! flow-area change, the two-sided (porous-side extrapolation)
+               ! blend of his Sec.4.2 and the deferred p-mdot sub-iteration.
+               if ( iface_p_dir ) then
+                  block
+                     type(reference_state_t) :: rr
+                     integer  :: fi, kf, c0, ksub
+                     real(dp) :: nhat(3), area_f, dp_g, eps_c, lam_c, bja_c
+                     real(dp) :: mdot_f, mdot_it, un_f, af_f, p_fl, p_f, p_p
+                     real(dp) :: p_cur, p_new, p_applied, p_old_face
+                     real(dp) :: dp_corr
+                     real(dp) :: p_sum, fl_sum, c_mean, c_max, gain_f, g_max
+                     real(dp) :: om_p
+                     real(dp), allocatable :: p_dir_bc(:), c_slip(:), u_peer(:,:)
+
+                     allocate( p_dir_bc(n_uns_faces), c_slip(n_uns_faces), &
+                               u_peer(3,n_uns_faces) )
+                     rr     = get_ref_state()
+                     p_sum  = 0.0_dp
+                     dp_corr = 0.0_dp
+                     fl_sum = 0.0_dp
+                     c_mean = 0.0_dp
+                     c_max  = 0.0_dp
+                     g_max  = 0.0_dp
+
+                     do fi = 1, n_uns_faces
+                        kf     = ifaces(fi)
+                        c0     = m%f(kf)%c0
+                        area_f = g%area(kf)
+                        nhat   = g%sf(:,kf) / area_f   ! outward (out of slab)
+                        dp_g   = norm2( g%xf(:,kf) - g%xc(:,c0) )
+                        eps_c  = fld%porosity(c0)
+                        mdot_f = fld%flux(kf)          ! kg/s, + = out of slab
+                        un_f   = mdot_f / ( ctrl%rho * area_f )
+
+                        ! fluid-side estimate: peer interface pressure (gauge)
+                        p_fl = sp(fi) - rr%p_ref
+                        p_f  = p_fl
+                        if ( iface_p_model == 2 ) &          ! Betchen Eq.43/44
+                           p_f = iface_p_momentum( p_fl, mdot_f, un_f, &
+                                                   area_f, eps_c )
+                        ! porous-side deferred estimate: one-sided linear
+                        ! extrapolation of the slab pressure to the face
+                        ! (cf. mod_uns_fields:kink_face_pressure, which does the
+                        ! same two-sidedly on internal fluid/porous faces)
+                        p_p = fld%p(c0) + dp_g * &
+                              dot_product( fld%gp(:,c0), nhat )
+                        if ( iface_p_model == 2 ) then
+                           p_cur = iface_p_blend( p_f, p_p, iface_p_w )
+                        else
+                           p_cur = p_f
+                        end if
+
+                        ! ---- p-mdot coupling (Betchen Sec.4.2) -----------------
+                        ! Eq.43/44 makes the interface pressure depend on the
+                        ! interface mass flow rate, which in turn depends on the
+                        ! pressure: Betchen notes that "a small number of
+                        ! iterations is required" and that the refined estimate
+                        ! is "best implemented in a deferred fashion".
+                        ! The local loop gain of the pair is
+                        !   G = 2*(1-eps)*af*|mdot| / (eps*rho*A^2)
+                        ! (mod_iface_law:iface_p_gain).  G is reported so the
+                        ! stiffness of the pair is visible; when
+                        ! iface_pm_subiter >= 1 the pair is then refined with an
+                        ! unconditionally stable UNDER-RELAXED iteration
+                        ! (omega = 1/(1+G) <= 1, the classic damped fixed point:
+                        ! the undamped form oscillates with growth G per step and
+                        ! is unusable when G >> 1).  Default 0 = pure deferred:
+                        ! p_cur is Eq.44 evaluated on the flux the solver
+                        ! actually produced, and the outer coupling loop closes
+                        ! the p-mdot loop.
+                        p_old_face = bcs%iface_p(kf)
+                        if ( iter == iter0 + 1 ) &
+                           p_old_face = fld%p(c0)   ! 1st iter: the interface was
+                                                    ! zero-gradient, so the flux
+                                                    ! in hand was produced under
+                                                    ! the cell pressure
+                        af_f = ctrl%rho * ( g%vol(c0) / fld%apc(c0) ) &
+                               * area_f / dp_g
+                        if ( iface_p_model == 2 ) then
+                           gain_f = iface_p_gain( af_f, mdot_f, eps_c, &
+                                                  ctrl%rho, area_f )
+                           g_max  = max( g_max, gain_f )
+                           ! The refined sub-iteration is admissible only in the
+                           ! contracting regime G < 1.  For G > 1 the composed
+                           ! map is monotone increasing with slope G, so its
+                           ! fixed point REPELS: neither the raw iteration nor
+                           ! any under-relaxation with omega in (0,1) can
+                           ! converge (verified in src/coupling/test_iface_law
+                           ! test 7).  Keep the deferred estimate there and let
+                           ! the outer coupling iteration close the p-mdot loop.
+                           ! Admissibility test for the local linearisation.
+                           ! af is a SINGLE-CELL PPE response, not a steady
+                           ! sensitivity of the converged interface flux (with a
+                           ! mass-flow-inlet BC that flux is pinned by the inlet
+                           ! and a uniform interface-pressure shift changes it by
+                           ! ~zero).  The sub-iteration is therefore only run
+                           ! when the implied flux change is small compared
+                           ! with the physical flux; on C_P_test
+                           ! af*(p_cur-p_prev) ~ 0.2 kg/s against mdot ~ 3.5e-3
+                           ! kg/s, i.e. 55x too large -> skipped, and the
+                           ! DEFERRED estimate (one Eq.44 evaluation on the
+                           ! flux the solver produced) is used instead --
+                           ! exactly the "implemented in a deferred fashion"
+                           ! route of Betchen Sec.4.2.
+                           if ( iface_pm_sub > 0 .and. gain_f < 1.0_dp .and. &
+                                abs( af_f * ( p_cur - p_old_face ) ) &
+                                < 0.1_dp * abs( mdot_f ) ) then
+                              mdot_it = mdot_f
+                              do ksub = 1, iface_pm_sub
+                                 p_applied = p_cur
+                                 mdot_it = iface_p_flux_response( mdot_it, af_f, &
+                                               p_cur, p_old_face )
+                                 un_f  = mdot_it / ( ctrl%rho * area_f )
+                                 p_f   = iface_p_momentum( p_fl, mdot_it, un_f, &
+                                                           area_f, eps_c )
+                                 p_new = iface_p_blend( p_f, p_p, iface_p_w )
+                                 om_p  = 1.0_dp / ( 1.0_dp + gain_f )
+                                 p_cur = p_cur + om_p * ( p_new - p_cur )
+                                    p_old_face = p_applied
+                              end do
+                           end if
+                        end if
+
+                        ! cold-start ramp / under-relaxation: reuse the interface
+                        ! velocity omega (iface_relax, iface_ramp).  The
+                        ! fallback (omega -> 0) is the CURRENT cell pressure,
+                        ! i.e. the legacy zero-gradient treatment, so the
+                        ! Dirichlet constraint is phased in gradually instead of
+                        ! being applied at full strength on a cold field.
+                        p_dir_bc(fi) = omega * p_cur &
+                                     + (1.0_dp - omega) * fld%p(c0)
+
+                        ! ---- iface_slip = bj: tangential stress-jump friction
+                        ! (Beavers-Joseph / Ochoa-Tapia-Whitaker; the same
+                        ! series-resistance law the solver applies to internal
+                        ! fluid/porous faces via bj_alpha, see mod_iface_law and
+                        ! cases/beavers_joseph).  The momentum assembly turns
+                        ! this conductance into a tangential Robin term; only
+                        ! the tangential part of the peer velocity is used.
+                        if ( iface_slip == 1 ) then
+                           lam_c = sqrt( max( dot_product( fld%perm_dir(:,c0), &
+                                                           nhat**2 ), 0.0_dp ) )
+                           if ( iface_slip_alpha > 0.0_dp ) then
+                              bja_c = iface_slip_alpha
+                           else
+                              bja_c = fld%bj_alpha(c0)
+                              if ( bja_c <= 0.0_dp ) bja_c = 1.0_dp
+                           end if
+                           ! The peer-side gap d_f is not part of the exchange
+                           ! protocol; assume the peer resolves the interface
+                           ! with a gap comparable to the slab's (d_f = d_p).
+                           if ( iface_slip == 1 ) then
+                              ! stress jump (Beavers-Joseph / Ochoa-Tapia)
+                              c_slip(fi) = iface_slip_conductance( area_f, dp_g, &
+                                               dp_g, lam_c, ctrl%mu, bja_c, eps_c )
+                           else
+                              ! tangential velocity continuity: flush (no-slip)
+                              ! porous-side conductance C = mu_e*A/d_p, which is
+                              ! the alpha -> infinity limit of the same law
+                              c_slip(fi) = ( ctrl%mu / eps_c ) * area_f / dp_g
+                           end if
+                           u_peer(:,fi) = su(:,fi)
+                           c_mean = c_mean + c_slip(fi)
+                           c_max  = max( c_max, c_slip(fi) )
+                        end if
+
+                        dp_corr = max( dp_corr, abs( p_cur - fld%p(c0) ) )
+                        p_sum  = p_sum + p_dir_bc(fi)
+                        fl_sum = fl_sum + mdot_f
+                     end do
+
+                     c_mean = c_mean / real( max(n_uns_faces,1), dp )
+                     call set_interface_p( bcs, ifaces, p_dir_bc )
+                     if ( iface_slip == 1 ) &
+                        call set_interface_slip( bcs, ifaces, c_slip, u_peer )
+
+                     if ( iter <= 8 .or. mod(iter,25) == 0 ) then
+                        write(*,'(a,i0,a,5es12.4)') '[uns rank ', rank, &
+                           '] iface p-dir: p_bc(gauge) p_fl dp_corr mdot_sum area =', &
+                           p_sum / real(max(n_uns_faces,1),dp), &
+                           sum(sp)/real(max(n_uns_faces,1),dp) - rr%p_ref, &
+                           dp_corr, fl_sum, sum( g%area(ifaces) )
+                        if ( iface_p_model == 2 ) &
+                           write(*,'(a,i0,a,2es12.4)') '[uns rank ', rank, &
+                              '] iface p-mdot: G_max, 1/(1+G) =', g_max, &
+                              1.0_dp/(1.0_dp+g_max)
+                        if ( iface_slip == 1 ) &
+                           write(*,'(a,i0,a,2es12.4)') '[uns rank ', rank, &
+                              '] iface slip: mean/max C [kg/s] =', c_mean, c_max
+                     end if
+                     deallocate( p_dir_bc, c_slip, u_peer )
+                  end block
+               end if
                call set_interface_vel( bcs, ifaces, su_bc )
-               call set_interface_T( bcs, ifaces, sT )
+               ! ---- Zhang 2011 Eqs.27-29: per-phase interface temperature ----
+               ! The peer's near-interface temperature T_flP (sT) plus the slab
+               ! cell values (T_f, T_s) are solved simultaneously for the three
+               ! interface temperatures: T_fl (the clear-fluid value = the
+               ! volume average <T>^p), T_fi and T_si (the porous phases).
+               ! Imposing T_fi on the fluid-phase equation and T_si on the
+               ! solid-phase one makes the phase fluxes eps*F and (1-eps)*F,
+               ! i.e. the Zhang Eq.28/29 porosity split, with no extra source
+               ! term.  Under LTE the closure degenerates to the legacy single
+               ! Dirichlet value, so nothing changes there.
+               if ( iface_t_model == 1 .and. iface_t_ltne_is_on() .and. &
+                    n_uns_faces > 0 ) then
+                  block
+                     integer  :: fi4, kf4, c04
+                     real(dp) :: dp4, df4, e4, kf4v, kfe4, kse4
+                     real(dp) :: Tfl4, Tfi4, Tsi4, F4
+                     real(dp), allocatable :: Tf_bc(:), Ts_bc(:)
+                     allocate( Tf_bc(n_uns_faces), Ts_bc(n_uns_faces) )
+                     do fi4 = 1, n_uns_faces
+                        kf4  = ifaces(fi4)
+                        c04  = m%f(kf4)%c0
+                        dp4  = norm2( g%xf(:,kf4) - g%xc(:,c04) )
+                        df4  = iface_df_ratio * dp4
+                        e4   = max( fld%porosity(c04), 1.0e-6_dp )
+                        kf4v = max( ctrl%k_cond, 0.0_dp )
+                        kfe4 = e4 * kf4v
+                        kse4 = ( 1.0_dp - e4 ) * fld%k_s(c04)
+                        call iface_zhang_T( sT(fi4), fld%T(c04), fld%T_s(c04), &
+                                            e4, kf4v, kfe4, kse4, df4, dp4, &
+                                            Tfl4, Tfi4, Tsi4, F4 )
+                        Tf_bc(fi4) = Tfi4
+                        Ts_bc(fi4) = Tsi4
+                     end do
+                     call set_interface_T_ltne( bcs, ifaces, Tf_bc, Ts_bc )
+                     deallocate( Tf_bc, Ts_bc )
+                  end block
+               else
+                  call set_interface_T( bcs, ifaces, sT )
+               end if
                deallocate( su_bc )
             end if
          end if
@@ -521,6 +908,37 @@ contains
 
          ! extract interface state for next exchange
          call uns_solver_extract_iface( m, g, bcs, fld, ifaces, irho, iu, iT, ip, ier, ctrl%rho )
+         ! ---- Zhang 2011 Eq.27: what the clear-fluid side must see ----------
+         ! The fluid side may NOT be handed the porous FLUID-phase temperature:
+         ! Eq.27 makes the interface temperature it sees the porosity-weighted
+         ! VOLUME AVERAGE of the two porous phases,
+         !    T_fl = <T>^p = eps <T_f>^f + (1-eps) <T_s>^s,
+         ! with the flux split eps*F / (1-eps)*F solved from Eqs.28-29.  The
+         ! same three-equation solve as on the BC side is therefore repeated
+         ! here (same inputs: the peer value sT, the slab cell state, the local
+         ! conductivities) and its T_fl replaces the extracted value.  Under
+         ! LTE this is the identity T_f = T_s = T, i.e. bit-identical legacy.
+         if ( iface_t_model == 1 .and. iface_t_ltne_is_on() .and. &
+              size(ifaces) > 0 ) then
+            block
+               integer  :: fi5, kf5, c05
+               real(dp) :: dp5, df5, e5, kf5v
+               real(dp) :: Tfl5, Tfi5, Tsi5, F5
+               do fi5 = 1, size(ifaces)
+                  kf5  = ifaces(fi5)
+                  c05  = m%f(kf5)%c0
+                  dp5  = norm2( g%xf(:,kf5) - g%xc(:,c05) )
+                  df5  = iface_df_ratio * dp5
+                  e5   = max( fld%porosity(c05), 1.0e-6_dp )
+                  kf5v = max( ctrl%k_cond, 0.0_dp )
+                  call iface_zhang_T( sT(fi5), fld%T(c05), fld%T_s(c05), &
+                                      e5, kf5v, e5*kf5v, &
+                                      (1.0_dp-e5)*fld%k_s(c05), df5, dp5, &
+                                      Tfl5, Tfi5, Tsi5, F5 )
+                  iT(fi5) = Tfl5          ! Eq.27 value for the fluid side
+               end do
+            end block
+         end if
          if ( size(ifaces) > 0 .and. (mod(iter,25)==0 .or. iter==1 .or. iter==n_couple) ) then
             write(*,'(a,i0,a,i0,a,3es12.4)') '[uns rank ', rank, '] diag iter ', iter, &
                   ' uns SI: mean u_x, mean p(gauge), |u|max =', &

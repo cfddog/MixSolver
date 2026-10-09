@@ -1043,20 +1043,80 @@ contains
 
          select case ( bcs%gb(gi)%btype )
          case ( BC_WALL, BC_SYMMETRY, BC_VINLET, BC_VINLET_PARAB, BC_SLIPWALL, &
-                BC_MASSINLET, BC_INTERFACE )
+                BC_MASSINLET )
             ! fixed face velocity: implicit diffusion (+outflow safety);
             ! (VINLET_PARAB: same Dirichlet treatment, face value = parabolic
             !  profile along the inward normal)
             ! (MASSINLET: uf = -(mdot/rho) n, prescribed normal inflow)
-            ! (INTERFACE: velocity is Dirichlet-set by the coupling peer;
-            !  without this branch the prescribed velocity never enters the
-            !  momentum matrix -- the first cell layer sees only the PPE
-            !  flux and settles to ~half the face velocity, producing a
-            !  spurious factor-of-two across the coupling interface)
             ! NB: the diagonal is written from ap() in the relaxation loop
             ! below, so boundary contributions must go into ap(c0)
             ap(c0) = ap(c0) + D + max( F, 0.0_dp )
             rhs(c0) = rhs(c0) + D*uf(comp) - F*uf(comp)
+         case ( BC_INTERFACE )
+            if ( .not. iface_p_is_dirichlet() ) then
+               ! Legacy velocity-Dirichlet interface (iface_p_model = grad0):
+               ! the peer supplies the whole face velocity vector.  Without
+               ! this branch the prescribed velocity never enters the momentum
+               ! matrix -- the first cell layer sees only the PPE flux and
+               ! settles to ~half the face velocity, producing a spurious
+               ! factor-of-two across the coupling interface.
+               ! Phase-14 (iface_velocity = zhang, Eqs.22/25/26): the interface
+               ! velocity is a VISCOUS closure value, so the mass-flux (upwind)
+               ! term must carry the interior value on outflow and the
+               ! prescribed value only on inflow: rhs += D*uf - min(F,0)*uf.
+               ! With the legacy form (-F*uf) the whole prescribed vector --
+               ! including the O(10 m/s) tangential slip of Eq.26 -- is
+               ! convected into the first slab cell with weight F >> D, which
+               ! drags the slab toward the free stream (measured |u|max ->
+               ! 100 m/s on C_P_test).  The legacy path is left untouched.
+               ap(c0) = ap(c0) + D + max( F, 0.0_dp )
+               if ( iface_zhang_vel_is_on() ) then
+                  rhs(c0) = rhs(c0) + D*uf(comp) - min( F, 0.0_dp )*uf(comp)
+               else
+                  rhs(c0) = rhs(c0) + D*uf(comp) - F*uf(comp)
+               end if
+            else
+               ! Phase 14 (iface_p_model = dirichlet|momentum): PRESSURE is the
+               ! interface constraint (bc_face_p returns bcs%iface_p), so the
+               ! interface velocity must NOT be Dirichlet on the same faces.
+               ! The normal component is treated exactly like a pressure outlet
+               ! (upwind split of the extrapolated face velocity; the flux
+               ! follows from the PPE), and the interface mass flux is thus
+               ! solved from continuity instead of being imposed + patched.
+               ap(c0)  = ap(c0) + max( F, 0.0_dp )
+               rhs(c0) = rhs(c0) - min( F, 0.0_dp ) * fld%u(comp,c0)
+
+               ! iface_slip = bj: tangential stress jump (Beavers-Joseph /
+               ! Ochoa-Tapia-Whitaker) on top of the pressure-Dirichlet normal
+               ! part.  Vector form F_t = C*(u_peer,t - u_t) with
+               ! C = bcs%iface_slip_C (mod_iface_law).  Component c of the
+               ! tangential projection reads
+               !   F_c = C[ u_peer_t,c - (u_c - (u.n)n_c) ]
+               ! with u_peer_t,c = u_peer_c - (u_peer.n)n_c, so
+               !   ap  += C*(1 - n_c^2)                     (+rhs, implicit part)
+               !   rhs += C*u_peer_t,c                       (peer target)
+               !   rhs += C*n_c*sum_{k/=c} u_k*n_k           (lagged u.n term)
+               ! For a face normal aligned with a coordinate axis the lagged
+               ! term vanishes and the expression is exact; it is deferred
+               ! (lagged) otherwise, consistent with the internal bj_alpha
+               ! branch further down.
+               if ( iface_slip_is_on() ) then
+                  block
+                     real(dp) :: nh2(3), un_own, un_peer, ct
+                     ct  = bcs%iface_slip_C(i)
+                     if ( ct > 0.0_dp ) then
+                        nh2     = g%sf(:,i) / g%area(i)
+                        un_own  = dot_product( fld%u(:,c0), nh2 )
+                        un_peer = dot_product( bcs%iface_peer_vel(:,i), nh2 )
+                        ap(c0)  = ap(c0) + ct * ( 1.0_dp - nh2(comp)**2 )
+                        rhs(c0) = rhs(c0) + ct * &
+                                  ( bcs%iface_peer_vel(comp,i) - un_peer*nh2(comp) )
+                        rhs(c0) = rhs(c0) + ct * nh2(comp) * &
+                                  ( un_own - fld%u(comp,c0)*nh2(comp) )
+                     end if
+                  end block
+               end if
+            end if
          case ( BC_POUTLET, BC_OUTFLOW )
             ! extrapolated face velocity u_f = u_P (first order), upwind split:
             ! outflow (F>0) is implicit; reversed inflow (F<0) must stay
@@ -1426,8 +1486,7 @@ contains
             ! full cell mass imbalance.
             gi = bcs%fgrp(i)
             if ( gi > 0 ) then
-               if ( bcs%gb(gi)%btype == BC_POUTLET .or. &
-                    bcs%gb(gi)%btype == BC_FARFIELD ) then
+               if ( bc_face_p_dirichlet( bcs, i ) ) then
                   dbf = g%vol(c0) / fld%apc(c0)
                   dn  = norm2( g%xf(:,i) - g%xc(:,c0) )
                   af  = ctrl%rho * dbf * g%area(i) / dn
@@ -1466,8 +1525,7 @@ contains
          if ( m%f(i)%c1 == 0 ) then
             gi = bcs%fgrp(i)
             if ( gi > 0 ) then
-               if ( bcs%gb(gi)%btype == BC_POUTLET .or. &
-                    bcs%gb(gi)%btype == BC_FARFIELD ) has_pdir = .true.
+               if ( bc_face_p_dirichlet( bcs, i ) ) has_pdir = .true.
             end if
          end if
       end do
@@ -1520,8 +1578,7 @@ contains
          else
             gi = bcs%fgrp(i)
             if ( gi > 0 ) then
-               if ( bcs%gb(gi)%btype == BC_POUTLET .or. &
-                    bcs%gb(gi)%btype == BC_FARFIELD ) then
+               if ( bc_face_p_dirichlet( bcs, i ) ) then
                   phif(i) = 0.0_dp
                   cycle
                end if
@@ -1561,8 +1618,7 @@ contains
             ! velocity inlets) keep F'_f = 0.
             gi = bcs%fgrp(i)
             if ( gi > 0 ) then
-               if ( bcs%gb(gi)%btype == BC_POUTLET .or. &
-                    bcs%gb(gi)%btype == BC_FARFIELD ) then
+               if ( bc_face_p_dirichlet( bcs, i ) ) then
                   c0  = m%f(i)%c0
                   dbf = g%vol(c0) / fld%apc(c0)
                   dn  = norm2( g%xf(:,i) - g%xc(:,c0) )
@@ -1909,7 +1965,8 @@ contains
          gi = bcs%fgrp(i)
          if ( gi == 0 ) cycle
          c0 = m%f(i)%c0
-         call bc_face_T( bcs, i, g%xf(:,i), fld%T_s(c0), T_face, q_face, is_neumann )
+         call bc_face_T( bcs, i, g%xf(:,i), fld%T_s(c0), T_face, q_face, &
+                         is_neumann, phase = 2 )
          ! The solid phase has no through-flow: at flow-inlet faces the shared
          ! thermal BC does not apply -- use an adiabatic (zero-flux) condition.
          if ( bcs%gb(gi)%btype == BC_VINLET .or. &

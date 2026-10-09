@@ -1,6 +1,28 @@
 # 当前上下文 (activeContext)
 
-> 最后更新：2026-10-09（**`C_P_test` 板内 `Tmin=286 K` 根因闭环**：能量方程"定温＋出流"边界面把流出焓扣了两次，`- FT*T_face` → `- min(FT,0)*T_face` 一行修复后两侧界面温度 300.1/286.5 → **300.13/300.12 K**）
+> 最后更新：2026-10-09（**阶段 14：按 Zhang 2011 §3.5.1 Eq.22–29 实现界面速度/温度封闭**，
+> `iface_velocity=zhang` + `iface_t_model=zhang`，全部 opt-in；C_P_test 30 步稳定、
+> 界面滑移 0.40→5.4 m/s 为物理 BJ 量级）
+
+> **2026-10-09 🆕 阶段 14 —— Zhang 2011 界面封闭（opt-in，旧路径位级不变）**：
+> - **速度（Eq.22/25/26）**：`mod_iface_law:iface_zhang_velocity` 给出两侧**共用**的
+>   界面速度：法向＝导纳加权调和平均（Eq.25），切向＝Ochoa-Tapia--Whitaker 应力跳变
+>   （Eq.26，`β`=过量黏性、`β1`=过量惯性，二次式取稳定根）。开关 `iface_velocity=zhang`
+>   ＋ `iface_beta/beta1/df_ratio`。
+> - **温度（Eq.27–29）**：`iface_zhang_T` 联立解出三个界面温度，流体侧看到的
+>   $T_{fl}=\langle T\rangle^p=\varepsilon T_f+(1-\varepsilon)T_s$（**体积平均**，
+>   不是任一相温度），热流按孔隙率分成 $\varepsilon F$、$(1-\varepsilon)F$ 给两相。
+>   开关 `iface_t_model=zhang`（LTE 退化为原值；LTNE 需 `bc_face_T(...,phase=2)`）。
+> - **离散要点**：界面是黏性封闭值不是对流入流 ⇒ 新增 `iface_zhang_vel` 让动量装配
+>   用 `-min(F,0)*uf`（否则 $F\gg D$ 把滑移对流入板内，实测 $|u|_{\max}\to100$ 发散）。
+> - **验证**：`make iface_law_test` 11/11 PASS；C_P_test `mix_f_zhang.control`
+>   （$d_f/d_p=50$、$\omega=0.4$）30 步稳定、界面质量残差 0.3%、结构侧界面压力/温度与
+>   基线一致；`runF60_zhang.log` 续跑 60 步核查滑移收敛。
+> - **遗留**：① $d_f$（对侧首层间距）应进交换协议（现为 `iface_df_ratio` 手调）；
+>   ② LTNE 跨组界面尚缺算例验证；③ 动量装配 `-F*uf → -min(F,0)*uf` 的通用修复
+>   （能量方程已修的同族缺陷）在旧路径仍未动（现由 `iface_zhang_vel` 开关局部启用）。
+
+
 
 > **2026-10-09 ✅ `C_P_test` 多孔板 `Tmin=286 K` 根因＝能量方程假热汇（源码修复 + 三层验证）**：
 > **症状**：入口 300 K、界面 Dirichlet 300 K、壁面绝热，板内却出现 286 K；两侧界面温度

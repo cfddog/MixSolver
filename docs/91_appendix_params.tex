@@ -238,6 +238,29 @@
 发展型出口＋总通量配平（低渗多孔板推荐）\\
 \texttt{iface\_p\_anchor} & 0 & $1$ = 每个耦合步把非结构侧表压基准平移对齐到结构侧界面压力
 （纯 Neumann PPE 的压力基准是自由参数，会对漂）\\
+\texttt{iface\_p\_model} & grad0 & 界面\textbf{压力}模型（阶段 14）：\texttt{grad0}＝零梯度（旧行为，纯 Neumann PPE
+＋ \texttt{iface\_p\_anchor}/\texttt{du\_n} 配平）；\texttt{dirichlet}＝把对侧界面压力按面作 Dirichlet
+（PPE 良态、界面质量流由连续性解出）；\texttt{momentum}＝再加 Betchen 2006 Eq.43/44 法向动量修正 \\
+\texttt{iface\_pm\_subiter} & 0 & \texttt{momentum} 模式下 $p$--$\dot m$ 子迭代步数（$0$＝纯延迟；$>0$ 时用
+$\omega=1/(1+G)$ 阻尼子迭代，$G$ 为局部回路增益，$G>1$ 自动退化为延迟） \\
+\texttt{iface\_p\_blend} & 0.5 & 界面压力两侧倒距估计的混合权重（多孔侧权重 $w$） \\
+\texttt{iface\_slip} & off & 界面\textbf{切向}处理（阶段 14）：\texttt{off}；\texttt{bj}＝
+Beavers--Joseph/应力跳变 Robin 通量 $C=\mu A/(d_f+\sqrt K/\alpha+\varepsilon d_p)$；
+\texttt{noslip}＝切向速度连续（flush 导纳 $C=\mu_e A/d_p$） \\
+\texttt{iface\_slip\_alpha} & $-1$ & BJ 滑移系数 $\alpha$（$<0$＝取相邻多孔单元 \texttt{bj\_alpha} 均值，再退化为 1） \\
+\texttt{iface\_velocity} & full & 非结构侧界面速度处理：\texttt{full}＝整矢量施加（旧行为）；
+\texttt{normal}＝只取界面对流法向分量、切向取零梯度；\texttt{balance}＝忽略对侧速度，界面按自身
+发展型出口＋总通量配平（低渗多孔板推荐）；\texttt{zhang}＝
+\textbf{Zhang 2011 Eq.22/25/26}：法向应力平衡（两侧距离加权调和平均）＋切向应力跳变
+（Ochoa-Tapia--Whitaker，系数 $\beta,\beta_1$），两侧共用一个界面速度矢量（阶段 14） \\
+\texttt{iface\_t\_model} & off & 界面\textbf{温度}模型（阶段 14）：\texttt{off}＝单一 Dirichlet；
+\texttt{zhang}＝\textbf{Zhang 2011 Eq.27--29}：流体侧看到孔隙率体积平均
+$T_{fl}=\langle T\rangle^p=\varepsilon\langle T_f\rangle^f+(1-\varepsilon)\langle T_s\rangle^s$，
+热流按面积比（孔隙率）分配给两相（LTNE 用；LTE 下退化为原值） \\
+\texttt{iface\_beta} & 0 & Eq.26 过量黏性应力跳变系数 $\beta$（$0$＝取 $\varepsilon\alpha_{BJ}$） \\
+\texttt{iface\_beta1} & 0 & Eq.26 过量惯性系数 $\beta_1$（$0$＝线性 Beavers--Joseph） \\
+\texttt{iface\_df\_ratio} & 1.0 & Eq.25/26 对侧间隙比 $d_f/d_p$（交换协议不含 $d_f$；按对侧界面网格尺度取，
+C\_P\_test 取 $\approx 50$） \\
 \texttt{save\_interval} & 0 & 每 N 个耦合步存档（\texttt{flow3d.dat} ＋ 耦合状态）；0 = 不存档。\textbf{复现算例须设 $\le$ \texttt{n\_couple}} \\
 \texttt{couple\_restart} & 0 & 1 = 联合重启：结构侧强制从 \texttt{flow3d.dat} 续算，非结构侧从耦合状态续算 \\
 \end{longtable}

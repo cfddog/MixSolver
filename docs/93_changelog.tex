@@ -31,7 +31,38 @@
 \endhead
 \bottomrule
 \endlastfoot
-2026-10-09 & 13 &
+2026-10-09 & 14 &
+\textbf{Zhang 2011 界面封闭（阶段 14，全部 opt-in）}：把流固界面封闭改为按文献实现。
+① 界面\textbf{速度} \texttt{iface\_velocity=zhang}：两侧共用同一界面速度（Eq.22），法向由
+两侧法向应力平衡给出（Eq.25，倒数距离加权调和平均），切向由 Ochoa-Tapia--Whitaker
+应力跳变给出（Eq.26，含过量黏性 $\beta$ 与惯性 $\beta_1$ 项，二次式取稳定根）——这正是
+此前 ``必须用 balance'' 的文献替代（$\beta\to0$ 退化为应力连续的调和平均，$\beta\to\infty$
+为无滑移）。② 界面\textbf{温度} \texttt{iface\_t\_model=zhang}：Eq.27--29，流体侧看到的
+界面温度是孔隙率\textbf{体积平均}
+$T_{fl}=\langle T\rangle^p=\varepsilon\langle T_f\rangle^f+(1-\varepsilon)\langle T_s\rangle^s$
+（既非 $T_f$ 也非 $T_s$ 单相温度），热流按面积比（孔隙率）分给两相（LTNE；LTE 下退化为原
+Dirichlet）。③ 新增开关 \texttt{iface\_p\_model}(grad0/dirichlet/momentum)、
+\texttt{iface\_slip}(off/bj/noslip)、\texttt{iface\_beta}/\texttt{beta1}/\texttt{df\_ratio}，
+并把闭式解集中到 \texttt{mod\_iface\_law}。\textbf{默认全关}（\texttt{iface\_velocity=full}、
+\texttt{iface\_t\_model=off}），旧路径位级不变。 &
+\texttt{src/common/mod\_iface\_law.f90},
+\texttt{src/common/mod\_reference\_state.f90},
+\texttt{src/unstructured/mod\_uns\_bc.f90},
+\texttt{src/unstructured/mod\_uns\_simple.f90},
+\texttt{src/main.f90} &
+\texttt{make iface\_law\_test}：$7\to11$ 项全 PASS（新增 Eq.25 调和平均与
+$d_f\!\to\!\infty/d_p\!\to\!0$ 极限、Eq.26 的 $\beta$/$ \beta_1$/无实根退化、Eq.22 矢量重构、
+Eq.27--29 的 $\varepsilon T_{fi}+(1-\varepsilon)T_{si}=T_{fl}$ 与能量守恒
+$k_{fe}\Delta T_f+k_{se}\Delta T_s=k_f\Delta T_{fl}$、LTE 退化为串阻调和平均）；
+\texttt{C\_P\_test} \texttt{iface\_velocity=zhang}（$d_f/d_p=50$、$\omega=0.4$）30 耦合步
+无发散：$|u|_{\max}$ $0.40\to5.4$ m/s（物理 BJ 滑移量级，对比 \texttt{balance} 基线
+$0.30$ m/s、\texttt{iface\_slip=bj} 的 $42$ m/s 发散），界面质量配平
+$\dot m$ 残差 $6.9\times10^{-4}$（通量的 $0.3\%$），结构侧界面 $p=1.0148\times10^5$ Pa
+与基线一致；\textbf{回归}：旧配置重跑（\texttt{mix.control}，30 耦合步）与基线日志的
+全部数值诊断行 \texttt{diff} \textbf{为 0}（仅多一行 \texttt{iface\_t\_model} 报告、MPI
+输出交错顺序不同），即旧路径位级不变；60 耦合步续跑（\texttt{mix\_f\_zhang60}）滑移
+$0.40\to9.3$ m/s \textbf{单调、增速递减}（$+0.167$ 步$^{-1}$$\to$$+0.126$ 步$^{-1}$）
+⇒ 稳定但收敛慢（$d_f$ 进入交换协议后可望完全收敛）；串行/MPI 全构建 rc=0。 \\
 \textbf{修复非结构能量方程 ``定温 $+$ 出流'' 边界面的双计焓假热汇}：边界循环对
 Dirichlet 面无条件写 \texttt{rhs += DT*T\_face - FT*T\_face}，而出流
 （$FT>0$）时迎风值本就是内部 $T_{c0}$（已由 \texttt{ap += max(FT,0)} 隐式计入），
