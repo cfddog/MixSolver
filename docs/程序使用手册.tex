@@ -435,6 +435,16 @@ $\mu=1.846\times10^{-5}$ Pa$\cdot$s 对应 300 K、1 atm）。
         \texttt{cases/betchen}）用它直接给出 $u(y)=6U_0y/H(1-y/H)$，
         省掉``均匀入口 + 长发展段''的做法；解析/数值验证见
         \texttt{cases/betchen/README.md} \S3.4。
+  \item \textbf{定温边界面的对流出流项}（2026-10-09 修复）：贴 Dirichlet 温度面的
+        单元，其\textbf{出流}焓按\textbf{内部迎风值}隐式计入（$T_{c0}$），
+        \textbf{入流}焓才按面值 $T_{\rm face}$ 计入。历史实现把两者同时计入
+        （多出一次 $-\texttt{FT*T\_face}$），等价于一个与流出焓同量级的
+        \textbf{假热汇}，会把贴面第一层单元压到所有边界温度之下
+        （症状：入口/界面/绝热壁全 300 K 而板内出现 286 K）。只影响
+        \textbf{定温 $+$ 出流}的边界面（如耦合界面 \texttt{BC\_INTERFACE}，
+        或把 \texttt{velocity-inlet} 当出口用），常规
+        \texttt{pressure-outlet}/\texttt{outflow} 不受影响。
+        详见 \texttt{docs/93\_changelog.tex} 2026-10-09 条。
 \end{itemize}
 
 \subsection{MPI 分区与重启动}
