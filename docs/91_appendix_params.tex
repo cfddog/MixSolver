@@ -227,12 +227,36 @@
 \texttt{n\_couple} & 3     & 弱耦合迭代次数（每个耦合步 = 两侧各推进若干子步） \\
 \texttt{n\_uns\_steps} & 50 & 每个耦合步内非结构侧 SIMPLE 外迭代次数 \\
 \texttt{n\_struct\_steps} & 1 & 每个耦合步内结构侧伪时间子步数 \\
+\texttt{n\_struct\_steps\_start} & 0 & 启动降频调度：结构侧冷启动子步数，每
+\texttt{step\_decay\_every} 个耦合步折半，直到 \texttt{n\_struct\_steps}（$0$ = 恒定步频）\\
+\texttt{n\_uns\_steps\_start} & 0 & 同上，非结构侧（$0$ = 恒定步频）\\
+\texttt{step\_decay\_every} & 1 & 折半周期（耦合步数）\\
 \texttt{iface\_relax} & 1.0 & 非结构侧界面速度欠松弛因子：$u_{BC} = \omega u_{struct} + (1-\omega) u_{uns}$ \\
 \texttt{iface\_ramp} & 1  & $\omega$ 的线性爬升步数：$\omega = \texttt{iface\_relax}\cdot\min(1, iter/\texttt{iface\_ramp})$ \\
+\texttt{iface\_velocity} & full & 非结构侧界面速度处理：\texttt{full}＝整矢量施加（旧行为）；
+\texttt{normal}＝只取界面对流法向分量、切向取零梯度；\texttt{balance}＝忽略对侧速度，界面按自身
+发展型出口＋总通量配平（低渗多孔板推荐）\\
+\texttt{iface\_p\_anchor} & 0 & $1$ = 每个耦合步把非结构侧表压基准平移对齐到结构侧界面压力
+（纯 Neumann PPE 的压力基准是自由参数，会对漂）\\
 \texttt{save\_interval} & 0 & 每 N 个耦合步存档（\texttt{flow3d.dat} ＋ 耦合状态）；0 = 不存档。\textbf{复现算例须设 $\le$ \texttt{n\_couple}} \\
 \texttt{couple\_restart} & 0 & 1 = 联合重启：结构侧强制从 \texttt{flow3d.dat} 续算，非结构侧从耦合状态续算 \\
 \end{longtable}
 }
+
+\paragraph{启动降频调度（阶段 13）}
+当 \texttt{n\_*\_steps\_start} $>$ \texttt{n\_*\_steps} 时，该侧每个耦合步的内步数按
+$n(iter) = \max(n_{target},\, n_{start}/2^{\lfloor (iter-1)/\texttt{step\_decay\_every}\rfloor})$
+几何衰减：结构与非结构\textbf{间隔轮流}推进，冷启动时交换很稀疏（例如
+$1000\to500\to250\to125\to62\to50$），随耦合步推进交换越来越频繁，最终两侧
+\textbf{步频相同}（$n_{struct}=n_{uns}$）。实现见
+\texttt{mod\_reference\_state:scheduled\_steps}；两侧缺省（$0$）时行为与旧版完全一致。
+
+\paragraph{界面压力的基准对齐}
+非结构侧对封闭多孔板是纯 Neumann PPE（除冷却剂入口与耦合界面外无压力边界），
+其\textbf{表压基准是自由参数}，会随迭代漂移；而结构侧把
+$p_{uns}^{gauge}+p_{ref}$ 当作\textbf{绝对}背压使用。基准不锁定时两侧界面压力会
+朝相反方向跑飞（结构侧"吸入"多孔板）并使耦合发散，因此对这类算例应置
+\texttt{iface\_p\_anchor = 1}（整体平移表压场，梯度/流场解不变）。
 
 由参考状态派生的量（只读，启动时打印）：
 

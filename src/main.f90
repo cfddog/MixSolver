@@ -109,7 +109,7 @@ contains
       use mod_coupling_exchange, only: exchange_struct_to_uns, recv_uns_iface_state
       use mod_interface_units, only: struct_to_SI, SI_to_struct
       use mod_reference_state, only: get_ref_state, reference_state_t, &
-                                     get_coupling_params
+                                     get_coupling_params, scheduled_steps
       implicit none
 
       integer,          intent(in) :: comm, rank, nproc
@@ -118,6 +118,7 @@ contains
       integer :: iter, iter0, n_couple, n_uns_root, ierr2
       integer :: nfaces, n_uns_recv, n_uns_steps_d, iface_ramp_d
       integer :: n_struct_steps_d, isub, save_interval, couple_restart
+      integer :: n_struct_steps_start_d, step_decay_d, n_sub
       real(dp) :: iface_relax_d
       real(dp), allocatable :: rho_nd(:), u_nd(:), v_nd(:), w_nd(:), T_nd(:), p_nd(:)
       real(dp), allocatable :: urho(:), uu(:,:), uT(:), up(:)
@@ -128,10 +129,19 @@ contains
       call get_coupling_params( n_couple, n_uns_steps_d, iface_relax_d, iface_ramp_d, &
                                 n_struct_steps = n_struct_steps_d, &
                                 save_interval = save_interval, &
-                                couple_restart = couple_restart )
+                                couple_restart = couple_restart, &
+                                n_struct_steps_start = n_struct_steps_start_d, &
+                                step_decay_every = step_decay_d )
       n_uns_root = 1   ! uns root is global rank 1 (struct is rank 0)
-      write(*,'(a,i0)') '[struct rank 0] struct pseudo-time substeps/coupling iter: ', &
-                        n_struct_steps_d
+      if ( n_struct_steps_start_d > n_struct_steps_d ) then
+         write(*,'(a,i0,a,i0,a)') '[struct rank 0] struct substeps/coupling iter: ', &
+               n_struct_steps_start_d, ' (halving every ', step_decay_d, &
+               ' coupling iter) -> steady '
+         write(*,'(a,i0)') '[struct rank 0]   steady struct substeps: ', n_struct_steps_d
+      else
+         write(*,'(a,i0)') '[struct rank 0] struct pseudo-time substeps/coupling iter: ', &
+                           n_struct_steps_d
+      end if
 
       ! joint restart: recover the last saved coupling iteration count
       iter0 = 0
@@ -188,8 +198,17 @@ contains
          end if
 
          ! advance structured solver (subcycled pseudo-time steps to keep
-         ! pace with the uns side, which takes several SIMPLE outer steps)
-         do isub = 1, n_struct_steps_d
+         ! pace with the uns side, which takes several SIMPLE outer steps).
+         ! Phase-13 start-up schedule: the sub-step count decays geometrically
+         ! (e.g. 1000, 500, 250, ...) until it reaches the steady cadence, so
+         ! the two sides exchange more and more frequently and finally at the
+         ! same frequency.
+         n_sub = scheduled_steps( iter, n_struct_steps_start_d, n_struct_steps_d, &
+                                  step_decay_d )
+         if ( n_struct_steps_start_d > n_struct_steps_d ) &
+            write(*,'(a,i0,a,i0)') '[struct rank ', rank, &
+                  '] coupling iter ', iter, ' -> struct substeps: ', n_sub
+         do isub = 1, n_sub
             call struct_solver_step()
          end do
 
@@ -268,7 +287,8 @@ contains
       use mod_uns_restart, only: write_field_dump
 #endif
       use mod_coupling_exchange, only: exchange_uns_to_struct
-      use mod_reference_state, only: get_coupling_params
+      use mod_reference_state, only: get_coupling_params, scheduled_steps, &
+                                     get_ref_state, reference_state_t
       implicit none
 
       integer,          intent(in) :: comm, rank, nproc
@@ -286,13 +306,19 @@ contains
       real(dp), allocatable :: srho(:), su(:,:), sT(:), sp(:)
       real(dp), allocatable :: su_bc(:,:)
       integer :: n_uns_faces, iface_ramp, save_interval, couple_restart
+      integer :: n_uns_steps_start, step_decay, n_uns_cur, iface_vel_mode
+      integer :: iface_p_anchor
       real(dp) :: iface_relax, omega
       logical :: has_struct
       character(len=*), parameter :: uns_dump = 'unMesh_restart.dat'
 
       call get_coupling_params( n_couple, n_uns_steps, iface_relax, iface_ramp, &
                                 save_interval = save_interval, &
-                                couple_restart = couple_restart )
+                                couple_restart = couple_restart, &
+                                n_uns_steps_start = n_uns_steps_start, &
+                                step_decay_every = step_decay, &
+                                iface_vel_mode = iface_vel_mode, &
+                                iface_p_anchor = iface_p_anchor )
       n_struct_root = 0   ! struct root is global rank 0
       ! When there is no struct group (nproc==1, n_struct_ranks==0) the
       ! exchange is skipped entirely.
@@ -332,6 +358,31 @@ contains
             call exchange_uns_to_struct(irho, iu, iT, ip, n_uns_faces, &
                                         n_struct_root, srho, su, sT, sp, ierr)
 
+            ! Optional interface pressure datum anchoring (iface_p_anchor=1).
+            ! The uns PPE is pure-Neumann (no pressure BC: the slab is closed
+            ! apart from the coolant inlet and the interface), so its gauge
+            ! level is a free parameter that drifts.  The struct consumes
+            ! (gauge + p_ref) as an ABSOLUTE back pressure, so an un-anchored
+            ! datum lets the two sides' interface pressures drift apart until
+            ! the loop goes unstable.  Shift the whole uns gauge field so the
+            ! mean interface absolute pressure equals the struct's; a constant
+            ! shift leaves every gradient (i.e. the uns solution) untouched.
+            if ( iface_p_anchor == 1 .and. n_uns_faces > 0 ) then
+               block
+                  type(reference_state_t) :: rr
+                  real(dp) :: p_uns_abs, p_str_abs, dp_anchor
+                  rr        = get_ref_state()
+                  p_uns_abs = sum(ip) / real(n_uns_faces, dp) + rr%p_ref
+                  p_str_abs = sum(sp) / real(n_uns_faces, dp)
+                  dp_anchor = p_str_abs - p_uns_abs
+                  fld%p     = fld%p + dp_anchor
+                  if ( iter <= 8 .or. mod(iter,25) == 0 ) &
+                     write(*,'(a,i0,a,3es12.4)') '[uns rank ', rank, &
+                        '] p-anchor: p_uns_abs, p_str_abs, shift =', &
+                        p_uns_abs, p_str_abs, dp_anchor
+               end block
+            end if
+
             ! set interface BC from struct state with under-relaxation and
             ! linear ramp over the first iface_ramp coupling iterations:
             !   omega  = iface_relax * min(1, iter/iface_ramp)
@@ -341,7 +392,42 @@ contains
                omega = iface_relax * min( 1.0_dp, &
                             real(iter,dp) / real(max(iface_ramp,1),dp) )
                allocate( su_bc(3,n_uns_faces) )
-               su_bc = omega * su + (1.0_dp - omega) * iu
+               if ( iface_vel_mode == 2 ) then
+                  ! 'balance': the peer velocity is ignored; the interface is
+                  ! the slab's own fully-developed outflow (zero gradient,
+                  ! i.e. the previous uns interface state).  Its total flux is
+                  ! then rescaled by the mass-balance correction below so that
+                  ! exactly the injected coolant leaves through it.
+                  su_bc = iu
+               else
+                  su_bc = omega * su + (1.0_dp - omega) * iu
+               end if
+               ! Optional normal-only interface velocity (iface_velocity =
+               ! normal in mix.control).  Only the interface-normal component
+               ! is taken from the peer (that is the exchanged mass flux, the
+               ! Dirichlet half of the Dirichlet-Neumann partition); the
+               ! tangential components keep the local uns interface state
+               ! (zero-gradient).  Forcing the peer free-stream tangential
+               ! slip (~100 m/s) into the porous slab would require
+               ! dp/dx = mu*u/K ~ 5e5 Pa/m and drives the coupled loop to NaN.
+               if ( iface_vel_mode == 1 ) then
+                  block
+                     integer  :: fi2, kf2
+                     real(dp) :: nvec2(3), un2, nrm2
+                     do fi2 = 1, n_uns_faces
+                        kf2   = ifaces(fi2)
+                        nvec2 = g%sf(:,kf2)
+                        nrm2  = norm2( nvec2 )
+                        if ( nrm2 > 0.0_dp ) then
+                           nvec2 = nvec2 / nrm2
+                           un2   = dot_product( su_bc(:,fi2), nvec2 )
+                           su_bc(:,fi2) = ( iu(:,fi2) &
+                                          - dot_product( iu(:,fi2), nvec2 )*nvec2 ) &
+                                          + un2 * nvec2
+                        end if
+                     end do
+                  end block
+               end if
                ! Interface partition (phase-11 flow B, Dirichlet-Neumann):
                ! the uns side imposes only the peer face VELOCITY here;
                ! interface pressure is zero-gradient (bc_face_p for
@@ -419,8 +505,14 @@ contains
             end if
          end if
 
-         ! advance unstructured solver
-         call uns_solver_step( m, c, g, ctrl, bcs, fld, n_uns_steps, ier )
+         ! advance unstructured solver (phase-13 start-up schedule may decay
+         ! n_uns_cur from n_uns_steps_start down to the steady n_uns_steps)
+         n_uns_cur = scheduled_steps( iter, n_uns_steps_start, n_uns_steps, &
+                                      step_decay )
+         if ( n_uns_steps_start > n_uns_steps ) &
+            write(*,'(a,i0,a,i0)') '[uns rank ', rank, &
+                  '] coupling iter ', iter, ' -> uns steps: ', n_uns_cur
+         call uns_solver_step( m, c, g, ctrl, bcs, fld, n_uns_cur, ier )
          if ( ier /= 0 ) then
             write(*,'(a,i0,a,i0)') '[uns rank ', rank, '] step FAILED ier=', ier
             call MPI_Abort( MPI_COMM_WORLD, ier, ierr )

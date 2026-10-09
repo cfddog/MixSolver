@@ -32,6 +32,7 @@ module mod_reference_state
    public :: reference_state_t
    public :: init_reference_state, read_mix_control
    public :: get_ref_state, get_coupling_params
+   public :: scheduled_steps
 
    ! ---------------------------------------------------------------------------
    ! reference_state_t -- runtime copy of the scaling factors
@@ -65,6 +66,45 @@ module mod_reference_state
    integer,  save :: g_n_struct_steps = 1
    real(dp), save :: g_iface_relax = 1.0_dp
    integer,  save :: g_iface_ramp  = 1
+   ! phase-13 start-up step schedule (see scheduled_steps below).  When
+   ! n_*_steps_start > n_*_steps the corresponding side starts with the large
+   ! count and halves it every g_step_decay_every coupling iterations until it
+   ! reaches the steady count.  0 (or <= target) = schedule disabled.
+   integer,  save :: g_n_struct_steps_start = 0
+   integer,  save :: g_n_uns_steps_start    = 0
+   integer,  save :: g_step_decay_every     = 1
+   ! Interface velocity treatment used by the uns side when it imposes the
+   ! peer (structured) interface state:
+   !   0 = 'full'   : impose the whole peer velocity vector (legacy).
+   !   1 = 'normal' : impose only the interface-normal component supplied by
+   !                  the peer (mass-flux / Dirichlet-Neumann partition) and
+   !                  take the tangential components from the local uns
+   !                  interface state (zero-gradient).  This is the
+   !                  physically consistent condition for a low-permeability
+   !                  porous medium: the Darcian resistance cannot sustain the
+   !                  free-stream tangential slip (~100 m/s), and forcing it
+   !                  demands dp/dx = mu*u/K ~ 5e5 Pa/m -> divergence.
+   !   2 = 'balance': ignore the peer velocity entirely and treat the interface
+   !                  as a fully-developed outflow of the slab (own previous
+   !                  interface state, zero gradient); the total interface
+   !                  flux is then rescaled by the existing mass-balance
+   !                  correction so that it exactly matches the coolant
+   !                  injection.  Avoids the conflict between the peer normal
+   !                  velocity and the flux correction (mode 1 imposes both on
+   !                  the same quantity and the two fight each other).
+   integer,  save :: g_iface_vel_mode = 0
+   ! Interface pressure datum anchoring (opt-in, default off):
+   ! The uns PPE has no pressure boundary (pure Neumann: the slab is closed
+   ! except the coolant inlet and the coupling interface), so its gauge
+   ! pressure level is an arbitrary free parameter that drifts during the
+   ! run.  The struct, however, uses (uns gauge + p_ref) as an ABSOLUTE
+   ! back pressure, so an un-anchored datum makes the two sides' interface
+   ! pressures diverge (struct sucks / pressurises) and the loop blows up.
+   ! When enabled, the whole uns gauge field is shifted every coupling
+   ! iteration so that the mean interface absolute pressure matches the
+   ! struct's -- a pure datum shift, the gradients (and hence the uns
+   ! solution) are unchanged.
+   integer,  save :: g_iface_p_anchor = 0
    ! phase-10 auto-save / joint restart
    integer,  save :: g_save_interval = 0   ! 0 = off, >0 = save every N coupling iters
    integer,  save :: g_couple_restart = 0  ! 0 = cold start, 1 = joint restart
@@ -88,11 +128,21 @@ contains
    ! the global reference state.  Missing keys keep their default value; an
    ! absent file is not an error (defaults are used).
    !
-   ! Recognised keys (phase-5 minimal set; coupling iter params added phase 6):
+   ! Recognised keys (phase-5 minimal set; coupling iter params added phase 6;
+   ! phase-13 start-up step schedule added at the end):
    !   rho_ref = <real>   [kg/m^3]
    !   T_ref   = <real>   [K]
    !   L_ref   = <real>   [m]
    !   u_ref   = <real>   [m/s]  (optional; 0 => sonic reference)
+   !   n_couple            = <int>
+   !   n_uns_steps         = <int>   steady SIMPLE steps per coupling iteration
+   !   n_struct_steps      = <int>   steady struct substeps per coupling iteration
+   !   n_struct_steps_start= <int>   cold-start struct substeps; halved every
+   !                                 step_decay_every coupling iterations down
+   !                                 to n_struct_steps (0 = constant cadence)
+   !   n_uns_steps_start   = <int>   same, unstructured side (0 = off)
+   !   step_decay_every    = <int>   halving period in coupling iterations [1]
+   !   iface_relax, iface_ramp, save_interval, couple_restart
    !---------------------------------------------------------------------------
    subroutine read_mix_control( filename, ier )
       character(len=*), intent(in)  :: filename
@@ -148,6 +198,35 @@ contains
             read( val, *, iostat = ios ) g_n_uns_steps
          case ( 'n_struct_steps' )
             read( val, *, iostat = ios ) g_n_struct_steps
+         case ( 'n_struct_steps_start' )
+            read( val, *, iostat = ios ) g_n_struct_steps_start
+         case ( 'n_uns_steps_start' )
+            read( val, *, iostat = ios ) g_n_uns_steps_start
+         case ( 'step_decay_every' )
+            read( val, *, iostat = ios ) g_step_decay_every
+            if ( g_step_decay_every < 1 ) g_step_decay_every = 1
+         case ( 'iface_velocity', 'iface_vel_mode' )
+            ! 'full' (default) | 'normal' | '0' | '1'
+            select case ( trim(lowercase(adjustl(val))) )
+            case ( 'normal', 'normal-only', 'normal_only', '1' )
+               g_iface_vel_mode = 1
+            case ( 'balance', 'outflow', '2' )
+               g_iface_vel_mode = 2
+            case ( 'full', '0' )
+               g_iface_vel_mode = 0
+            case default
+               write(*,'(a)') 'WARNING: unknown iface_velocity value: ' // trim(val)
+            end select
+         case ( 'iface_p_anchor' )
+            ! 0 = off (default), 1 = on (or on/off/yes/no)
+            select case ( trim(lowercase(adjustl(val))) )
+            case ( '1', 'on', 'yes', 'true', 't' )
+               g_iface_p_anchor = 1
+            case ( '0', 'off', 'no', 'false', 'f' )
+               g_iface_p_anchor = 0
+            case default
+               read( val, *, iostat = ios ) g_iface_p_anchor
+            end select
          case ( 'iface_relax' )
             read( val, *, iostat = ios ) g_iface_relax
          case ( 'iface_ramp' )
@@ -175,6 +254,8 @@ contains
       write(*,'(a,es12.4,a)') '  p_scale = ', g_ref%p_scale, ' [Pa] (rho_ref*u_ref^2)'
       write(*,'(a,i0)')       '  save_interval = ', g_save_interval
       write(*,'(a,i0)')       '  couple_restart = ', g_couple_restart
+      write(*,'(a,i0)')       '  iface_vel_mode = ', g_iface_vel_mode
+      write(*,'(a,i0)')       '  iface_p_anchor = ', g_iface_p_anchor
       write(*,'(a)') '--- end reference state ---'
    end subroutine read_mix_control
 
@@ -190,10 +271,15 @@ contains
    ! Accessor for the coupling-loop parameters.
    !---------------------------------------------------------------------------
    subroutine get_coupling_params( n_couple, n_uns_steps, iface_relax, iface_ramp, &
-                                   n_struct_steps, save_interval, couple_restart )
+                                   n_struct_steps, save_interval, couple_restart, &
+                                   n_struct_steps_start, n_uns_steps_start, &
+                                   step_decay_every, iface_vel_mode, iface_p_anchor )
       integer,  intent(out) :: n_couple, n_uns_steps, iface_ramp
       integer,  intent(out), optional :: n_struct_steps
       integer,  intent(out), optional :: save_interval, couple_restart
+      integer,  intent(out), optional :: n_struct_steps_start, n_uns_steps_start
+      integer,  intent(out), optional :: step_decay_every
+      integer,  intent(out), optional :: iface_vel_mode, iface_p_anchor
       real(dp), intent(out) :: iface_relax
       n_couple    = g_n_couple
       n_uns_steps = g_n_uns_steps
@@ -202,7 +288,45 @@ contains
       if ( present(n_struct_steps) ) n_struct_steps = g_n_struct_steps
       if ( present(save_interval) )  save_interval  = g_save_interval
       if ( present(couple_restart) ) couple_restart = g_couple_restart
+      if ( present(n_struct_steps_start) ) n_struct_steps_start = g_n_struct_steps_start
+      if ( present(n_uns_steps_start) )    n_uns_steps_start    = g_n_uns_steps_start
+      if ( present(step_decay_every) )     step_decay_every     = g_step_decay_every
+      if ( present(iface_vel_mode) )       iface_vel_mode       = g_iface_vel_mode
+      if ( present(iface_p_anchor) )       iface_p_anchor       = g_iface_p_anchor
    end subroutine get_coupling_params
+
+   !---------------------------------------------------------------------------
+   ! scheduled_steps -- number of internal solver steps a side runs during
+   ! coupling iteration `iter` under the optional start-up (halving) schedule.
+   !
+   !   n(iter) = max( n_target, n_start / 2**((iter-1)/decay_every) )
+   !
+   ! Rationale: a large step-per-exchange ratio at cold start lets each side
+   ! settle onto its own manifold before the interface is updated, then the
+   ! ratio is halved every `decay_every` coupling iterations until both sides
+   ! exchange at the same cadence (n_start == n_target => constant cadence).
+   ! The halving is done by repeated integer division so no power of two is
+   ! ever formed (no overflow for a large iter).  n_start <= 0 (or
+   ! n_start <= n_target) disables the schedule.
+   !---------------------------------------------------------------------------
+   pure function scheduled_steps( iter, n_start, n_target, decay_every ) result( n )
+      integer, intent(in) :: iter, n_start, n_target
+      integer, intent(in), optional :: decay_every
+      integer :: n, k, every, nhalve
+
+      n = max( n_target, 0 )
+      if ( n_start <= 0 .or. n_start <= n_target ) return
+
+      every = 1
+      if ( present(decay_every) ) every = max( 1, decay_every )
+
+      nhalve = ( max(iter, 1) - 1 ) / every
+      n = n_start
+      do k = 1, nhalve
+         if ( n <= n_target ) exit
+         n = max( n_target, n / 2 )
+      end do
+   end function scheduled_steps
 
    !---------------------------------------------------------------------------
    ! Compute derived reference quantities from the independent ones.
