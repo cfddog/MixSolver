@@ -3,6 +3,127 @@
 > 规则：每次任务结束或关键决策后追加一条简要记录（日期 | 内容 | 涉及文件）。
 > 最近记录在最上方。
 
+## 2026-10-09 | 阶段 13 续：`C_P_test` 板内 `Tmin=286 K` 根因＝能量方程"定温＋出流"面双计焓（已修 + 已验证）
+
+- **起点（承接上一条遗留）**：多孔板 `Tmin=286 K` 低于全部边界温度（入口/界面/壁面
+  均 300 K），且两侧界面温度 300.1 vs 286.5 K 不一致。先查界面条件方向（`bc_face_T`
+  的 `BC_INTERFACE` 分支、`set_interface_T`、`thermal_model` 默认 `lte` 无固相耦合项），
+  再从 `run6.log` 时间线取证：**第 1 个耦合迭代**里 `sT=300/300`、`init_t=300`、
+  所有面都是 300 K，而 `it=1 dT_max=7.18 K`、`it=50 Tmin=2.86e2` ⇒ 与界面数据无关，
+  均匀 300 K 初场＋全 300 K 边界**不是**离散方程的解，说明能量装配里存在**热汇**。
+- **独立复现（关键判据）**：把算例拷到 `/tmp/probe_outflow`，把 CAS 的 zone 4
+  从 `interface` 改名 `ifaceout`（绕开自动登记）并给它
+  `bc = 4 velocity-inlet 0.3472 0.10417 0.0 300.0`（同样的出流速度＋切向滑移＋300 K
+  定温，**完全不经过耦合层**），单跑 `bin/uns_solver`：
+  `it=1 mass-imbal=7.485E-06 du_max=3.804E-01 dT_max=7.210E+00 … Tmin=2.93E+02`
+  → `it=50 … dT_max=2.362E-02 … Tmin=2.86E+02`，与耦合 run6 的 7.183/2.362/2.86
+  **逐位同量**。⇒ 缺陷在非结构求解器本身的**定温＋出流边界面**。
+- **根因（源码级）**：`mod_uns_simple.f90:1737-1740`（`temperature_assembly` 边界循环）
+  ```fortran
+  if ( .not. is_neumann ) then            ! Dirichlet（定温壁/入口/界面）
+     ap_T(c0) = ap_T(c0) + DT + max( FT, 0.0_dp )
+     rhs(c0)  = rhs(c0)  + DT*T_face - FT*T_face     ! ← 多余项
+  ```
+  `FT = cp*(rho*u.S)`，`FT>0` = 出流。出流时的迎风值就是内部值 `T_c0`，
+  已被 `ap_T += max(FT,0)` 隐式计入；再写 `- FT*T_face` 等于把流出焓**扣两次**
+  （均匀场残差 $=FT\,T_{\rm face}$）。一维纯对流 1 胞模型可手算：
+  `(D+F)T_c - (D+F)T_in = DT_face - F*T_face`，`D→0` 时给出
+  $T_c = T_{\rm in}-T_{\rm face}$（应为 $T_{\rm in}$）——即"定温出流面"必被拉低。
+  入流（`FT<0`）时 `max(FT,0)=0` 且 `-FT*T_face=+|FT|T_face` 正确，故原写法只在
+  **出流**上错；`POUTLET/OUTFLOW` 走 Neumann 分支（`ap += max(F,0)`、rhs 无对流项）
+  本就正确 —— 这也是该 bug 能长期潜伏的原因：**此前没有任何算例的出口是定温出流**
+  （`BC_INTERFACE` 是第一个）。
+- **修法（一行）**：`rhs += DT*T_face - min( FT, 0.0_dp )*T_face`（其余不动，注释写明）。
+- **验证（三层）**：
+  1. **判据算例**：修复后同一 `probe.cas` → `it=1 dT_max=2.843E-02`、
+     `Tmin=Tmax=300.00`（不变量恢复；`it=100` 后 `dT_max=0`）。
+  2. **耦合算例 run7**（`/tmp/C_P_test_work/fix_t/`，`make mpi` 重编后
+     `mpirun -np 2 bin/mixsolver_mpi mix.control Mesh3d.x control.ec unstucutred.cas unMesh.control`）：
+     `Tmin=3.00E+02`、`Tmax=3.03E+02`（此前 286.08/300.00）；板内
+     `T∈[299.63,303.46]`、体均 300.02 K；界面两侧 `T` 由 `300.13 / 286.54` 变为
+     **`300.13 / 300.12` K**（结构侧只施背压、不施对侧 T，故此一致是真一致）；
+     `du_max→1.4e-5`、`dT_max→1.1e-4`、`mass-imbal 8.8e-17`。
+     **速度/压力场与 run6 逐位相同**（界面 `mean u_x 0.299`、`|u|max 0.3154`、
+     表压 115.53--174.92 Pa、板内 `mean|u| 0.1750`）⇒ 只去掉假热汇，动量解未动。
+     物理自洽性：主流 `T_inf=309 K`、冷却剂 300 K，界面被发汗冷却到 ~300 K，
+     冷却剂在板内被加热到 303.5 K（此前 286 K 反物理）。
+  3. **回归**：`cases/porous_plug` darcy（`/tmp/reg_plug`）与仓库日志**逐位一致**
+     （101 步、`mass-imbal 1.082E-18`、`du_max 8.635E-10`、`|u|max 1.03566E-01`）；
+     `regress/m6wing/run_regression.sh` → `flow3d.dat md5
+     dc134a2d196422043ecad7c86ac8f898` = 基线，**PASS**。
+     影响面论证：改法只触碰 `FT>0` 的 Dirichlet 面——现有算例出口都是 Neumann 温度、
+     对称面 $\mathbf u_z\approx0\Rightarrow F\approx0$、`iface_T=0` 时两项本就为 0，
+     故除 `BC_INTERFACE` 外无算例受影响。
+- **遗留（已量化，未动）**：`momentum_assembly` 同址（`mod_uns_simple.f90:1058`）
+  `rhs += D*uf - F*uf` 与 `BC_FARFIELD` 入流支（L1072）是同一模式；本算例界面
+  $\dot m|u_t|\approx4.3\times10^{-4}$ N 仅为 Darcy 阻力 $3.8\times10^{-2}$ N 的
+  ~1%（$u_n=0.104$ m/s、$A=0.01$ m²、$\rho=1.177$、$u_t=0.347$、$\mu/K=4.9\times10^3$、
+  $V=2.5\times10^{-5}$ m³），故未改以免扰动已标定的界面动量/`du_n` 配平；
+  待专案评估（改法同形：`- min(F,0)*uf`；对称面 `F≈0`，回归风险低）。
+- **文档**：`docs/93_changelog.tex` 新增 2026-10-09 阶段 13 条（含①判据②耦合③回归
+  与遗留）；算例侧 `/mnt/c/temp/validate_case/C_P_test/VALIDATION_NOTES.md`
+  §3 表与 §5 改写（286 K 已闭环）。
+- **文件**：`src/unstructured/mod_uns_simple.f90`（1 行 + 注释）、
+  `docs/93_changelog.tex`、`memory-bank/{worklog,activeContext,progress}.md`；
+  算例/取证：`/tmp/probe_outflow/{probe.cas,probe.control,probe.log,probe_fixed.log}`、
+  `/tmp/C_P_test_work/fix_t/run7.log`、`/tmp/reg_plug/new.log`、`/tmp/m6reg.log`。
+
+---
+## 2026-10-09 | 阶段 13：结构/非结构"间隔轮流 + 逐步同频"步频调度 ＋ 界面耦合两项修正
+
+- **任务**：`C_P_test`（可压主流＋多孔发汗冷却板）耦合算例按
+  「先跑结构 1000 步 → 非结构 → 结构 500 步 → 非结构 …… 逐步同频」的节奏跑通。
+- **新功能：启动降频调度**（`mod_reference_state:scheduled_steps`，public）
+  - 公式 $n(iter)=\max(n_{target}, n_{start}/2^{\lfloor(iter-1)/every\rfloor})$，
+    用**反复整除**实现（不构造 $2^k$，无溢出）；`n_start<=0` 或 `<=n_target` 时调度关闭
+    ⇒ 旧算例行为逐位不变。
+  - 新键：`n_struct_steps_start` / `n_uns_steps_start` / `step_decay_every`（默认 0/0/1）。
+  - `src/main.f90`：结构侧子步循环改由 `n_sub = scheduled_steps(...)` 驱动并打印每步
+    `coupling iter N -> struct substeps: M`；非结构侧同机制（`n_uns_cur`）。
+  - **实测**（run3/4/5/6 全部一致）：`1000 → 500 → 250 → 125 → 62 → 50 → 50 …`，
+    与 `n_struct_steps = n_uns_steps = 50` 对齐 ⇒ "逐步同频"达成。
+- **算例 bug：冷却剂入口温度缺省 0 K**（`unMesh.control`）
+  - `mass-flow-inlet` 第 4 个 token 是入口静温，缺省 **0 K**（`mod_uns_control.f90`
+    L1028--1041 注释即"must be given whenever the energy equation is solved"）。
+    原文件只写 `bc = 7 mass-flow-inlet 0.1226` ⇒ 多孔板被抽向 T→0，
+    run2 日志 `Tmin: 6.95E-16 → 1.45E-05 → …` 后整场 NaN。
+  - 改为 `bc = 7 mass-flow-inlet 0.1226 300.0`（=readme 的 coolant 300 K）；
+    run3 起 `Tmin≈293 K`（前几步）、`Tmax=300 K`。
+- **界面速度 `iface_velocity`（新，默认 `full` 保持旧行为）**
+  - `normal`：只取对侧**法向**分量（=交换的质量流），切向取本地零梯度。
+    旧 `full` 把主流 ~104 m/s 切向滑移整矢量压进 $K=5\times10^{-7}$ m² 的多孔板
+    （Darcy 阻力要求 $\mathrm{d}p/\mathrm{d}x=\mu u/K\approx5\times10^5$ Pa/m）：
+    run2/3 中板块 `|u|max` 冲到 1000 m/s、表压 1.7e6 Pa ⇒ 发散。
+    `normal` 下第 1 步 `|u|max` 由 20.8 m/s 降到 0.36 m/s。
+- **界面压力基准锚定 `iface_p_anchor`（新，默认 0）**
+  - 诊断：`main.f90:599` 明确"uns 压力是**表压**，转结构侧前 `+p_ref` 变绝对"
+    ⇒ 结构侧拿它当**绝对背压**。但封闭多孔板的 PPE 是纯 Neumann，表压基准是
+    自由参数，run4/5 中漂到 +1.2e5 Pa，结构侧随即"吸入"多孔板
+    （`su·n → −0.65 m/s`），`du_n` 被顶到 33 m/s ⇒ 仍发散。
+  - 打开后每个耦合步把整场表压平移对齐到结构侧界面压力（纯基准平移，梯度不变）。
+- **界面速度 `balance` 模式（新）：实测收敛**
+  - `normal` 模式把「对侧法向速度」与「质量配平修正 `du_n`」同时压在同一自由度上，
+    二者互相打架（run5：`F_iface=Σu·sf` 从 +0.008 漂到 −0.39，`du_n`→33 m/s）。
+  - `balance` 直接忽略对侧速度，界面按**自身发展型出口**（零梯度）＋既有总通量配平
+    （等价于 `outflow` BC 的处理）。
+  - `iface_velocity = balance` + `iface_p_anchor = 1`：**30 个耦合步全程无 NaN**，
+    `du_n → 7e-6`、`ΣF_iface = +0.0625 m³/s` 恰等于冷却剂注入量、板块 `du_max → 1.4e-5`、
+    `|u|max = 0.32 m/s`；界面：结构侧 $p=1.0148\times10^5$ Pa（≈远场）、$T=300.1$ K，
+    非结构侧表压 118 Pa、$T=286.5$ K。
+- **遗留（未解决，已定位）**：多孔板 `Tmin = 286 K`（低于冷却剂 300 K 与界面
+  300.1 K），且结构侧与多孔侧界面温度不一致（300.1 vs 286.5 K）。
+  能量方程已收敛（`dT_max → 1.3e-4`，Tmin/Tmax 冻结）⇒ 不是欠迭代，需要单独查
+  多孔区能量方程（`thermal_model=lte` 无固相耦合；边界只有 300 K 入口 + 300.1 K 界面
+  Dirichlet + 绝热壁，不该出现 286 K）。
+- **文档**：`docs/91_appendix_params.tex` 的 `mix.control` 参数总表补 5 个新键
+  ＋新增"启动降频调度""界面压力基准对齐"两段说明。
+- **文件**：`src/common/mod_reference_state.f90`、`src/main.f90`、
+  `docs/91_appendix_params.tex`；算例侧 `unMesh.control`/`mix.control`（工作目录
+  `/tmp/C_P_test_work`，日志 `run3..run6.log`）。
+
+---
+
+
 ---
 
 ## 2026-10-09 | 修正 PLUG 对拍口径：进口速度"仍不对"实为采样截断 + 入口单元 O(Δx) 误差

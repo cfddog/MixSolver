@@ -1735,9 +1735,17 @@ contains
          FT = ctrl%cp * fld%flux(i)              ! rho*u.S already in flux
 
          if ( .not. is_neumann ) then
-            ! Dirichlet (fixed-T wall / inlet)
+            ! Dirichlet (fixed-T wall / inlet).  Diffusion always anchors the
+            ! face to T_face.  The advected enthalpy is a prescribed-flux term
+            ! ONLY for inflow (FT < 0, upwind value = exterior T_face).  For
+            ! outflow (FT > 0) the upwind value is the interior T_c0, which is
+            ! already implicit in ap_T (max(FT,0)); adding -FT*T_face as well
+            ! subtracted the effluent enthalpy a second time -> a spurious heat
+            ! sink that drove T below every boundary value (the C_P_test
+            ! coolant exit saw Tmin ~286 K with all BCs at 300 K; same result
+            ! standalone, i.e. independent of the coupling layer).
             ap_T(c0) = ap_T(c0) + DT + max( FT, 0.0_dp )
-            rhs(c0)  = rhs(c0)  + DT*T_face - FT*T_face
+            rhs(c0)  = rhs(c0)  + DT*T_face - min( FT, 0.0_dp )*T_face
          else
             ! Neumann (fixed-flux / adiabatic / symmetry / outlet)
             if ( abs(q_face) > 0.0_dp ) then

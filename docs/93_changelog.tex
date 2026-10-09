@@ -31,6 +31,34 @@
 \endhead
 \bottomrule
 \endlastfoot
+2026-10-09 & 13 &
+\textbf{修复非结构能量方程 ``定温 $+$ 出流'' 边界面的双计焓假热汇}：边界循环对
+Dirichlet 面无条件写 \texttt{rhs += DT*T\_face - FT*T\_face}，而出流
+（$FT>0$）时迎风值本就是内部 $T_{c0}$（已由 \texttt{ap += max(FT,0)} 隐式计入），
+多出的 $-FT\,T_{\rm face}$ 是与流出焓同量级的\textbf{假热汇}，把贴界面第一层单元压到
+所有边界值之下（\texttt{C\_P\_test}：入口/界面/绝热壁全 300 K，板块仍出现
+$T_{\min}=286$ K）。改为出流项只在入流（$FT<0$）保留：
+\texttt{rhs += DT*T\_face - min(FT,0)*T\_face}。 &
+\texttt{src/unstructured/mod\_uns\_simple.f90}\newline
+(\texttt{temperature\_assembly}) &
+\textbf{① 独立复现判据}：把 \texttt{C\_P\_test} 的耦合界面换成普通
+\texttt{velocity-inlet} 出流（同网格/同流量/同 300 K，绕开全部耦合代码）后仍逐位复现
+\texttt{it=1 dT\_max=7.21}、\texttt{it=50 Tmin=286.0}（耦合 run6 为 7.18/286.1）
+$\Rightarrow$ 与界面交换层无关。\\
+\textbf{② 修复后同一算例}：\texttt{it=1 dT\_max=2.84e-2}，
+$T_{\min}=T_{\max}=300.0$ K（均匀 300 K 初场 $+$ 全 300 K 边界的不变量恢复）。\\
+\textbf{③ 耦合 \texttt{C\_P\_test} run7}（30 步，\texttt{du\_max}$\to1.4\times10^{-5}$）：
+两侧界面温度 $300.1/286.5\to$ \textbf{300.13/300.12} K，板内 $T\in[299.6,303.5]$ K
+（界面高于 300 K 的温升即发汗冷却吸热，主流 309 K）；速度/压力场与修复前
+\textbf{逐位相同}（$\overline{|u|}=0.1750$、$|u|_{\max}=0.3154$、表压 115.5--174.9 Pa）
+$\Rightarrow$ 只去掉假热汇、不动量解。\\
+\textbf{④ 回归}：\texttt{cases/porous\_plug} darcy 与提交日志逐位一致（101 步、
+\texttt{mass-imbal}=1.082e-18、$|u|_{\max}=1.03566\times10^{-1}$）；
+\texttt{regress/m6wing} PASS。\\
+\textbf{遗留}：动量方程同址（\texttt{mod\_uns\_simple.f90:1058}）与
+\texttt{BC\_FARFIELD} 入流支有同形项 $-F u_f$；本算例该假源项
+$\dot m|u_t|\approx4.3\times10^{-4}$ N 仅为 Darcy 阻力 $3.8\times10^{-2}$ N 的
+$\sim1\%$，本次未动，待专案评估。 \\
 2026-10-09 & 11 &
 \textbf{对拍采样口径修正}（不改源码）：\texttt{cases/betchen} 的 PLUG 对比脚本原用
 \texttt{np.interp} 把数字化参考 CSV 中落在我们第一个单元内部（$x/H<0.075$，如

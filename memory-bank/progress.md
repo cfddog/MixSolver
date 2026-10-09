@@ -1,8 +1,33 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-09（**修正 PLUG 对拍口径：进口速度"仍不对"= 参考采样点被 `np.interp` 截断到入口单元 + 第一列的 O(Δx) 入口单元误差**；抛物入口的真实收益在入口形状 0.398→0.018）
+> 最后更新：2026-10-09（**`C_P_test` 板内 `Tmin=286 K` 已闭环**：能量方程"定温＋出流"边界面双计流出焓 → 一行修复，两侧界面温度 300.1/286.5 → **300.13/300.12 K**；速度/压力场逐位不变，`porous_plug` + `m6wing` 回归通过）
 
 ## 已完成
+
+- [x] **修复非结构能量方程"定温＋出流"边界面的双计焓假热汇（2026-10-09，含源码改动）**：
+  - **症状**（承接 `C_P_test` 遗留）：多孔板 `Tmin=286 K` 低于全部边界温度（入口
+    300 K、界面 Dirichlet 300 K、壁面绝热），且两侧界面温度不一致（结构 300.1 /
+    多孔 286.5 K）；能量方程已收敛（`dT_max→1.3e-4`）⇒ 不是欠迭代。
+  - **判据**（把耦合层排除在外）：CAS zone 4 改名绕开界面登记，改给普通
+    `velocity-inlet` 出流（同网格/同流量/同 300 K）单跑 `bin/uns_solver` →
+    `dT_max=7.210`、`Tmin=2.86e2`，与耦合 run6 的 `7.183`/`2.86e2` 同量
+    ⇒ 与界面交换层无关，是求解器本身的定温出流面缺陷。
+  - **根因**：`temperature_assembly` 边界 Dirichlet 分支
+    `rhs += DT*T_face - FT*T_face` 在**出流**（`FT>0`）时重复计入流出焓：出流迎风值
+    本就是内部 `T_c0`（已由 `ap += max(FT,0)` 隐式计入）。均匀 300 K 场残差
+    `= FT*T_face`；纯对流 1 胞模型给出 `T_c = T_in - T_face`（应为 `T_in`）。
+    此前无算例出口是定温出流（`BC_INTERFACE` 是第一个），故长期潜伏。
+  - **修法**：`- FT*T_face` → `- min(FT,0)*T_face`（入流项不变）。
+  - **验证**：① 判据算例 `it=1 dT_max 7.21→2.84e-2`、`Tmin=Tmax=300.00`；
+    ② 耦合 `C_P_test` run7（30 步）`Tmin/Tmax=300.0/303.5`（板内 `[299.6,303.5]`，
+    界面 300 K 以上温升即发汗冷却吸热；主流 `T_inf=309 K`）、界面两侧
+    **300.13/300.12 K**、`du_max→1.4e-5`，**速度/压力场与 run6 逐位相同**
+    （`|u|max 0.3154`、表压 115.5–174.9 Pa）；③ `cases/porous_plug` darcy 与提交
+    日志逐位一致（101 步、`mass-imbal 1.082e-18`、`|u|max 1.03566e-01`）+
+    `regress/m6wing` PASS。影响面：只触碰 `FT>0` 的 Dirichlet 面（现有算例出口为
+    Neumann 温度、对称面 `u_z≈0`、`iface_T=0` 时两项本就为 0）。
+  - **涉及文件**：`src/unstructured/mod_uns_simple.f90`（1 行 + 注释）、
+    `docs/93_changelog.tex`、`memory-bank/{worklog,activeContext}.md`。
 
 - [x] **新增 `velocity-inlet-parabolic` 边界（2026-10-08，含源码改动）**：
   - **动机**：PLUG 剩余偏差主因是**入口剖面**——论文用充分发展
@@ -383,6 +408,39 @@
       工作流扩展为「验证 → 记账 → commit → **push**」，此后自动执行。
 
 ## 待办
+
+### 离散缺陷同类项排查（2026-10-09 登记）
+- [ ] **`momentum_assembly` 的定温出流面同形项**（`mod_uns_simple.f90:1058`，
+  `rhs += D*uf - F*uf`；`BC_FARFIELD` 入流支 L1072 同）：与已修的能量方程同源，
+  出流时应为 `- min(F,0)*uf`。本算例界面该假源项
+  `ṁ|u_t|≈4.3e-4 N` 仅为 Darcy 阻力 `3.8e-2 N` 的 ~1%，故未改（以免扰动已标定的
+  界面动量/`du_n` 配平）。评估方式：先跑 `cases/beavers_joseph`（BJ 滑移对界面动量
+  最敏感）＋ `cases/couple_porous`，再接 `C_P_test`（若 `iface_velocity=normal` 由
+  "必须用 balance"回到可用，即为收益信号）。
+- [ ] **对称面 `F≠0` 既有怪癖**：`bc_face_vel` 的 symmetry 取镜像速度
+  `uP-2(uP·n)n` ⇒ `F=-ρ(uP·n)A`，非严格零通量（现有算例 `u_z≈0` 故无感）。
+  与上一条一并评估。
+
+### 界面条件按文献升级（2026-10-09 登记；输入 `C:\temp\interface_conditions`）
+- [ ] **界面温度/热流分配**（Betchen 2006 Eq.17/42、Zhang 2011 Eq.27–31）：
+  流体/多孔界面温度取 $\langle T\rangle_{por}=\varepsilon\langle T_f\rangle^f+
+  (1-\varepsilon)\langle T_s\rangle^s$，热流按**面积比（孔隙率）**分配
+  $\varepsilon k_f\partial_n T_{fl}=k_{fe}\partial_n\langle T_f\rangle^f$、
+  $(1-\varepsilon)k_f\partial_n T_{fl}=k_{se}\partial_n\langle T_s\rangle^s$
+  （等价 Betchen 并联导热离散 Eq.42）。当前实现是"整体 T 的纯 Dirichlet"
+  （`thermal_model=lte` 下与 Eq.17 一致），**LTNE 下缺这条加权**⇒ 若要把
+  `thermal_model=ltne` 用于跨组界面，必须先按上式改 `bc_face_T`/界面交换。
+- [ ] **界面压力**（Betchen Eq.43/44）：界面压力须由**法向动量平衡**给出
+  $\langle P\rangle_i^f\approx P_1-\dot m_i(\langle\mathbf u\rangle_i\cdot\mathbf n)
+  (1-\varepsilon)/(\varepsilon A_i)$（面积突变动力压项），且 **p–ṁ 需子迭代**
+  （"a small number of iterations at the end of each linearization loop"）。
+  当前用 `iface_p_anchor` 做**整体电平平移**（解决纯 Neumann PPE 的基准自由度），
+  与文献的**局部、速度平方相关**修正不是一回事 ⇒ 可在界面压力仍有 kPa 级跳变时补。
+- [ ] **界面切向速度**（Zhang Eq.24–26 = Ochoa-Tapia & Whitaker 应力跳变）：
+  $\mu_e/\varepsilon\,\partial_\ell\langle V\rangle_t|_p-\mu_f\partial_\ell V_t|_{fl}
+  =\beta(\mu/\sqrt K)V_t+\beta_1\rho_f V_t^2$。当前 `iface_velocity` 的
+  `normal`/`balance` 是工程折衷（`balance` 直接丢弃对侧切向后再按通量配平）；
+  若要放开切向（Beavers-Joseph 型滑移），应改按此式实现，而不是整矢量 Dirichlet。
 
 ### Betchen 2006 界面验证（2026-10-08 试跑）
 - [x] **BJ 参考解对比（Da=1e-2/1e-3）**：峰值 1.408/1.459 vs 参考 1.387/1.457，
