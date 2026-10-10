@@ -176,10 +176,22 @@ $a_{ref}$、$p_{ref}$、$p_{scale}$。\textbf{混用两份参考状态是耦合�
         打印 \texttt{Can not find 'control.ec', stop !} 并退出。
   \item \textbf{非结构侧单机}：
 \begin{quote}\ttfamily\small
-bin/uns\_solver <mesh.cas> <control文件>
+bin/uns\_solver <mesh.cas> <control文件> [输出文件.vtu]
 \end{quote}
         省略参数时用的是源码里的历史默认路径（\texttt{Grid\_BC/cavity.cas} 等），
         这些文件在当前仓库中已不存在，因此\textbf{请总是显式给出两个参数}。
+        可选的第三个参数指定输出文件路径（\texttt{main\_uns.f90} 的 \texttt{out\_user}）；
+        省略时由 \texttt{mesh.cas} 的基名派生（\texttt{plug.cas} $\to$
+        \texttt{plug.vtu}）并写在\textbf{当前目录}。
+  \item \textbf{非结构侧 MPI}：语法看似相同，但\textbf{只解析前两个参数}——
+\begin{quote}\ttfamily\small
+mpirun -np 2 bin/uns\_solver\_mpi <mesh.cas> <control文件>
+\end{quote}
+        第 3 个参数会被\textbf{静默忽略}（\texttt{main\_uns\_mpi.f90}），输出文件名
+        固定由 \texttt{.cas} 基名派生（\texttt{bj.cas} $\to$ \texttt{bj.vtu}），
+        并在同目录写出分区映射 \texttt{<stem>.part.map}。要换输出名请先
+        \texttt{cd} 到目标目录、或运行后自行 \texttt{mv}；否则会\textbf{覆盖}
+        当前目录中的同名文件（例如算例里的参考 \texttt{.vtu}）。
   \item \textbf{弱耦合（推荐）}：在仓库根目录运行，参数依次为
         mix 控制文件、结构侧 \texttt{.cas}（网格）、结构侧控制文件、非结构侧
         \texttt{.cas}、非结构侧控制文件；省略时默认 \texttt{./mix.control} ＋
@@ -191,6 +203,88 @@ mpirun -np 2 bin/mixsolver\_mpi mix.control grid\_BC/Mesh3d.x \textbackslash\\
 \end{quote}
         \textbf{进程划分}：\texttt{nproc}$\ge$2 时 1 个 rank 跑结构侧、其余跑非结构侧；
 \end{enumerate}
+
+\subsection{从编译到执行的完整流程示例}\label{sec:workflow}
+
+本节把前面各小节串成一个端到端、可照做的流程，并以仓库自带的耦合算例
+\texttt{cases/couple\_porous}（可压缩--多孔跨组界面）为主、三种运行模式全覆盖地走一遍。
+整体顺序：\emph{环境检查（\S\ref{sec:build}）$\to$ 编译 $\to$ 自检 $\to$ 准备输入 $\to$
+运行 $\to$ 后处理 / 重启动}。
+
+\textbf{第 1 步——编译。}默认用 \emph{MPI 混合驱动}（日常使用）：
+\begin{quote}\ttfamily\small
+make mpi
+\end{quote}
+在仓库根目录执行，产物为 \texttt{bin/mixsolver\_mpi}（编译树 \texttt{build/mpi/}）。
+仅需串行驱动时用 \texttt{make all}（\texttt{bin/mixsolver}）。首次或新增模块后可先用
+\texttt{make -j1 mpi} 提升模间依赖的正确性；有大量中间产物时再加 \texttt{-j}.
+机器核对依赖：\texttt{gfortran}＋\texttt{mpif90}（见 \S\ref{sec:build} 的「依赖」）；
+ParMETIS 默认不链接，勿改。
+若想得到调试版（\texttt{-O0 -g -fcheck=all}），任意目标后追加 \texttt{DEBUG=1}:
+\begin{quote}\ttfamily\small
+make DEBUG=1 mpi
+\end{quote}
+
+\textbf{第 2 步——自检（可选但推荐）。}编译通过后跑单元 / 集成测试，确认构建链完整：
+\begin{quote}\ttfamily\small
+make units\_test coupling\_test match\_test iface\_law\_test\\
+./bin/units\_test\\
+mpirun -np 2 ./bin/coupling\_test\\
+./bin/match\_test \ \ \# 读 grid\_BC 两侧网格做界面匹配
+\end{quote}
+预期：\texttt{units\_test} 3/3、\texttt{coupling\_test} 6/0 PASS、
+\texttt{match\_test} 匹配 0 误差、\texttt{iface\_law\_test}（Z.~2011 界面封闭）
+用例全过。改过 \texttt{src/structured/} 后请再跑位级回归
+\texttt{regress/m6wing/run\_regression.sh}（对照 \texttt{baseline/} 的
+\texttt{flow3d.dat} 等 8 个文件，md5 需完全一致）。
+
+\textbf{第 3 步——准备输入文件。}每个算例都是\textbf{独立目录}，一般四类文件齐备：
+\begin{itemize}\itemsep2pt
+  \item 结构侧：\texttt{control.ec}、\texttt{Mesh3d.x}（Plot3D 网格）、\texttt{bc3d.inp}
+        （Gridgen 边界文件，含 \texttt{generic: 8} 耦合面）；
+  \item 非结构侧：\texttt{*.cas}（Fluent 网格＋cell zone）、\texttt{*.control}
+        （\texttt{mesh\_scale}、\texttt{bc}、\texttt{cell\_zone} 等）；
+  \item 耦合：\texttt{mix.control}（\texttt{n\_couple}、\texttt{n\_uns\_steps}、
+        \texttt{iface\_relax}/\texttt{iface\_ramp}、\texttt{save\_interval}、
+        \texttt{couple\_restart}；以及两侧参考状态）。
+\end{itemize}
+仓库算例列表见 \S\ref{sec:cases}；\texttt{control.ec} 模板见
+\texttt{docs/control.ec.template}。多数算例的 \texttt{README.md} 自带
+\texttt{gen\_*.py} 网格生成器与一键运行命令。
+
+\textbf{第 4 步——运行。}依目的选下述三种之一（均需在\textbf{相应算例目录内}或指对路径）：
+\begin{enumerate}\itemsep2pt
+  \item 结构侧单机（不接参数，固定读当前目录 \texttt{control.ec}）：
+\begin{quote}\ttfamily\small
+/path/to/bin/struct\_solver
+\end{quote}
+  \item 非结构侧（\texttt{bin/uns\_solver\_mpi} 只认前两个参数，输出名由 \texttt{.cas}
+        基名派生并写当前目录）：
+\begin{quote}\ttfamily\small
+mpirun -np 2 bin/uns\_solver\_mpi <mesh.cas> <control.ctl>
+\end{quote}
+  \item 弱耦合（\textbf{推荐}，从仓库根目录，5 个位置参数都可被 \texttt{grid\_BC/} 缺省）：
+\begin{quote}\ttfamily\small
+mpirun -np 2 bin/mixsolver\_mpi mix.control \textbackslash\\
+\hspace*{1em}grid\_BC/Mesh3d.x grid\_BC/control.ec grid\_BC/unMesh.cas grid\_BC/unMesh.control
+\end{quote}
+        进程划分：\texttt{nproc}$\ge$2 时 1 个 rank 跑结构侧、其余跑非结构侧。
+        收敛/落盘判据：固定 \texttt{n\_couple} 轮耦合迭代、每 25 步打印界面均值；末态按
+        \texttt{save\_interval} 存档（须 $\le$ \texttt{n\_couple}，否则周期未到无落盘）。
+\end{enumerate}
+
+\textbf{第 5 步——后处理与重启动。}结果默认国际单位制输出：结构侧 \texttt{flow3d.dat}＋
+\texttt{Step\_mess.dat}（可选 \texttt{flow3d\_node.dat} 节点插值），非结构侧 \texttt{*.vtu}
+（VTK，含 \texttt{temperature\_solid} 当 LTNE）。界面分析用
+\texttt{docs/compare\_iface.py}。\emph{重启动}：把 \texttt{couple\_restart=1} 写进
+\texttt{mix.control}，两侧从 \texttt{couple\_state.dat}（结构 \texttt{flow3d.dat}＋非结构
+\texttt{unMesh\_restart.dat}）恢复迭代号，从 \texttt{iter0+1} 继续，\texttt{iface\_ramp}
+计数连续；局限见 \S\ref{sec:coupling} 重启动段（LTNE 的 \texttt{T\_s} 与结构
+\texttt{Kstep/tt} 不恢复）。
+
+\noindent\emph{常见失败点}（详见 \S\ref{sec:faq}）：未设 \texttt{mesh\_scale=1.0e-3}
+（mm 网格）、\texttt{control.ec} 残留已删 namelist 键、\texttt{velocity-inlet} 漏写入口静温、
+\texttt{save\_interval}> \texttt{n\_couple} 导致无末态存档。
 
 \section{输入文件}\label{sec:inputs}
 
@@ -468,6 +562,18 @@ $\mu=1.846\times10^{-5}$ Pa$\cdot$s 对应 300 K、1 atm）。
         用于固相与\textbf{LTNE 双温度}（\texttt{thermal\_model = ltne}）；
         \texttt{disp\_l}/\texttt{disp\_t} 为纵向/横向热弥散；
         \texttt{bj\_alpha} 打开流体/多孔界面的 Beavers--Joseph 滑移。
+  \item \textbf{流体/多孔耦合模型}：顶层开关 \texttt{porous\_model} 选
+        \texttt{partitioned}（默认；流体/多孔界面走显式处理——一致化界面压力
+        \texttt{kink\_face\_pressure} ＋ 可选 \texttt{bj\_alpha} 滑移，
+        位级向后兼容）或 \texttt{unified}（单域逐单元系数
+        Darcy--Brinkman--Forchheimer：每个单元按 $(\varepsilon,K,c_E)$ 装配同一
+        方程，流体单元 $\varepsilon=1,1/K=0,c_E=0$ 自动退化为 NS；界面不做任何
+        显式处理，$(\mu/\varepsilon)$ 跳变由距离加权调和平均面系数吸收）。
+        结论：\texttt{unified} 在平行界面 BJ 算例上与 \texttt{partitioned} 相当
+        （形状 L2 差 $0.1\%$），但在垂直界面 PLUG 算例上明显退化
+        （速度 L2 $0.49\%\!\to\!1.32\%$、$2.35\%\!\to\!11.27\%$），
+        且 \texttt{bj\_alpha} 失效。详见
+        \texttt{cases/betchen/README.md}、\S\ref{app:porous-model}。
   \item \textbf{能量方程必须给入口温度}：\texttt{velocity-inlet} /
         \texttt{mass-flow-inlet} 的第 4 个 token 是入口静温；不写时温度会被拉向 0
         （历史缺陷，已修复为可检测）。

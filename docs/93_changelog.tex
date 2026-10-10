@@ -31,6 +31,46 @@
 \endhead
 \bottomrule
 \endlastfoot
+2026-10-10 & 文档 &
+\textbf{手册增强：\S2 增补「从编译到执行的完整流程示例」}。把 \S2 前几小节（依赖 /
+make 目标 / 运行命令）串成端到端可照做的流程：第 1 步编译（\texttt{make mpi} /
+\texttt{make all} / \texttt{make DEBUG=1 mpi}）、第 2 步自检（\texttt{units\_test} /
+\texttt{coupling\_test} / \texttt{match\_test} / \texttt{iface\_law\_test} ＋
+\texttt{regress/m6wing/run\_regression.sh}）、第 3 步准备输入文件、第 4 步运行
+（结构 / 非结构 / 弱耦合三种模式）、第 5 步后处理与重启动，并列出常见失败点。
+纯文档，无源码改动、无新控制参数。 & （无） &
+\texttt{docs/程序使用手册.tex} 经 \texttt{xelatex} 连跑 4 遍零 error / 零 undefined
+reference（新增引用 \S\ref{sec:build}、\S\ref{sec:cases}、\S\ref{sec:coupling}、
+\S\ref{sec:faq} 全部命中）；原有 24 页正文结构未变，仅 \S2 增一个子节。 \\
+2026-10-10 & 14 &
+\textbf{统一 DBF 求解器（\texttt{porous\_model = unified}）}：新增顶层开关
+\texttt{porous\_model = partitioned | unified}（默认 \texttt{partitioned}，拼写别名
+\texttt{partition}/\texttt{block}、\texttt{one-domain}/\texttt{onedomain}/\texttt{single-domain}）。
+\texttt{unified} 把流体区与多孔区统一为\textbf{单域逐单元系数} DBF：每个单元按
+$(\varepsilon,K,c_E)$ 装配同一个 Darcy--Brinkman--Forchheimer 动量方程，流体单元
+$\varepsilon=1$、$1/K=0$、$c_E=0$ 使 DBF 项自动消失（退化为 NS）；界面\textbf{不做}
+显式处理——关闭一致化界面压力 \texttt{kink\_face\_pressure} 与 \texttt{bj\_alpha}
+滑移，$(\mu/\varepsilon)$ 的界面跳变改由距离加权\textbf{调和平均}面系数
+（Patankar 式(40)）吸收。新增 \texttt{cases/betchen/*\_uni.control}、
+\texttt{cases/beavers\_joseph/bj\_a*\_uni.control}、\texttt{cases/porous\_plug/*\_uni.control}
+与后处理脚本 \texttt{cases/betchen/compare\_unified.py}（\texttt{plot\_bj.py} 增加可选
+文件名覆盖参数）。
+& \texttt{mod\_uns\_control}（\texttt{ctrl\_t\%porous\_model} ＋ 解析）、
+\texttt{mod\_uns\_fields}（\texttt{fields\_t\%unified}、\texttt{setup\_porous\_fields}
+置位、\texttt{compute\_gradients} 门控）、
+\texttt{mod\_uns\_simple}（\texttt{momentum\_assembly}：BJ 门控、压力力插值、调和平均
+$\mu_f$）
+& ① \textbf{分区路径位级不变}：\texttt{plug\_darcy}/\texttt{plug\_forch}/
+\texttt{bj\_dae2}/\texttt{plug\_dae3}/\texttt{plug\_hir} 重跑 VTU 与历史文件
+\texttt{md5} 逐位相同。② 无界面算例（\texttt{cases/porous\_plug}）\texttt{unified}
+与分区路径压力 \texttt{max|dp|}$=0$（逐位）、速度 \texttt{max|du|}$=2.5\times10^{-16}$
+（纯舍入）。③ Betchen 对拍（\texttt{compare\_unified.py}）：BJ 形状 L2
+$3.538\%\!\to\!3.633\%$（Da$=10^{-2}$）、$2.871\%\!\to\!2.916\%$（Da$=10^{-3}$）；
+PLUG 界面抖动 alt\_amp $0.018\!\to\!0.115$、$0.074\!\to\!0.629$，中心线 $u$ L2
+$0.494\%\!\to\!1.318\%$、$2.348\%\!\to\!11.268\%$——证明界面 kink 处理不可替代。
+④ \texttt{beavers\_joseph} $\alpha=0/1/2$ 在 \texttt{unified} 下退化为逐位相同的解
+（\texttt{bj\_alpha} 失效）。⑤ \texttt{make unstructured}/\texttt{unstructured\_mpi} 均
+零错误编译（MPI 共用 \texttt{momentum\_assembly}，无需改 MPI 专有文件）。 \\
 2026-10-09 & 14 &
 \textbf{Zhang 2011 界面封闭（阶段 14，全部 opt-in）}：把流固界面封闭改为按文献实现。
 ① 界面\textbf{速度} \texttt{iface\_velocity=zhang}：两侧共用同一界面速度（Eq.22），法向由

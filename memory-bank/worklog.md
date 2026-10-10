@@ -1,7 +1,152 @@
 # 工作日志 (worklog)
 
+## 2026-10-10 | 文档节点：手册 §2 增补「从编译到执行的完整流程示例」
+
+- 需求（用户）：在 `docs/程序使用手册.tex` 增加「从程序编译到执行过程」的详细步骤。
+- 改动：新增 \S\ref{sec:workflow}（§2 末尾、§3 之前）《从编译到执行的完整流程示例》，
+  5 步端到端流程：① 编译（`make mpi` / `make all` / `make DEBUG=1 mpi`，含 `-j1` 首建建议）；
+  ② 自检（`units_test` 3/3、`coupling_test` np2 6/0、`match_test`、`iface_law_test`，
+  改 struct 侧后跑 `regress/m6wing/run_regression.sh`）；③ 准备输入（结构 control.ec/Mesh3d.x/
+  bc3d.inp，非结构 *.cas/*.control，耦合 mix.control）；④ 运行（结构单机 / 非结构单机 &
+  MPI / 弱耦合三模式，进程划分 nproc≥2 时 1 rank 结构 + 其余非结构）；⑤ 后处理与重启动
+  （`compare_iface.py`、`couple_restart=1`、`save_interval≤n_couple`），并列常见失败点
+  （mesh_scale、control.ec 残留键、velocity-inlet 漏静温、save_interval 无末态）。
+  同步在 `docs/93_changelog.tex` 顶部追加一条「文档」更新记录。
+- 验证：`xelatex` 连跑 2 遍零 error / 零 undefined reference / 零 multiply defined，
+  新增引用（\S\ref{sec:build}、\S\ref{sec:cases}、\S\ref{sec:coupling}、\S\ref{sec:faq}）
+  全部命中，PDF 输出 35 页。
+- 提交：`docs: 手册 §2 增补从编译到执行的完整流程`（本节点仅含 doc 两文件 +
+  memory-bank 三文件，**未**混入旧积压）。
+- **遗留（已验收未提交的旧节点积压，本节点刻意不碰）**：阶段14 unified DBF 源码
+  `mod_uns_{control,fields,simple}.f90` ＋ `cases/{betchen,beavers_joseph,porous_plug}/*_uni.control`
+  ＋ `compare_unified.py` ＋ `cases/*/images/*unified*.png` ＋ `cases/C_P_test/` ＋ 根
+  `bc3d.inp` 删除。这些均已被 activeContext/progress 登记为「已完成」，但上次会话
+  **未走自动提交**（违背版本控制约定），后续需单独成节点提交。
+- 本节点是否推送：`git push origin main`（见规则，随提交自动）。
+
+---
+
 > 规则：每次任务结束或关键决策后追加一条简要记录（日期 | 内容 | 涉及文件）。
 > 最近记录在最上方。
+
+## 2026-10-10 | 阶段 14 续：统一 DBF 求解器 `porous_model = unified`（默认 partitioned，位级不变）
+
+- **起点**：用户要求"用 `porous_model=unified` 开关让外流区 DBF 自动退化为 NS，多孔区保留
+  真实 (ε,K,cE)，界面不做显式 kink/BJ 处理，仅靠逐单元系数 + Patankar 调和平均面系数；
+  用该模式重算 Betchen BJ/plug 并与 partitioned 及参考解对比"。方案 A（新增开关、
+  默认 `partitioned`）。
+- **代码探查结论**：求解器**本就是单域逐单元系数结构**（fluid 单元 ε=1、perm_dir=0、
+  inertial=0；多孔单元真实 ε/K/cE），所以 unified 只需**关掉 4 处显式界面处理**并
+  改 1 处面扩散：
+  1. `mod_uns_fields:compute_gradients` 的 `kink_face_pressure` 压力面值分支；
+  2. `mod_uns_simple:momentum_assembly` 的 `-p_f S_f` 压力力 kink 分支；
+  3. `mod_uns_simple:momentum_assembly` 的界面 BJ 滑移分支（`bj_alpha`）；
+  4. `mod_uns_simple:momentum_assembly` 的面扩散 `mu_f` 改为距离加权**调和平均**
+     （Patankar 式(40)）。
+  `mod_uns_simple_mpi.f90` 复用 `momentum_assembly`（L38），`mod_uns_fields` 共享
+  ⇒ **无需改 MPI 专有文件**。
+- **改动**：
+  - `mod_uns_control.f90`：`ctrl_t` 增 `character(len=16) :: porous_model='partitioned'`
+    ＋ `read_control` 新增 `case('porous_model')`（别名 `partition`/`block`、
+    `one-domain`/`onedomain`/`single-domain`；非法值 `ier=2` 退出）。
+  - `mod_uns_fields.f90`：`fields_t` 增 `logical :: unified=.false.`；
+    `init_fields` 显式置 `.false.`；`setup_porous_fields` 在最早的
+    `if (.not. allocated(m%czone)) return` **之前**执行
+    `fld%unified = (trim(ctrl%porous_model)=='unified')`（4 处调用点均可用）；
+    `compute_gradients` 压力面值循环加 `if (.not. fld%unified .and. ...)`。
+  - `mod_uns_simple.f90`：`mu_f` 在 `unified` 时用
+    `1/((1-lf)/mu_eff0 + lf/mu_eff1)`（`mu_eff=mu/eps`）；BJ 分支加
+    `if (.not. fld%unified .and. ...)`；压力力 kink 分支加 `.not. fld%unified`。
+  - **新文件**：`cases/betchen/{bj_dae2,bj_dae3,plug_dae2,plug_dae3,plug_hir}_uni.control`、
+    `cases/beavers_joseph/bj_a{0,1,2}_uni.control`、`cases/porous_plug/plug_{darcy,forch}_uni.control`
+    （均只在原文件末尾加一行）；后处理 `cases/betchen/compare_unified.py`；
+    `cases/beavers_joseph/plot_bj.py` 增可选 CLI（`<alpha>=<file>`、`$BJ_PLOT_OUT`，
+    默认行为不变）。生成 `*_uni.vtu` 与 `images/{bj,plug}_unified_vs_partitioned.png`、
+    `images/beavers_joseph_unified.png`。
+- **构建**：`make unstructured`、`make unstructured_mpi` 均零错误通过（只有既有的
+  `-Wmaybe-uninitialized` 警告）。
+- **① 分区路径位级不变（回归）**：用新二进制 + 默认设置重跑
+  `porous_plug/plug_darcy`、`plug_forch`、`betchen/bj_dae2`、`plug_dae3`、`plug_hir`，
+  VTU 与仓库内历史文件 **md5 逐位相同**（5/5）。
+- **② 无界面算例 `unified` 退化为分区路径**：`porous_plug`（单一块，无界面）重跑，
+  `fdiff_vtu.py` 给出压力 `max|dp| = 0`（逐位），速度 `max|du| = 2.5e-16`
+  （`plug_darcy`，u_max=0.104）/ `3.0e-15`（`plug_forch`，u_max=1.010）。纯舍入来源：
+  均匀系数 m 时 `lf·m+(1-lf)·m` 与 `1/((1-lf)/m+lf/m)` 的最后 1–2 ulp 差
+  （**注意**：严格位级相同不可得，因为分区路径的算术式本身也不精确等于 m；
+  压力逐位相同是因为 9 位有效数字的 ASCII 输出把 <1e-15 的差吃掉了）。
+- **③ Betchen 对拍（`compare_unified.py`）**：
+  | 算例 | 量 | partitioned | unified |
+  |---|---|---|---|
+  | bj_dae2 | 形状 L2(u) | 3.538% | 3.633% |
+  | bj_dae3 | 形状 L2(u) | 2.871% | 2.916% |
+  | plug_dae2 | alt_amp | 0.0181 | 0.1151 |
+  | plug_dae2 | 中心线 u L2(x/H≥2) | 0.494% | 1.318% |
+  | plug_dae2 | 中心线 p L2 | 2.157% | 1.937% |
+  | plug_dae3 | alt_amp | 0.0739 | 0.6285 |
+  | plug_dae3 | 中心线 u L2(x/H≥2) | 2.348% | 11.268% |
+  | plug_dae3 | 中心线 p L2 | 1.741% | 2.201% |
+  **结论**：平行界面（BJ）几乎无差别（形状 L2 差 0.1%）；**垂直界面（PLUG）明显退化**，
+  unified 的 u L2（1.32%/11.27%）已接近 2026-10-08 修复前水平（2.94%/13.72%）
+  ⇒ **调和平均面系数不足以替代 kink 一致化**（kink 面压力驱动的 odd-even 力偶极子
+  才是 PLUG 主导误差，§4.1）。unified 的 p L2 反而略好（去掉 kink 后界面压力缓变、
+  与参考线性段拟合更贴合），但掩盖不了速度抖动。plug_hir：alt_amp 0.0638→0.172
+  （同趋势；与 §3.1 记录的 0.022 的量级差异已在 ⑩ 查明为**入口剖面**差异，非回归）。
+- **④ `bj_alpha` 在 `unified` 下失效**：`cases/beavers_joseph` α=0/1/2 三个算例
+  的 `*_uni.vtu` **md5 完全相同**；`plot_bj.py` 报告三者首流体单元 u 都是
+  8.664e-3（partitioned 为 8.539e-3/1.173e-2/1.002e-2）。因为 BJ 滑移是界面
+  **Robin（应力跳变）条件**，不是体区物性，无法用"同一方程 + 系数跳变"表达
+  ⇒ 需要应力跳变或界面压力一致化时必须用 `partitioned`。
+- **⑤ 文档**：`cases/betchen/README.md`（§1 备注 + 新 §3.5）、
+  `cases/beavers_joseph/README.md`（新 §4.1 + 文件清单）、
+  `cases/porous_plug/README.md`（新 §4.0 + 文件清单）、
+  `docs/91_appendix_params.tex`（参数表 + 新 §`app:porous-model`）、
+  `docs/程序使用手册.tex`（多孔介质条目 + 新开关）、`docs/93_changelog.tex`。
+- **⑥ 结构侧位级回归（收尾验证）**：`regress/m6wing/run_regression.sh` 全新构建
+  `bin/struct_solver` 后跑 M6-wing np1，`flow3d.dat / SA3d.dat / wall_dist.dat /
+  partation-auto.dat / part_grid.dat / Step_mess.dat / bc3d.inc / mesh-quality.dat`
+  **全部 IDENTICAL**，`M6-WING REGRESSION: PASS`（`flow3d.dat` md5
+  `dc134a2d196422043ecad7c86ac8f898`）——本次改动只在 `src/unstructured/`，
+  结构化侧零影响，与预期一致。
+- **⑦ MPI 路径一致性抽验**：`mpirun --oversubscribe -np 2 bin/uns_solver_mpi
+  plug_dae2.cas plug_dae2_uni.control`（`cd cases/betchen`），`fdiff_vtu.py` 对
+  串行 `plug_dae2_uni.vtu`：`max|du| = 1.28e-9`（u_max=2.36e-3，0.0001%）、
+  `max|dp| = 3.10e-12`（p_max=9.64e-4）——差异仅来自并行线性求解/归约次序的
+  浮点重排，**unified 开关的 MPI 路径正确**。
+- **⑧ 踩坑：`uns_solver_mpi` 静默忽略第 3 个参数**。`main_uns_mpi.f90` 只读
+  `command_argument_count()` 的 arg1/arg2，输出名**固定**由 `.cas` 基名派生
+  （`plug_dae2.cas → plug_dae2.vtu`）写在**当前目录**；上面那次抽验本想写
+  `/tmp/plug_dae2_uni_np2.vtu`，实际**覆盖了 `cases/betchen/plug_dae2.vtu`**
+  （partitioned 参考件）并新增 `plug_dae2.part.map`。处理：把 np2 结果备份到
+  `/tmp/np2_uni_plug_dae2.vtu`，删除 stray `part.map`，用
+  `bin/uns_solver plug_dae2.cas plug_dae2.control plug_dae2.vtu` 重跑恢复，
+  再跑 `compare_unified.py` 复核——partitioned 指标逐项吻合
+  （alt 0.0181 / uL2 0.494% / pL2 2.157%）⇒ 恢复件正确、位级可复现。
+  已把该行为写入 `docs/程序使用手册.tex` §2.3「运行命令」（含第 3 参数说明、
+  MPI 忽略第 3 参数与 `.part.map` 副作用）与 `cases/beavers_joseph/README.md`。
+- **⑨ 文档构建校验**：`docs/程序使用手册.tex`（ctexart 须用 **xelatex**，
+  fandol OTF 字体在 pdflatex 下不可用）在 `/tmp/docbuild` 中两遍 xelatex
+  **零 error、零 undefined reference**，PDF 695 KB；`pdftotext` 确认新增的
+  参数表行 `porous_model`、TOC 条目 A.6、附录 §`app:porous-model` 正文、
+  §5 使用注意事项 bullet 与 changelog 条目均正确排版。
+- **⑩ 闭环：`plug_hir` alt_amp 0.022（§3.1）vs 0.064（§3.5）＝入口剖面差异**。
+  §3.1 的 Re_H=1000 行来自 `abtest_interface_pressure.sh`，当时 `plug_hir.control`
+  还是**均匀** `velocity-inlet`；同一天 23:13 该 control 改成
+  `velocity-inlet-parabolic`（§3.4），23:17 重跑出仓库里的 `plug_hir.vtu`。
+  验证：把入口行改回 `velocity-inlet 1.5684 0.0 0.0 300.0`（其余不动）重跑
+  `/tmp/hir_uni`，81 步收敛，`cmp_centerline.py` 得 **alt_amp = 0.0215、
+  界面邻域 u/U0 ∈ 1.032–1.195**，与 §3.1 记录的 0.022 / 1.032–1.195 **逐项吻合**；
+  现行抛物入口给出 0.0638 / 1.057–1.499。⇒ 分区路径无回归，差异全部来自入口剖面
+  （已写入 `cases/betchen/README.md` §3.5）。
+- **⑪ 收尾修正**：`plot_bj.py` 首次改动时把 `$BJ_PLOT_OUT` 的默认值误写成
+  `images/bj_profiles.png`，**改变了默认行为**。已改回 `images/beavers_joseph.png`：
+  无参数运行 `python3 plot_bj.py` 重绘出与仓库内文件 **md5 相同**（`abc2cb2e…`）
+  的 `images/beavers_joseph.png`（git 无改动）；`BJ_PLOT_OUT=images/beavers_joseph_unified.png`
+  ＋α 覆盖参数则产出 unified 图（α=2 首流体单元 u=8.6641e-3、RMS 4.98%，与 §4.1
+  表一致）。误产的 `images/bj_profiles.png`（同内容副本）已删除。
+- **遗留**：① 预留的界面一致性压力开关 `unified_iface_p = plain|consistent`
+  未实现（用户当时说默认按否执行、不阻塞）；② `unified` 的动量时间/对流项仍是
+  `rho/eps`、`rho/eps^2` 形式，与 README §2 / Betchen 式(9) 的写法一致（代码
+  实际未对时间项做 1/ε 缩放的疑点仍未闭环，本次未触）。
 
 ## 2026-10-09 | 阶段 14：按 Zhang 2011 (§3.5.1, Eq.22–29) 实现流固界面速度/温度封闭（opt-in）
 

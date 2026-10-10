@@ -1,8 +1,51 @@
 # 当前上下文 (activeContext)
 
-> 最后更新：2026-10-09（**阶段 14：按 Zhang 2011 §3.5.1 Eq.22–29 实现界面速度/温度封闭**，
-> `iface_velocity=zhang` + `iface_t_model=zhang`，全部 opt-in；C_P_test 30 步稳定、
-> 界面滑移 0.40→5.4 m/s 为物理 BJ 量级）
+> **2026-10-10 🆕 文档节点：手册 §2 增补「从编译到执行的完整流程示例」（\S\ref{sec:workflow}）**：
+> 把 §2 的依赖 / make 目标 / 运行命令串成端到端可照做的 5 步流程（编译 → 自检 →
+> 准备输入 → 运行[结构/非结构/弱耦合三模式] → 后处理/重启动），并列常见失败点；
+> 纯文档，无源码改动、无新控制参数。`xelatex` 连跑 4 遍零 error / 零 undefined
+> reference，PDF 35 页。本节点已提交并推送（见 worklog 2026-10-10 doc 条）。
+> **注意**：工作区仍有大量**已验收未提交**的旧节点积压（阶段14 unified DBF 源码+
+> 控制件+图、`cases/C_P_test/`、根 `bc3d.inp` 删除），本次 doc 节点**未**混入提交，
+> 遗留待后续节点单独处理。
+
+> 最后更新：2026-10-10（**阶段 14 续：统一 DBF 求解器 `porous_model = partitioned | unified`**，
+> 默认 `partitioned` **位级不变**；`unified` 在 BJ 上几乎无差别、PLUG 上明显退化 ⇒
+> 界面 kink 处理不可替代）
+
+> **2026-10-10 🆕 阶段 14 续 —— 统一 DBF（`porous_model = partitioned | unified`）**：
+> - **动机**：让外流区 DBF 自动退化为 NS、多孔区保留真实 (ε,K,cE)，界面**不做**显式
+>   kink/BJ 处理，只靠逐单元系数 + Patankar 调和平均面系数。
+> - **实现**：求解器本就是单域逐单元系数结构，故只关掉 4 处显式界面处理 + 改 1 处面扩散：
+>   `compute_gradients` 的 kink 压力面值、动量 `-p_f S_f` 的 kink、界面 BJ 滑移、
+>   `mu_f` → 距离加权调和平均 `1/((1-lf)/(mu/ε₀)+lf/(mu/ε₁))`。开关
+>   `porous_model`（`ctrl_t%porous_model` → `fields_t%unified`，由 `setup_porous_fields`
+>   置位）；MPI 共用 `momentum_assembly`，**无需改 MPI 文件**。
+> - **验证**：① 分区路径 **md5 逐位不变**（5 算例）；② 无界面算例（`porous_plug`）
+>   `unified` 压力逐位相同、速度差 2.5e-16（纯舍入）；③ Betchen 对拍（`compare_unified.py`）：
+>   BJ 形状 L2 3.538→3.633%（Da=1e-2）、2.871→2.916%（Da=1e-3）；
+>   **PLUG 退化**：alt_amp 0.018→0.115、0.074→0.629，中心线 u L2 0.494→1.318%、
+>   2.348→11.268%（接近修复前 2.94%/13.72%）；④ `beavers_joseph` α=0/1/2 在 unified
+>   下退化为**逐位相同**（`bj_alpha` 失效）；⑤ `regress/m6wing` 位级回归 **PASS**
+>   （改动仅在 `src/unstructured/`，结构化侧零影响）；⑥ MPI `-np 2` 的 unified 结果
+>   对串行 `max|du|=1.28e-9`、`max|dp|=3.1e-12`（并行归约浮点重排，路径正确）。
+> - **结论**：需要 BJ 滑移或 PLUG 界面压力一致化时用 `partitioned`（默认）；`unified`
+>   适合「同一套系数、无显式界面模型」的对照/教学与纯 Darcy-Brinkman 平滑界面。
+> - **遗留**：预留接口 `unified_iface_p = plain|consistent` 未实现；动量时间/对流项的
+>   1/ε 缩放疑点未触。另注意 `bin/uns_solver_mpi` **只解析前 2 个参数**、输出名固定由
+>   `.cas` 基名派生并写在当前目录（会覆盖同名参考件；已补进手册 §2.3）。
+>   `plug_hir` 的 alt_amp 0.022（§3.1）vs 0.064（§3.5）**已闭环**：§3.1 那行是均匀
+>   入口口径，把入口改回 `velocity-inlet 1.5684 …` 重跑得 alt_amp 0.0215
+>   （u∈1.032–1.195，与 §3.1 逐项吻合）⇒ 差异全来自入口剖面，非回归。
+>   详见 `memory-bank/worklog.md` 2026-10-10 条。
+>
+> **待办登记（2026-10-10，用户「计入待办」）**：
+> ① **非结构（不可压缩）侧新增 SST 与 k-ε 湍流模型**（现状：uns 侧零湍流模型，
+> `ctrl_t%mu` 常数层流黏度、无 `mut/k/w/eps`、无壁面距离）；② **修正可压缩（结构）
+> 侧 SST 湍流模型**（`Iflag_turbulence_model=3` 已知 bug，修复前禁用；登记于
+> `docs/程序功能说明.md:10`、`docs/plan.md` 阶段 13/14）。两条的现状代码位置、
+> 首查嫌疑、最小复现与验收清单见 `memory-bank/progress.md` §待办「湍流模型」
+> 与 `docs/plan.md` 阶段 14。
 
 > **2026-10-09 🆕 阶段 14 —— Zhang 2011 界面封闭（opt-in，旧路径位级不变）**：
 > - **速度（Eq.22/25/26）**：`mod_iface_law:iface_zhang_velocity` 给出两侧**共用**的

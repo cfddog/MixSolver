@@ -1,8 +1,62 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-09（**`C_P_test` 板内 `Tmin=286 K` 已闭环**：能量方程"定温＋出流"边界面双计流出焓 → 一行修复，两侧界面温度 300.1/286.5 → **300.13/300.12 K**；速度/压力场逐位不变，`porous_plug` + `m6wing` 回归通过）
+> 最后更新：2026-10-10（**新增统一 DBF 开关 `porous_model = partitioned | unified`**：默认 `partitioned` 位级不变（5 算例 md5 一致）；`unified` 在无界面算例上退化等价，BJ 几乎无差别、PLUG 明显退化 ⇒ 界面 kink 处理不可替代）
 
 ## 已完成
+
+- [x] **手册 §2 增补「从编译到执行的完整流程示例」（2026-10-10，纯文档节点）**：
+  `docs/程序使用手册.tex` 新增 `\S\ref{sec:workflow}`，5 步端到端流程（编译 / 自检 /
+  准备输入 / 运行[结构·非结构·弱耦合] / 后处理与重启动）＋常见失败点；
+  `docs/93_changelog.tex` 顶部追加「文档」条。`xelatex` 零 error / 零 undefined
+  reference，PDF 35 页。无源码改动。**注**：本次仅提交本 doc 节点；工作区仍有
+  阶段14 unified DBF 等旧积压未提交（见 §待办「版本控制」）。
+
+- [x] **统一 DBF（`porous_model = partitioned | unified`，2026-10-10，含源码改动）**：
+  - **目标**（用户要求）：一个开关让外流区 DBF 自动退化为 NS、多孔区保留真实
+    (ε,K,cE)；界面**不做**显式 kink/BJ 处理，只靠逐单元系数 + Patankar 调和平均
+    面系数；用它重算 Betchen BJ/PLUG 并与 `partitioned` 及参考解对比。
+  - **探查**：求解器已是**单域逐单元系数结构**（fluid 单元 ε=1、`perm_dir=0`、
+    `inertial=0`），故只须关掉 4 处显式界面处理 + 改 1 处面扩散：
+    `compute_gradients` 的 kink 压力面值、动量 `-p_f·S_f` 的 kink、界面 BJ 滑移
+    （`bj_alpha`）、`mu_f` → 距离加权调和平均
+    `1/((1-lf)/mu_eff0 + lf/mu_eff1)`（`mu_eff=mu/ε`，Patankar 式(40)）。
+    `mod_uns_simple_mpi` 复用 `momentum_assembly`、`mod_uns_fields` 共享 ⇒ **无需改
+    MPI 专有文件**。
+  - **实现**：`mod_uns_control`（`ctrl_t%porous_model` + `read_control` 解析/校验，
+    别名 `partition`/`block`/`one-domain`/`onedomain`/`single-domain`）；
+    `mod_uns_fields`（`fields_t%unified`，`setup_porous_fields` 在 earliest
+    return **之前**置位，`compute_gradients` 门控）；`mod_uns_simple`
+    （`momentum_assembly`：BJ 门控、压力力插值、调和平均 `mu_f`）。
+  - **新增算例/脚本**：`cases/betchen/*_uni.control`（5）、
+    `cases/beavers_joseph/bj_a{0,1,2}_uni.control`、`cases/porous_plug/plug_{darcy,forch}_uni.control`
+    （均只在原文件末尾加一行）；`cases/betchen/compare_unified.py`；
+    `cases/beavers_joseph/plot_bj.py` 增可选 CLI（默认行为不变）。产出
+    `*_uni.vtu`、`images/{bj,plug}_unified_vs_partitioned.png`、
+    `images/beavers_joseph_unified.png`。
+  - **验证**：① `make unstructured` + `make unstructured_mpi` 零错误；
+    ② **分区路径 md5 逐位不变**：`plug_darcy`/`plug_forch`/`bj_dae2`/`plug_dae3`/
+    `plug_hir` 5/5 与历史 VTU 完全一致；③ 无界面算例 `porous_plug`：`unified` 压力
+    逐位相同（`max|dp|=0`）、速度差 2.5e-16 / 3.0e-15（纯舍入）；
+    ④ Betchen 对拍：BJ 形状 L2 3.538→**3.633**%（Da=1e-2）、2.871→**2.916**%
+    （Da=1e-3）；PLUG alt_amp 0.018→**0.115**、0.074→**0.629**，中心线 u L2
+    0.494→**1.318**%、2.348→**11.268**%（≈修复前 2.94%/13.72%）；
+    ⑤ `beavers_joseph` α=0/1/2 三份 `*_uni.vtu` **md5 相同**（`bj_alpha` 失效）；
+    ⑥ `regress/m6wing` 结构化位级回归 **PASS**（8 个输出文件全 IDENTICAL）；
+    ⑦ MPI `-np 2` unified vs 串行 `max|du|=1.28e-9` / `max|dp|=3.1e-12`。
+  - **结论**：需要 BJ 滑移或 PLUG 界面压力一致化时必须用 `partitioned`（默认）；
+    `unified` 适合无显式界面模型的对照/教学与平滑 Darcy-Brinkman 界面。
+  - **涉及文件**：`src/unstructured/mod_uns_control.f90`、`mod_uns_fields.f90`、
+    `mod_uns_simple.f90`；`cases/{betchen,beavers_joseph,porous_plug}/*`；
+    `docs/{91_appendix_params,93_changelog,程序使用手册}.tex`；
+    `memory-bank/{worklog,activeContext,progress}.md`。
+  - **遗留**：`unified_iface_p = plain|consistent` 预留开关未实现；动量时间/对流项
+    1/ε 缩放疑点未触；`bin/uns_solver_mpi` 忽略第 3 参数（输出名固定由 `.cas`
+    基名派生，会覆盖同名文件）——已在手册 §2.3 与 `cases/beavers_joseph/README.md`
+    记录。文档校验：`docs/程序使用手册.tex` 两遍 xelatex 零 error / 零 undefined
+    reference（须用 xelatex，fandol 字体不支持 pdflatex）。
+  - **顺带闭环**：`plug_hir` 的 alt_amp 0.022（§3.1）vs 0.064（§3.5）是**入口剖面**
+    差异——§3.1 用均匀 `velocity-inlet`，现行用 `velocity-inlet-parabolic`；
+    改回均匀入口重跑得 alt_amp 0.0215（u∈1.032–1.195，与 §3.1 逐项吻合）⇒ 无回归。
 
 - [x] **修复非结构能量方程"定温＋出流"边界面的双计焓假热汇（2026-10-09，含源码改动）**：
   - **症状**（承接 `C_P_test` 遗留）：多孔板 `Tmin=286 K` 低于全部边界温度（入口
@@ -409,6 +463,72 @@
 
 ## 待办
 
+### 湍流模型（2026-10-10 登记，用户「计入待办」）
+
+- [ ] **① 非结构（不可压缩）侧新增 SST 与 k-ε 湍流模型**。
+  **现状**：uns 侧**完全没有湍流模型**——`fields_t`（`src/unstructured/mod_uns_fields.f90`）
+  无 `mut/k/w/eps`；黏度是 `ctrl_t%mu` 的**常数**层流值（`mod_uns_control.f90:139`
+  `mu = 0.01`），`mod_uns_simple.f90` 各处直接使用（L917-919 `mu_eff=mu/ε`、L949-972
+  `Cbj`、L1017-1059 黏性扩散、L1199 Darcy 汇）；`grep -i wall_dist src/unstructured`
+  **为空**（非结构侧无壁面距离计算）。
+  **接口设计**：新增 `turb_model = none | ke | sst`（**默认 `none`**，沿用
+  `porous_model` 的「默认走旧路径、位级不变」约定）；配套 `turb_int`（初始湍流强度）
+  或 `k_inf,eps_inf/w_inf`、`Prt`（湍流 Prandtl 数，与结构侧 `PrT=0.9` 对齐）、
+  `turb_mut_max`（对应结构侧 `MUT_MAX`，`<0` 不限）、可选 `turb_wall = lowre|wallfn`。
+  **数据/模块**：`fields_t` 增 `mut(:)`、`k(:)`、`w(:)/eps(:)`（＋瞬态 `_old/_old_old`，
+  与现有 `u_old/T_old` 的 BDF2 同构）、`wall_dist(:)`；新增
+  `src/unstructured/mod_uns_turb.f90`：`compute_wall_distance`（从 `mod_uns_cas_reader`
+  读入的 wall BC 面出发做 BFS/Dijkstra 逐单元壁距）、`turb_initialize`、
+  `compute_eddy_viscosity`（k-ε：`mut = ρ C_μ k²/ε`；SST：
+  `mut = ρ a₁ k / max(a₁ ω, S F₂)` ＋ `F₁` 混合）、`advance_ke`/`advance_sst`
+  （与能量方程同构的**迎风标量装配**＋源项 Patankar 线性化保证正定，钳制 `k≥0`、
+  `ω,ε>0`）、`turb_bc`（壁面 `k=0`、`ω_w=60ν/(β₁d²)`、ε 壁面律；入口/远场给定值；
+  出口零梯度）。
+  **耦合**：SIMPLE 外层在动量/能量装配**前**更新 `mut`，k/ω 在动量之后分离求解
+  （次序与结构侧 `mod_struct_solver.f90:160-168` 一致）；所有 `ctrl%mu` 的面系数改为
+  `mu + mut_f`，`mut_f` 用本轮 unified 已验证的**距离加权调和平均**（避免 ε 跳变
+  引入 O(Δx) kink 误差）；能量 `k_cond` 同理加 `cp·mut/Prt`。
+  **多孔/界面（须先定的设计决策）**：① 孔隙内 `mut` 保留/按 ε 缩放/置零（建议先
+  `keep`，另留 `turb_porous_mut = keep|eps|none`）；② 湍流标量在多孔单元的源项与
+  `1/ε` 约定；③ 与 BJ/Zhang 界面封闭的相互作用（界面 `mut` 取值口径）；④
+  `porous_model=unified` 下湍流方程是否也要同样的 no-kink 处理。
+  **验证**：① `turb_model=none` 五算例 md5 **位级不变**；② 层流退化（低 Re 的
+  `porous_plug`/`betchen` 现有指标不劣化）；③ 平板（`Re_x=1e6` 或 `Re_τ=590` 通道）
+  SST vs k-ε vs 层流的 `Cf`/对数律；④ 与结构侧同算例的湍流量一致性；⑤ MPI np1/np2
+  （`mod_uns_simple_mpi.f90` 共用装配，须核对 halo 交换 `k/w/mut/wall_dist`）；
+  ⑥ 入 `regress/` 基线。**文档**：`docs/91_appendix_params.tex`（uns 参数表）、
+  `docs/程序使用手册.tex` §2/§4、`docs/93_changelog.tex`、`cases/*/README.md`。
+
+- [ ] **② 修正可压缩（结构）侧 SST 湍流模型**（已知 bug，修复前**禁用**）。
+  **登记出处**：`docs/程序功能说明.md:10`「结构解算器SST模型有bug后续解决，目前先不使用」
+  （用户原始需求）；`docs/plan.md:572`「修复前不启用（当前算例一律
+  `Iflag_turbulence_model=0` 层流）」；`docs/plan.md` 实施优先级表 P3「阶段 13」与
+  「阶段 14：湍流模型」（2026-10-10 登记 ①②）；本文件「阶段 13 结构求解器演进
+  （远期）：SST bug 修复前禁用」。
+  **现状代码**：`Turbulence_model_SST`（`src/structured/mod_struct_solver.f90:2992–3333`，
+  旧 `sub_turbulence_SST` 迁入；调用点 L160-161，`NVAR=7`，`mod_struct_init.f90:916-917`）、
+  `limit_vt`（L1891，注释明说同时管 SA/SST 的 `vt/Kt/Wt`）、`limit_mut`（L1402）、
+  初值 `Kt_inf=1e-5`/`Wt_inf=0.01`（`mod_struct_init.f90:637-638`）、IO `SST3d.dat`
+  （`mod_struct_io.f90:221-223/416`）、壁面 BC（`mod_struct_bc.f90:384-421`，
+  `beta1_SST=0.075`、`wt=60·mu1/(U1(1)·beta1_SST·dw²·Re)`）。
+  **首查嫌疑（按序）**：① `mod_struct_bc.f90:419-420` 的 `Ug1(6)=0`（k 壁面）与
+  `Ug1(7)=60μ/(β₁d²)`（ω 壁面）**整段被注释掉**、改走 L421 的 `wt=…U1(1)…`——若
+  `U1(1)` 在该边界上下文不是 ρ*，则壁面 ω 量纲错（最可疑的单点）；② `limit_vt`
+  是否把 SA 的 `vt` 限幅误套到 SST 的 `k,ω`；③ 源项 Patankar 线性化/正定
+  （`k,ω<0` ⇒ 爆）；④ `NVAR=7` 路径的 FDM 黏性/无粘通量与重构是否与 SA 路径一致
+  （`mod_struct_fdm.f90:330,356,513-514` 传 `mu+mut`）；⑤ 无量纲化与 `Re/mu` 递推
+  只对 SA 标定过。
+  **最小复现**：单块平板/通道、`If_viscous=1`、`Iflag_turbulence_model=3`、少量步数看
+  残差与 `k,ω` 场是否非物理；与 `=2`（SA，可用基线）同算例对照。
+  **验收**：① bug 定位（根因＋修法）；② 修后 `=3` 给出可信 `Cf`/剖面（对比文献或 SA）；
+  ③ **不劣化** SA/BL/层流与 M6-wing（`Iflag_turbulence_model=2`）位级回归；
+  ④ 补 SST 回归算例入 `regress/`；⑤ 文档解除告警（`程序功能说明.md:10`、`plan.md:572`、
+  本文件阶段 13、`程序使用手册.tex` §4.4 湍流模型＋附录参数表）。
+  **备注**：阶段 14 续（unified DBF，2026-10-10）改动**全在非结构侧**，结构侧未触碰
+  （M6-wing 回归 PASS 与本条无关）。两条可并行：① 的新 `mod_uns_turb.f90` 建议直接
+  沿用结构侧 SST 常数/混合函数，天然成为 ② 的交叉校验。
+
+
 ### 离散缺陷同类项排查（2026-10-09 登记）
 - [ ] **`momentum_assembly` 的定温出流面同形项**（`mod_uns_simple.f90:1058`，
   `rhs += D*uf - F*uf`；`BC_FARFIELD` 入流支 L1072 同）：与已修的能量方程同源，
@@ -756,4 +876,4 @@
   **`uns` 绝对压力 ≈−250 Pa 偏置修复 ✅（2026-10-07）** **均已完成**（详见上文
   两条 ＋ README §5.3）。
 - [ ] **阶段12 Gambit NEU 输入**：.neu 读取器（网格+BC+体区域属性），复用现有登记流程。
-- [ ] **阶段13 结构求解器演进（远期）**：SST bug 修复前禁用；改用 Liao 格心型有限差分，兼容现有 Riemann。
+- [ ] **阶段13 结构求解器演进（远期）**：SST bug 修复前禁用；改用 Liao 格心型有限差分，兼容现有 Riemann。**（2026-10-10：SST 修复细则见本文件 §待办「湍流模型」条目 ②；非结构侧新湍流模型见同 §条目 ① / `docs/plan.md` 阶段 14）**
