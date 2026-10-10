@@ -13,7 +13,7 @@ module mod_uns_geometry
    use mod_precision, only: dp, ip, pi
    use mod_uns_mesh
    use mod_interface, only: Interface_FACE_TYPE, Interface_List, Num_Interface, &
-                            PEER_UNS, IFACE_CZ_FLUID, IFACE_CZ_POROUS
+                            PEER_UNS, IFACE_CZ_FLUID, IFACE_CZ_POROUS, IFACE_CZ_SOLID
    implicit none
    private
    public :: geom_t, compute_geometry, geom_stats, register_interface_zones, &
@@ -376,7 +376,7 @@ contains
    ! register_interface_zones; the owner cell is m%f(loc_face)%c0.
    !----------------------------------------------------------------------------
    subroutine tag_interface_cell_zones( m )
-      use mod_uns_control, only: CZ_POROUS
+      use mod_uns_control, only: CZ_POROUS, CZ_SOLID
       type(mesh_t), intent(in) :: m
 
       integer :: i, c0
@@ -391,6 +391,8 @@ contains
          if ( c0 < 1 .or. c0 > m%ncells ) cycle
          if ( m%cztype(c0) == CZ_POROUS ) then
             Interface_List(i)%cz_type = IFACE_CZ_POROUS
+         else if ( m%cztype(c0) == CZ_SOLID ) then
+            Interface_List(i)%cz_type = IFACE_CZ_SOLID
          else
             Interface_List(i)%cz_type = IFACE_CZ_FLUID
          end if

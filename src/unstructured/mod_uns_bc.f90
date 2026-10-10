@@ -612,8 +612,9 @@ contains
 
       case ( BC_POUTLET, BC_OUTFLOW )
          ! zero normal gradient (convective outflow) by default; a zone-level
-         ! tbc (or plane filter) with ttype = 2 injects a fixed heat flux
-         ! through the outlet face (e.g. heated end face of a porous sample)
+         ! tbc (or plane filter) with ttype = 1 fixes the outlet temperature
+         ! (Dirichlet, e.g. cold end face of a solid/sample) and ttype = 2
+         ! injects a fixed heat flux through the outlet face.
          tt = bcs%gb(g)%ttype
          tv = bcs%gb(g)%tval
          qv = bcs%gb(g)%qval
@@ -627,6 +628,10 @@ contains
             end if
          end do
          select case ( tt )
+         case ( 1 )                           ! fixed-temperature (Dirichlet)
+            is_neumann = .false.
+            T_face     = tv
+            q_face     = 0.0_dp
          case ( 2 )                           ! fixed-heat-flux (Neumann)
             is_neumann = .true.
             q_face     = qv

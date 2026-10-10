@@ -19,11 +19,11 @@ module mod_uns_fields
    use mod_uns_mesh
    use mod_uns_geometry
    use mod_uns_bc
-   use mod_uns_control, only: ctrl_t, cell_zone_t, CZ_AUTO, CZ_POROUS
+   use mod_uns_control, only: ctrl_t, cell_zone_t, CZ_AUTO, CZ_POROUS, CZ_SOLID
    implicit none
    private
    public :: fields_t, init_fields, compute_gradients, grad_scalar, &
-             grad_vector, setup_porous_fields, is_porous_cell, &
+             grad_vector, setup_porous_fields, is_porous_cell, is_solid_cell, &
              kink_face_pressure
 
    type :: fields_t
@@ -67,6 +67,15 @@ module mod_uns_fields
       real(dp), allocatable :: rho_s(:)      ! (ncells) solid density
       real(dp), allocatable :: h_sf(:)       ! (ncells) fluid-solid HTC
       real(dp), allocatable :: a_sf(:)       ! (ncells) specific surface area
+      real(dp), allocatable :: q_src(:)      ! (ncells) solid volumetric heat
+                                             !  source (W/m^3), CZ_SOLID only
+      ! --- fluid/porous coupling model flag (set by setup_porous_fields) ---
+      ! .false. = partitioned path: fluid/porous interface faces get the
+      !   explicit kink-consistent face pressure (and optional BJ slip).
+      ! .true.  = unified single-domain DBF: one equation for every cell, no
+      !   explicit interface treatment; the (mu/eps) coefficient jump is
+      !   absorbed by a distance-weighted harmonic mean face coefficient.
+      logical  :: unified = .false.
    end type fields_t
 
 contains
@@ -97,6 +106,7 @@ contains
       allocate( fld%bj_alpha(m%ncells) )
       allocate( fld%k_s(m%ncells), fld%cp_s(m%ncells), fld%rho_s(m%ncells) )
       allocate( fld%h_sf(m%ncells), fld%a_sf(m%ncells) )
+      allocate( fld%q_src(m%ncells) )
 
       fld%u        = 0.0_dp
       fld%u(1,:)   = 0.3472_dp  ! TEMP DEBUG: small 1D init eigenmode test
@@ -136,6 +146,10 @@ contains
       fld%rho_s    = 0.0_dp
       fld%h_sf     = 0.0_dp
       fld%a_sf     = 0.0_dp
+      fld%q_src    = 0.0_dp
+      ! coupling model default: partitioned (setup_porous_fields overrides this
+      ! from ctrl%porous_model once the control file has been read)
+      fld%unified  = .false.
 
       do i = 1, m%nfaces
          c1 = m%f(i)%c1
@@ -167,18 +181,23 @@ contains
 
       ! ---- pressure ------------------------------------------------------------
       ! Interior faces: linear interpolation, EXCEPT at fluid/porous interface
-      ! faces where the pressure slope kinks; there the kink-consistent value
-      ! (one-sided quadratic reconstruction, see kink_face_pressure) is used.
-      ! Consequences: the Green-Gauss pressure gradient of the cells adjacent to
-      ! the interface becomes the correct one-sided slope instead of a value
-      ! biased by the interpolation error at the kink; the momentum pressure
-      ! force (same helper) uses the true interface pressure, so no spurious
-      ! cell-to-cell (odd-even) velocity response is driven at the interface;
-      ! and the Rhie-Chow flux uses the same consistent gradient.
+      ! faces where the pressure slope kinks (partitioned path only); there the
+      ! kink-consistent value (one-sided quadratic reconstruction, see
+      ! kink_face_pressure) is used.  Consequences: the Green-Gauss pressure
+      ! gradient of the cells adjacent to the interface becomes the correct
+      ! one-sided slope instead of a value biased by the interpolation error at
+      ! the kink; the momentum pressure force (same helper) uses the true
+      ! interface pressure, so no spurious cell-to-cell (odd-even) velocity
+      ! response is driven at the interface; and the Rhie-Chow flux uses the
+      ! same consistent gradient.
+      ! In the unified single-domain model (fld%unified) the interface is NOT
+      ! singled out: every interior face uses the plain distance-weighted
+      ! linear interpolation, the same way a pure-NS face would.
       do i = 1, m%nfaces
          if ( m%f(i)%c1 > 0 ) then
-            if ( is_porous_cell(fld,m%f(i)%c0) .neqv. &
-                 is_porous_cell(fld,m%f(i)%c1) ) then
+            if ( .not. fld%unified .and. &
+                 ( is_porous_cell(fld,m%f(i)%c0) .neqv. &
+                   is_porous_cell(fld,m%f(i)%c1) ) ) then
                call kink_face_pressure( m, g, fld, i, phif(i) )
             else
                phif(i) = fld%lf(i)          * fld%p(m%f(i)%c0) &
@@ -260,6 +279,19 @@ contains
                        .or. fld%inertial(kk) > 0.0_dp
 
    end function is_porous_cell
+
+   !----------------------------------------------------------------------------
+   pure logical function is_solid_cell( m, fld, kk )
+      type(mesh_t),   intent(in) :: m
+      type(fields_t), intent(in) :: fld
+      integer,        intent(in) :: kk
+
+      if ( .not. allocated(m%czone) ) then
+         is_solid_cell = .false.
+         return
+      end if
+      is_solid_cell = ( m%cztype(kk) == CZ_SOLID )
+   end function is_solid_cell
 
    !----------------------------------------------------------------------------
    ! Kink-consistent pressure at an interior fluid/porous interface face.
@@ -395,6 +427,11 @@ contains
       logical :: found
       character(len=32) :: want
 
+      ! Record the fluid/porous coupling model.  The flag is consumed by
+      ! compute_gradients (kink face pressure) and momentum_assembly (kink
+      ! pressure force, Beavers-Joseph slip, harmonic face diffusion).
+      fld%unified = ( trim(ctrl%porous_model) == 'unified' )
+
       if ( .not. allocated(m%czone) ) return
 
       do i = 1, m%ncells
@@ -443,6 +480,26 @@ contains
             fld%rho_s(i)    = ctrl%cz(j)%rho_s
             fld%h_sf(i)     = ctrl%cz(j)%h_sf
             fld%a_sf(i)     = ctrl%cz(j)%a_sf
+         else if ( found .and. m%cztype(i) == CZ_SOLID .and. &
+                   ctrl%cz(j)%ztype == CZ_SOLID ) then
+            ! pure stationary solid (conduction only, phase 16): zero porosity /
+            ! permeability so the momentum Darcy sink and the fluid-temperature
+            ! assembly see a fully solid region; k_s/cp_s/rho_s/q_src come from
+            ! the control entry.  The solid-phase arrays are repurposed here as
+            ! the single (only) temperature equation of the solid region.
+            fld%porosity(i)   = 0.0_dp
+            fld%perm(i)       = 0.0_dp
+            fld%perm_dir(:,i) = 0.0_dp
+            fld%inertial(i)   = 0.0_dp
+            fld%disp_l(i)     = 0.0_dp
+            fld%disp_t(i)     = 0.0_dp
+            fld%bj_alpha(i)   = 0.0_dp
+            fld%h_sf(i)       = 0.0_dp
+            fld%a_sf(i)       = 0.0_dp
+            fld%k_s(i)        = ctrl%cz(j)%k_s
+            fld%cp_s(i)       = ctrl%cz(j)%cp_s
+            fld%rho_s(i)      = ctrl%cz(j)%rho_s
+            fld%q_src(i)      = ctrl%cz(j)%q_src
          end if
          ! else: fluid defaults already set by init_fields
       end do

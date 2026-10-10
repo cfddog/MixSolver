@@ -26,7 +26,7 @@ module mod_uns_control
              BC_MASSINLET, &
              BC_OUTFLOW, BC_INTERFACE, &
              bc_type_name, resolve_cell_zones, cell_zone_t, &
-             CZ_AUTO, CZ_FLUID, CZ_POROUS
+             CZ_AUTO, CZ_FLUID, CZ_POROUS, CZ_SOLID
 
    integer, parameter :: BC_NONE     = 0
    integer, parameter :: BC_WALL     = 1
@@ -58,15 +58,22 @@ module mod_uns_control
    integer, parameter :: MAXCZ    = 32
    integer, parameter :: LINELEN  = 512
 
-   ! cell-zone block type specification (phase 3 step B; porous props phase 12)
+   ! cell-zone block type specification (phase 3 step B; porous props phase 12;
+   ! solid region phase 16)
    ! Format in .control:
    !   cell_zone = <id|name> fluid
    !   cell_zone = <id|name> porous  [perm=..] [inertial=..] [porosity=..]
    !                          [k_s=..] [cp_s=..] [rho_s=..] [h_sf=..] [a_sf=..]
+   !   cell_zone = <id|name> solid   [k_s=..] [cp_s=..] [rho_s=..] [q_src=..]
+   ! A 'solid' zone is a pure stationary conducting region (u=v=w=0, porosity=0,
+   ! no fluid phase).  k_s/cp_s/rho_s are the bulk solid material properties and
+   ! q_src is a volumetric heat source (W/m^3); the solid surface behaves as a
+   ! no-slip wall on the fluid side and couples by conjugate heat transfer
+   ! (temperature + heat-flux continuity) at solid<->fluid / solid<->porous faces.
    type :: cell_zone_t
       character(len=32) :: name = ''     ! zone name (if matched by name)
       integer  :: id       = 0            ! zone id (if matched by id)
-      integer  :: ztype    = 0            ! 1=fluid, 2=porous
+      integer  :: ztype    = 0            ! 1=fluid, 2=porous, 3=solid
       real(dp) :: perm     = 0.0_dp       ! isotropic permeability (m^2)
       real(dp) :: perm_xx  = 0.0_dp       ! diagonal tensor xx component (m^2);
       real(dp) :: perm_yy  = 0.0_dp       !   0 = fall back to scalar perm
@@ -86,12 +93,15 @@ module mod_uns_control
       real(dp) :: rho_s    = 0.0_dp       ! solid density (kg/m^3)
       real(dp) :: h_sf     = 0.0_dp       ! fluid-solid heat transfer coeff (W/m^2/K)
       real(dp) :: a_sf     = 0.0_dp       ! specific surface area (m^2/m^3)
+      real(dp) :: q_src    = 0.0_dp       ! solid volumetric heat source (W/m^3),
+                                          !  solid zones only (phase 16)
    end type cell_zone_t
 
    integer, parameter :: CZ_AUTO   = 0   ! cell_zone line supplies coefficients only;
                                          ! block type comes from a VC tag / fluid default
    integer, parameter :: CZ_FLUID  = 1
    integer, parameter :: CZ_POROUS = 2
+   integer, parameter :: CZ_SOLID  = 3   ! pure stationary solid (conduction only)
 
    ! thermal model selection (phase 12)
    !   'lte'  = local thermal equilibrium (single T equation, effective props)
@@ -231,6 +241,20 @@ module mod_uns_control
       ! Each cell zone may be flagged as 'fluid' (default) or 'porous'.
       integer  :: ncz = 0
       type(cell_zone_t) :: cz(MAXCZ)
+      ! --- fluid/porous coupling model ---
+      ! 'partitioned' (default): the fluid and porous blocks are assembled as
+      !   separate regions; the fluid/porous interface faces receive the
+      !   explicit interface treatment (kink-consistent face pressure plus the
+      !   optional Beavers-Joseph slip).  Bit-identical to the legacy path.
+      ! 'unified': ONE Darcy-Brinkman-Forchheimer momentum equation is
+      !   assembled for EVERY cell, driven only by the per-cell coefficients
+      !   (porosity, permeability, inertial).  Free-stream cells carry
+      !   eps=1, 1/K=0, cE=0, so the DBF terms vanish and the equation
+      !   degenerates to the original NS equation; porous cells keep them and
+      !   the equation is DBF.  The interface is NOT treated explicitly: the
+      !   coefficient jump is absorbed by the distance-weighted HARMONIC mean
+      !   face diffusion coefficient (Patankar Eq.40).
+      character(len=16) :: porous_model = 'partitioned'
    end type ctrl_t
 
 contains
@@ -417,6 +441,20 @@ contains
                ier = 2; exit
             end select
 
+         ! --- fluid/porous coupling model (unified single-domain DBF) ---
+         ! porous_model = partitioned | unified  (see ctrl_t comment)
+         case ( 'porous_model' )
+            select case ( trim(adjustl( lowercase(val) ) ) )
+            case ( 'partitioned', 'partition', 'block' )
+               ctrl%porous_model = 'partitioned'
+            case ( 'unified', 'one-domain', 'onedomain', 'single-domain' )
+               ctrl%porous_model = 'unified'
+            case default
+               write(*,'(a)') 'ERROR: porous_model must be partitioned or ' &
+                              // 'unified: ' // trim(val)
+               ier = 2; exit
+            end select
+
          case ( 'init_t' );     read( val, *, iostat = ios ) ctrl%init_T
          case ( 't_pert' );     read( val, *, iostat = ios ) ctrl%t_pert
 
@@ -583,9 +621,9 @@ contains
 
       if ( loud ) then
          do iz = 1, m%nczone
-            nmatched = count_cells_type( m, m%czt(iz)%id, CZ_POROUS )
-            npor     = nmatched
-            if ( npor > 0 ) then
+            if ( count_cells_type( m, m%czt(iz)%id, CZ_SOLID ) > 0 ) then
+               call zone_source( iz, 'solid' )
+            else if ( count_cells_type( m, m%czt(iz)%id, CZ_POROUS ) > 0 ) then
                call zone_source( iz, 'porous' )
             else
                call zone_source( iz, 'fluid'  )
@@ -706,6 +744,9 @@ contains
                case ( 'fluid' )
                   ztype = CZ_FLUID
                   return
+               case ( 'solid' )
+                  ztype = CZ_SOLID
+                  return
                end select
             end if
          end if
@@ -788,8 +829,10 @@ contains
                cz%ztype = CZ_FLUID
             case ( 'porous' )
                cz%ztype = CZ_POROUS
+            case ( 'solid' )
+               cz%ztype = CZ_SOLID
             case default
-               write(*,'(a)') 'ERROR: cell_zone type must be fluid or porous: ' // trim(token)
+               write(*,'(a)') 'ERROR: cell_zone type must be fluid, porous or solid: ' // trim(token)
                ier = 9
                return
             end select
@@ -902,6 +945,12 @@ contains
                read( kval, *, iostat = ios ) cz%a_sf
                if ( ios /= 0 ) then
                   write(*,'(a)') 'ERROR: bad a_sf value: ' // trim(kval)
+                  ier = 9; return
+               end if
+            case ( 'q_src' )
+               read( kval, *, iostat = ios ) cz%q_src
+               if ( ios /= 0 ) then
+                  write(*,'(a)') 'ERROR: bad q_src value: ' // trim(kval)
                   ier = 9; return
                end if
             case default

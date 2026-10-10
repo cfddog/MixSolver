@@ -567,12 +567,44 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
 2. [待办] NEU → 内部 mesh_t 的映射：体区域 fluid/porous 属性、面区域 BC、
    interface zone 登记，复用现有 build_bc / register_interface_zones 流程。
 
+### 阶段 12a：CGNS 网格输入（2026-10-10 登记，可选编译）
+
+1. [待办] 增加 **CGNS（`.cgns`/`.h5`）** 网格＋BC＋体区域读取器，作为非结构网格
+   与边界条件的第三种输入格式（现有：Fluent CAS；阶段 12：Gambit NEU）。
+   CGNS 走与 CAS/NEU 同一 `mesh_t` 登记 / `build_bc` / `resolve_cell_zones` 流程。
+2. [待办] **编译时决策规则（用户硬性要求，CGNS 不是编译通过的必须项）**：
+   后续编译过程中，`Makefile` 探测 CGNS 库是否可用（`pkg-config --exists cgns`
+   或 `-lcgns` 试链＋头文件 `cgnslib_f.h` 存在）。
+   - **若系统已安装且 CGNS 能工作** → 采用 CGNS 路径：`-DHAVE_CGNS` 并链接，
+     源码 `#ifdef HAVE_CGNS` 守护 `read_cgns()`（与 `#ifdef HAVE_MPI` 同构）。
+   - **若系统未安装 CGNS 或探测失败** → 自动回退采用 `*.cas` 或 `*.neu`（阶段12）
+     文件，静默走原路径，编译照常通过、不报错。
+3. [待办] 入口 `read_mesh` 按扩展名分派：`.cgns/.h5`→CGNS、`.cas`→CAS、`.neu`→NEU；
+   `read_cgns` 返回与 `read_cas` 相同的 `mesh_t`，无新增物理参数。
+4. [待办] 验证：同几何下 `.cgns` 与 `.cas` 的 `solve` 结果位级一致
+   （对照 `cases/porous_plug` 等）；`make` 在无 CGNS 库的机器上依旧 RC=0。
+5. [待办] 文档：手册 §3 输入文件、附录 A（`*.control` 与格式）、`93_changelog.tex`。
+
 ### 阶段 13：结构求解器演进（需求第 10、11 条）
 
 1. [待办/暂缓] 结构 SST 湍流模型存在已知 bug，修复前**不启用**
    （当前算例一律 Iflag_turbulence_model=0 层流）；修复后补 SST 回归算例。
+   （2026-10-10 用户「计入待办」⇒ 细则已登记到 `memory-bank/progress.md`
+   §待办「湍流模型」条目 ②：现状代码位置 / 首查嫌疑 / 最小复现 / 验收清单。）
 2. [待办，远期] 结构求解器改为 **Liao 的格心型有限差分方法**，
    要求兼容现有 Riemann 通量/求解器接口；切换需保持 M6-wing 等既有回归可对拍。
+
+### 阶段 14：湍流模型（2026-10-10 登记）
+
+1. [待办] **非结构（不可压缩）侧新增 SST 与 k-ε 湍流模型**：当前 uns 侧无任何湍流
+   模型（`ctrl_t%mu` 为常数层流黏度，无 `mut/k/w/eps`，无壁面距离）。新增
+   `turb_model = none | ke | sst`（默认 `none`，须位级不变）、`mod_uns_turb.f90`
+   （壁距 + eddy viscosity + k/ω(ε) 输运 + 壁面/远场/出口 BC）、
+   `fields_t%mut/k/w/wall_dist`，并把 `mod_uns_simple.f90` 的 `ctrl%mu` 面系数改为
+   `mu + mut_f`（距离加权调和平均）；多孔内 `mut` 口径、与 BJ/Zhang 界面封闭的
+   相互作用须先定。细则与验收清单见 `memory-bank/progress.md` §待办「湍流模型」条目 ①。
+2. [待办] **修正可压缩（结构）侧 SST 湍流模型**（`Iflag_turbulence_model=3`，见阶段 13
+   第 1 条）。细则（首查嫌疑、最小复现、验收）见同一 §待办条目 ②。
 
 ---
 
@@ -625,4 +657,8 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
 | P2 | 阶段10: 流场自动保存与耦合联合重启（Plot3D 节点插值） | 2-3天 | 阶段6 |
 | P2 | 阶段11: 多类型界面（C1 / 流 B / C2 / 分派表均完成；余 uns 绝对压力偏置修复） | 余压力偏置 | 阶段8,9 |
 | P3 | 阶段12: Gambit NEU 网格输入 | 2-3天 | 阶段3 |
+| P3 | 阶段12a: CGNS 网格输入（可选编译，缺库回退 CAS/NEU） | 2-3天 | 阶段3, 阶段12 |
 | P3 | 阶段13: 结构求解器演进（SST 修复；Liao 格心型 FD，远期） | 远期 | — |
+| P3 | 阶段14: 湍流模型（uns 新增 SST/k-ε；struct SST 修复） | 视算例 | 阶段3, 阶段13 |
+| P3 | 阶段15: 唯一可执行入口 `bin/mixnsolver` 收敛 + `mix.control` 的 `mode` 键（已完成，见 progress.md） | 已完成 | — |
+| P3 | 阶段16: 固体传热求解 + 固体-流体（低速）/固体-多孔界面（CHT 共轭传热，CZ_SOLID=3） | 2-3天 | 阶段3, 阶段9 |

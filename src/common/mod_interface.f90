@@ -47,10 +47,11 @@ module mod_interface
    integer, parameter :: IFACE_UNS_FLUID_POROUS  = 3  ! uns(fluid)        <-> uns(porous)            : C1 (internal)
 
    ! own-side cell-zone class stored on each registered face.  Mirrors the
-   ! unstructured CZ_FLUID / CZ_POROUS constants without creating a
+   ! unstructured CZ_FLUID / CZ_POROUS / CZ_SOLID constants without creating a
    ! common -> unstructured module dependency.
    integer, parameter :: IFACE_CZ_FLUID  = 1
    integer, parameter :: IFACE_CZ_POROUS = 2
+   integer, parameter :: IFACE_CZ_SOLID  = 3
 
    !---- exchange-quantity list vocabulary (phase 11) -----------------------
    ! exchanged quantity id

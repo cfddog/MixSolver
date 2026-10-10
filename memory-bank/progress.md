@@ -4,6 +4,45 @@
 
 ## 已完成
 
+- [x] **阶段 16：固体传热求解 + 固体-流体（低速）/固体-多孔界面（CHT 共轭传热）（2026-10-10）**：
+  - **目标**（用户要求「在目前非结构框架下，增加固体传热求解，增加固体-低速界面条件，
+    多孔-固体界面条件」；先定方案再执行）：纯静止固体导热区域（`u=v=w=0`）、支持
+    可配置**体积热源 `q_src`**，界面用**共轭传热 CHT**（温度连续＋热流连续，串联热阻
+    谐波平均面导热系数），覆盖 流体↔固体、多孔↔固体。
+  - **数据结构/解析**：`mod_uns_control` 新增 `CZ_SOLID=3`、`cell_zone = <zone> solid
+    [k_s=..] [cp_s=..] [rho_s=..] [q_src=..]`（`pc 66 及其关键词解析`）；显式类型词
+    优先级高于 VC 标签；`mod_uns_fields` 新增 `fld%q_src(:)`（CZ_SOLID only）＋
+    `init_fields` 分配初始化、`setup_porous_fields` 固体分支（porosity=0、perm=0…）、
+    `is_solid_cell(m,fld,kk)` 辅助函数。
+  - **固体导热求解**：`mod_uns_simple` 新增 `solid_phase_active(ctrl,m)`（ltne 或存在
+    CZ_SOLID 时开启），3 处 `solid_temperature_assembly` 门控由 `thermal_model=='ltne'`
+    放宽到该函数；`solid_temperature_assembly` 增体积热源 Q 循环。
+  - **固体区动量冻结**：`momentum_assembly` 增强隐式对角源
+    `SOLID_VEL_SOURCE=1.0e15` ＋ `zero_solid_velocity(m,fld)`（固体单元 u 及 u_old 置零），
+    3 个动量求解后及 `correct_fields` 末尾调用（验证 `du_max=0`、`mass-imbal=0`）。
+  - **CHT 界面**（阶段 D）：`temperature_assembly` 内部面循环增 CHT 分支（流体/多孔
+    ↔固体：`is_s0 .or. is_s1` 时经 `ch_face_U(A,d,k)` = `A/(d1/k1+d2/k2)` 耦合
+    `fld%T` 带驱动温度 `fld%T_s`，固体-固体则 cycle）且末尾 `has_solid` 时把固体单元
+    `T` 固定在 `T_s`；`solid_temperature_assembly` 内部面增对应 CHT 分支（固↔流/多孔
+    耦合 `fld%T_s` 带驱动 `fld%T`）、末尾固定非固非多孔单元 `T_s`。
+  - **界面分类/VTU**：`mod_interface` 增 `IFACE_CZ_SOLID=3`；`mod_uns_geometry`
+    `tag_interface_cell_zones` 先判 porous 再判 solid；`mod_uns_output` vtk_write 增
+    `heat_source_solid` 数组输出 `fld%q_src`、`temperature_solid` 输出条件放宽到含固体。
+  - **热 BC 支持出流定温**：`mod_uns_bc` `bc_face_T` 的 `BC_POUTLET/BC_OUTFLOW` 分支原只
+    支持 `ttype=2`（定热流），`ttype=1`（定温）被 `case default` 当作零梯度出流 ⇒ 冷壁
+    无法锚定；新增 `case(1)` 定温 Dirichlet（为固体一维导热冷端面提供定温）。
+  - **算例验证** `cases/solid_conduction/run/`（40×2×1 管，全体 CZ_SOLID，`k_s=15
+    cp_s=460 rho_s=7800`，热壁 zone6 wall `tbc 6 1 400.0`、冷壁 zone7 pressure-outlet
+    `tbc 7 1 300.0`，其余绝热）：冷壁**已锚定**（修复前 Tmin 由 300 持续升向 395；修复后
+    Tmin 保持 301），`du_max=0`、`mass-imbal=0`，1742 步收敛，`temperature_solid` 单值
+    **线性剖面**，壁邻胞心 301.2/398.7 K（对应 40 胞一阶壁面偏移 300+1.25 / 400−1.25），
+    `heat_source_solid=0`。**遗留/说明**：纯固体全壁面无压参考导致 `lin-res=NaN`
+    （动量/PPE 算子退化，非本阶段引入，不参与导热迭代，不影响 T_s；流固界面算例由流体区
+    锚压，可安全忽略）。该依托 `docs/plan.md` 阶段 16 与优先级表行。
+  - **涉及**：`src/unstructured/{mod_uns_control,mod_uns_fields,mod_uns_simple,
+    mod_uns_bc,mod_uns_geometry,mod_uns_output}.f90`、`src/common/mod_interface.f90`、
+    `cases/solid_conduction/*`、`docs/plan.md`、`memory-bank/progress.md`。
+
 - [x] **阶段 15 收尾：唯一可执行入口收敛为 `bin/mixnsolver`（2026-10-10）**：
   物理删除 4 个旧入口主程序（`src/main.f90`、`structured/main.f90`、
   `unstructured/main_uns.f90`、`unstructured/main_uns_mpi.f90`；逻辑早前已抽入
@@ -503,13 +542,15 @@
 
 ## 待办
 
-### 输入格式：CGNS（2026-10-10 登记，用户「写入待办，不作为编译通过必须项」）
+### 输入格式：CGNS（2026-10-10 登记，用户「写入待办，不作为编译通过必须项」；2026-10-10 补充编译决策规则）
+
+- [ ] **编译时决策规则（用户硬性要求）**：后续编译过程中，**若系统已安装且 CGNS 库能工作（链接/头文件探测通过），则采用 CGNS 路径**；**若系统未安装 CGNS 或探测失败，则自动回退采用 `*.cas` 或 `*.neu`（阶段12）文件**，编译照常通过、不报错。CGNS 不是编译通过的必须项。
 
 - [ ] 非结构侧解析 **CGNS（`.cgns`/`.h5`）** 网格＋BC＋体区域（cell zone 属性）。
   **定位**：`cas_reader`（`src/unstructured/mod_uns_cas_reader.f90`）目前只读 Fluent
   ASCII CAS；CGNS 走同一 `mesh_t` 登记/`build_bc`/`resolve_cell_zones` 流程，作为
   `.control`（`bc`/`cell_zone`）之上的一个输入开关即可。
-  **可选编译（用户硬性要求，CGNS 不是编译通过的必须项）**：
+  **可选编译实现（与上方决策规则对应）**：
   - 编译（`Makefile`）时\textbf{探测 CGNS 库是否可用}：`pkg-config --exists cgns` 或
     `-lcgns` 试链＋头文件 `cgnslib_f.h` 存在；可用则 `-DHAVE_CGNS` 并链接
     `LDLIBS`；不可用则**静默走原 `*.cas` / `*.neu`（阶段12）路径**，编译照常通过。

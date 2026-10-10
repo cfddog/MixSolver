@@ -1,0 +1,7 @@
+# mix.control -- solid-conduction validation (uns-only)
+mode          = uns
+
+rho_ref = 1.177
+T_ref   = 300.0
+L_ref   = 0.1
+u_ref   = 0.1

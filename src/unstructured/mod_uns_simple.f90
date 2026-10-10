@@ -146,6 +146,7 @@ contains
             ressum = ressum + resl
          end do
          fld%apc = ap / ctrl%alpha_u    ! relaxed diagonal for Rhie-Chow
+         call zero_solid_velocity( m, fld )
 
          ! 2. gradients (current state) -------------------------------------------
          call compute_gradients( m, g, bcs, fld )
@@ -186,8 +187,8 @@ contains
          end if
          itl_max = max( itl_max, itl )
 
-         ! 5c. solid temperature equation (LTNE only; no convection) -------------
-         if ( ctrl%thermal_model == 'ltne' ) then
+         ! 5c. solid temperature equation (LTNE / solid regions; no convection)
+         if ( solid_phase_active( ctrl, m ) ) then
             call solid_temperature_assembly( m, g, ctrl, bcs, fld, amat, rhs, ap )
             call bicgstab_ilu0( amat, rhs, fld%T_s, ctrl%lin_tol, &
                                 ctrl%lin_max, itl, resl, ierr )
@@ -385,6 +386,7 @@ contains
             ressum = ressum + resl
          end do
          fld%apc = ap                      ! un-relaxed diag for Rhie-Chow
+         call zero_solid_velocity( m, fld )
 
          ! 3. gradients + Rhie-Chow fluxes from predicted velocity --------------
          call compute_gradients( m, g, bcs, fld )
@@ -429,8 +431,8 @@ contains
          end if
          itl_max = max( itl_max, itl )
 
-         ! 4c. solid temperature equation (LTNE only)
-         if ( ctrl%thermal_model == 'ltne' ) then
+         ! 4c. solid temperature equation (LTNE / solid regions)
+         if ( solid_phase_active( ctrl, m ) ) then
             call solid_temperature_assembly( m, g, ctrl, bcs, fld, amat, rhs, ap )
             call bicgstab_ilu0( amat, rhs, fld%T_s, ctrl%lin_tol, &
                                 ctrl%lin_max, itl, resl, ierr )
@@ -634,6 +636,7 @@ contains
                ressum = ressum + resl
             end do
             fld%apc = ap / ctrl%alpha_u   ! relaxed diag for Rhie-Chow
+            call zero_solid_velocity( m, fld )
 
             ! 2. gradients + Rhie-Chow fluxes
             call compute_gradients( m, g, bcs, fld )
@@ -674,8 +677,8 @@ contains
          end if
          itl_max = max( itl_max, itl )
 
-         ! 4b. solid temperature equation (LTNE only)
-         if ( ctrl%thermal_model == 'ltne' ) then
+         ! 4b. solid temperature equation (LTNE / solid regions)
+         if ( solid_phase_active( ctrl, m ) ) then
             call solid_temperature_assembly( m, g, ctrl, bcs, fld, amat, rhs, ap )
             call bicgstab_ilu0( amat, rhs, fld%T_s, ctrl%lin_tol, &
                                 ctrl%lin_max, itl, resl, ierr )
@@ -888,6 +891,11 @@ contains
       logical  :: is_bj
       real(dp), allocatable :: psi(:)
 
+      ! Strong implicit diagonal source for stationary solid cells (W/m^3 -> Pa/m
+      ! of velocity body-force after *vol).  ~1e15 is many orders above the
+      ! convective/diffusive terms, so the solid-cell velocity solves to ~0.
+      real(dp), parameter :: SOLID_VEL_SOURCE = 1.0e15_dp
+
       A%val = 0.0_dp
       rhs   = 0.0_dp
       ap    = 0.0_dp
@@ -917,7 +925,20 @@ contains
          ! effective (Brinkman) viscosity: mu_eff = mu / porosity
          mu_eff0 = ctrl%mu / fld%porosity(c0)
          mu_eff1 = ctrl%mu / fld%porosity(c1)
-         mu_f    = fld%lf(i) * mu_eff0 + (1.0_dp - fld%lf(i)) * mu_eff1
+         if ( fld%unified ) then
+            ! Unified single-domain model: every face carries the same two-point
+            ! diffusion formula, but where (mu/eps) jumps (fluid/porous
+            ! interface) the face value is the series -- i.e. distance-weighted
+            ! HARMONIC -- mean of the two cell coefficients (Patankar Eq.40).
+            ! For a uniform coefficient (eps0 = eps1, e.g. all-fluid or
+            ! all-porous faces) this is bit-identical to the arithmetic mean
+            ! used on the partitioned path, so single-region cases are
+            ! untouched.
+            mu_f = 1.0_dp / ( (1.0_dp - fld%lf(i)) / mu_eff0 &
+                            + fld%lf(i)         / mu_eff1 )
+         else
+            mu_f = fld%lf(i) * mu_eff0 + (1.0_dp - fld%lf(i)) * mu_eff1
+         end if
          if ( ctrl%nonorth_corr > 0.0_dp ) then
             ! over-relaxed decomposition: implicit normal part
             ! D = mu_eff*|Sf|^2/(Sf.d) >= mu_eff*|Sf|/|d| (Sf.d > 0 for convex cells)
@@ -940,9 +961,11 @@ contains
          ! faces); the (D-C)*n_comp*n_k cross part is deferred to the rhs
          ! (lagged, equal and opposite on both cells -> momentum conserving).
          ! Default bj_alpha = 0 keeps this branch bit-identically inactive.
+         ! In the unified single-domain model the interface is NOT treated
+         ! explicitly, so the Beavers-Joseph slip branch is disabled entirely.
          is_bj  = .false.
          D_face = D
-         if ( m%cztype(c0) /= m%cztype(c1) ) then
+         if ( .not. fld%unified .and. m%cztype(c0) /= m%cztype(c1) ) then
             if ( m%cztype(c0) == CZ_POROUS ) then
                cp = c0 ; cf = c1
             else
@@ -1020,7 +1043,10 @@ contains
          ! face pressure there (see kink_face_pressure); it collapses to the
          ! plain interpolation for a locally linear field, so single-phase
          ! cases are untouched.
-         if ( is_porous_cell(fld,c0) .neqv. is_porous_cell(fld,c1) ) then
+         ! In the unified single-domain model the interface is NOT singled out:
+         ! the plain distance-weighted interpolation is used everywhere.
+         if ( .not. fld%unified .and. &
+              ( is_porous_cell(fld,c0) .neqv. is_porous_cell(fld,c1) ) ) then
             call kink_face_pressure( m, g, fld, i, pf )
          else
             pf = fld%lf(i) * fld%p(c0) + (1.0_dp - fld%lf(i)) * fld%p(c1)
@@ -1185,6 +1211,13 @@ contains
             rhs(kk) = rhs(kk) - ctrl%rho * fld%inertial(kk) * umag &
                       * fld%u(comp,kk) * g%vol(kk)
          end if
+         ! Stationary solid (CZ_SOLID, phase 16): a very large purely-implicit
+         ! diagonal source (no matching RHS) drives the solid-cell velocity to ~0
+         ! in the momentum solve; apc then also becomes huge so the pressure-
+         ! correction step leaves it unchanged.  zero_solid_velocity afterwards
+         ! makes u exactly 0.
+         if ( is_solid_cell( m, fld, kk ) ) &
+            ap(kk) = ap(kk) + SOLID_VEL_SOURCE * g%vol(kk)
       end do
 
       ! ---- transient time term ------------------------------------------------
@@ -1637,6 +1670,9 @@ contains
          fld%flux(i) = fld%flux(i) - af * ( pp(c1) - pp(c0) )
       end do
 
+      ! solid regions stay rigid after the pressure-correction velocity update
+      call zero_solid_velocity( m, fld )
+
    end subroutine correct_fields
 
    !----------------------------------------------------------------------------
@@ -1661,6 +1697,8 @@ contains
       real(dp) :: gf(3), dvec(3), ndsf(3)
       real(dp) :: k_eff0, k_eff1, kf, hasf, kft, kst, kd_f, umag, umag2
       logical  :: is_neumann, is_ltne
+      logical  :: is_s0, is_s1, has_solid
+      real(dp) :: kf_ch
       real(dp), allocatable :: psi_T(:)
       real(dp), allocatable :: kdisp(:,:)   ! (3,ncells) dispersion conductivity
 
@@ -1702,6 +1740,33 @@ contains
          c1 = m%f(i)%c1
          if ( c1 == 0 ) cycle
          c0 = m%f(i)%c0
+
+         ! ---- conjugate heat transfer (CHT) face: fluid/porous <-> solid -------
+         ! The solid region is solved by T_s, not part of the fluid-T domain.  A
+         ! solid<->fluid face therefore carries the coupling as a series-resistance
+         ! heat source (ch_face_U): the fluid driving temperature is the lagged
+         ! solid-cell T_s.
+         is_s0 = is_solid_cell( m, fld, c0 )
+         is_s1 = is_solid_cell( m, fld, c1 )
+         if ( is_s0 .or. is_s1 ) then
+            if ( is_s0 .and. is_s1 ) cycle          ! solid-solid: not in fluid T
+            if ( is_s0 ) then                       ! c0 solid, c1 fluid
+               kf_ch = ch_face_U( g%area(i), &
+                        norm2( g%xf(:,i) - g%xc(:,c1) ), &
+                        norm2( g%xf(:,i) - g%xc(:,c0) ), &
+                        fld%porosity(c1) * ctrl%k_cond, fld%k_s(c0) )
+               ap_T(c1) = ap_T(c1) + kf_ch
+               rhs(c1)  = rhs(c1)  + kf_ch * fld%T_s(c0)
+            else                                    ! c0 fluid, c1 solid
+               kf_ch = ch_face_U( g%area(i), &
+                        norm2( g%xf(:,i) - g%xc(:,c0) ), &
+                        norm2( g%xf(:,i) - g%xc(:,c1) ), &
+                        fld%porosity(c0) * ctrl%k_cond, fld%k_s(c1) )
+               ap_T(c0) = ap_T(c0) + kf_ch
+               rhs(c0)  = rhs(c0)  + kf_ch * fld%T_s(c1)
+            end if
+            cycle
+         end if
 
          ! convective mass flux for T: cp * (rho*u.S) -- flux already has rho.
          ! Convection is carried by the fluid phase, so it always uses cp.
@@ -1889,9 +1954,84 @@ contains
          end do
       end if
 
+      ! Solid cells are excluded from the fluid-T domain (their conduction lives
+      ! in T_s); pin the stored fluid temperature there to T_s so the matrix row
+      ! stays non-singular and post-processing/coupling output is well-defined.
+      has_solid = .false.
+      if ( allocated(m%cztype) ) has_solid = any( m%cztype == CZ_SOLID )
+      if ( has_solid ) then
+         do kk = 1, m%ncells
+            if ( is_solid_cell( m, fld, kk ) ) then
+               kd = pos_of( A, kk, kk )
+               A%val(kd) = 1.0_dp
+               rhs(kk)   = fld%T_s(kk)
+            end if
+         end do
+      end if
+
       if ( allocated(psi_T) ) deallocate( psi_T )
 
    end subroutine temperature_assembly
+
+   !----------------------------------------------------------------------------
+   ! True when the solid-phase temperature equation must be assembled: either the
+   ! LTNE two-temperature model is enabled, or the mesh contains at least one
+   ! resolved CZ_SOLID conduction region (phase 16).  In a pure-solid-zone run the
+   ! fluid temperature field is still solved (it is passive there), but the solid
+   ! conduction in T_s is what carries the physics.
+   !----------------------------------------------------------------------------
+   pure logical function solid_phase_active( ctrl, m )
+      type(ctrl_t), intent(in) :: ctrl
+      type(mesh_t), intent(in) :: m
+      if ( ctrl%thermal_model == 'ltne' ) then
+         solid_phase_active = .true.
+      else if ( allocated(m%cztype) ) then
+         solid_phase_active = any( m%cztype == CZ_SOLID )
+      else
+         solid_phase_active = .false.
+      end if
+   end function solid_phase_active
+
+   !---------------------------------------------------------------------------
+   ! Enforce the no-slip condition inside CZ_SOLID regions: set u=v=w=0 (and, for
+   ! transient consistency, the stored u_old).  Called right after the momentum
+   ! solve and after the pressure-correction step so the rigid solid stays
+   ! exactly static, complementing the strong momentum diagonal source.
+   !---------------------------------------------------------------------------
+   subroutine zero_solid_velocity( m, fld )
+      type(mesh_t),   intent(in)    :: m
+      type(fields_t), intent(inout) :: fld
+      integer :: kk
+      do kk = 1, m%ncells
+         if ( is_solid_cell( m, fld, kk ) ) fld%u(:,kk) = 0.0_dp
+      end do
+      if ( allocated(fld%u_old) ) then
+         do kk = 1, m%ncells
+            if ( is_solid_cell( m, fld, kk ) ) fld%u_old(:,kk) = 0.0_dp
+         end do
+      end if
+   end subroutine zero_solid_velocity
+
+   !---------------------------------------------------------------------------
+   ! Conjugate-heat-transfer (CHT) interface coefficient (phase 16).
+   !
+   ! A face between a fluid/porous cell and a solid cell is a series combination
+   ! of two thermal resistances, one per cell-half:
+   !
+   !   U*A = A / ( d1/k1 + d2/k2 )         (W/K),  d_i = |face - cell-centre|
+   !
+   ! where (k1,k2) are the phase conductivities on each side: the solid uses the
+   ! bulk k_s, the fluid side uses the FLUID-phase conductivity eps*k_cond (the
+   ! phase that actually contacts the solid).  The SAME U*A must be used, with
+   ! equal-and-opposite driving temperatures, by temperature_assembly (fluid
+   ! equation) and by solid_temperature_assembly (solid equation) so the
+   ! interfacial flux is conserved at convergence.
+   !---------------------------------------------------------------------------
+   pure real(dp) function ch_face_U( A, d1, d2, k1, k2 )
+      real(dp), intent(in) :: A, d1, d2, k1, k2
+      ch_face_U = A / ( d1 / max(k1, 1.0e-30_dp) &
+                      + d2 / max(k2, 1.0e-30_dp) )
+   end function ch_face_U
 
    !----------------------------------------------------------------------------
    ! Solid-phase energy equation (LTNE, phase 12).
@@ -1917,6 +2057,8 @@ contains
       real(dp) :: Ds, dn, dw, sd, at, T_face, q_face, noc, hasf
       real(dp) :: gf(3), dvec(3), k_s0, k_s1, ksf, kft
       logical  :: is_neumann
+      logical  :: is_s0, is_s1, has_solid
+      real(dp) :: kf_ch
 
       A%val = 0.0_dp
       rhs   = 0.0_dp
@@ -1928,6 +2070,32 @@ contains
          c1 = m%f(i)%c1
          if ( c1 == 0 ) cycle
          c0 = m%f(i)%c0
+
+         ! ---- conjugate heat transfer (CHT) face: fluid/porous <-> solid -------
+         ! Solid-boundary conduction to a fluid/porous neighbour is carried by the
+         ! shared series-resistance CHT source (ch_face_U); the driving temperature
+         ! is the lagged fluid-cell T.  Solid-solid faces keep normal solid
+         ! conduction below; fluid-fluid faces have (1-eps)*k_s = 0 (no-op).
+         is_s0 = is_solid_cell( m, fld, c0 )
+         is_s1 = is_solid_cell( m, fld, c1 )
+         if ( is_s0 .neqv. is_s1 ) then
+            if ( is_s0 ) then                       ! c0 solid, c1 fluid
+               kf_ch = ch_face_U( g%area(i), &
+                        norm2( g%xf(:,i) - g%xc(:,c0) ), &
+                        norm2( g%xf(:,i) - g%xc(:,c1) ), &
+                        fld%k_s(c0), fld%porosity(c1) * ctrl%k_cond )
+               ap_Ts(c0) = ap_Ts(c0) + kf_ch
+               rhs(c0)   = rhs(c0)   + kf_ch * fld%T(c1)
+            else                                    ! c0 fluid, c1 solid
+               kf_ch = ch_face_U( g%area(i), &
+                        norm2( g%xf(:,i) - g%xc(:,c1) ), &
+                        norm2( g%xf(:,i) - g%xc(:,c0) ), &
+                        fld%k_s(c1), fld%porosity(c0) * ctrl%k_cond )
+               ap_Ts(c1) = ap_Ts(c1) + kf_ch
+               rhs(c1)   = rhs(c1)   + kf_ch * fld%T(c0)
+            end if
+            cycle
+         end if
 
          dvec = g%xc(:,c1) - g%xc(:,c0)
          dn   = norm2( dvec )
@@ -2003,6 +2171,15 @@ contains
          end if
       end do
 
+      ! ---- volumetric heat source (CZ_SOLID regions, phase 16) -----------------
+      ! +q_src*V on the RHS.  q_src is set to the control-file value by
+      ! setup_porous_fields and is 0 everywhere except solid cells, so this loop
+      ! is a no-op for fluid/porous-only runs.
+      do kk = 1, m%ncells
+         if ( fld%q_src(kk) /= 0.0_dp ) &
+            rhs(kk) = rhs(kk) + fld%q_src(kk) * g%vol(kk)
+      end do
+
       ! ---- transient time term ------------------------------------------------
       ! at = (1-eps)*rho_s*cp_s * V / dt
       select case ( fld%ts_order )
@@ -2035,6 +2212,21 @@ contains
             A%val(kd) = ap_Ts(kk) / ctrl%alpha_u
             rhs(kk) = rhs(kk) &
                     + ( 1.0_dp - ctrl%alpha_u ) / ctrl%alpha_u * ap_Ts(kk) * fld%T_s(kk)
+         end do
+      end if
+
+      ! When a solid region is present, pure fluid cells have no solid-phase
+      ! equation (porosity=1, no h_sf): pin their T_s to the stored value so the
+      ! matrix row stays non-singular.  Porous and solid cells keep their equations.
+      has_solid = .false.
+      if ( allocated(m%cztype) ) has_solid = any( m%cztype == CZ_SOLID )
+      if ( has_solid ) then
+         do kk = 1, m%ncells
+            if ( is_solid_cell( m, fld, kk ) ) cycle
+            if ( is_porous_cell( fld, kk ) ) cycle
+            kd = pos_of( A, kk, kk )
+            A%val(kd) = 1.0_dp
+            rhs(kk)   = fld%T_s(kk)
          end do
       end if
 

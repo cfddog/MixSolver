@@ -125,6 +125,7 @@ contains
 
       integer  :: iu, ios, i, j, k, c, f, nn, nsub, ntets, cen_id
       integer  :: tri(3)
+      logical  :: has_solid
 
       ier = 0
 
@@ -250,9 +251,15 @@ contains
          end do
       end do
       write(iu,'(a)') '        </DataArray>'
-      ! solid temperature (LTNE): written only when fluid-solid heat exchange
-      ! is active somewhere in the domain (h_sf*a_sf > 0).
-      if ( maxval( fld%h_sf * fld%a_sf ) > 0.0_dp ) then
+      ! solid temperature: written when the LTNE/porous fluid-solid exchange is
+      ! active (h_sf*a_sf>0) OR a solid conduction region (CZ_SOLID) is present.
+      has_solid = .false.
+      do c = 1, m%ncells
+         if ( is_solid_cell( m, fld, c ) ) then
+            has_solid = .true.; exit
+         end if
+      end do
+      if ( maxval( fld%h_sf * fld%a_sf ) > 0.0_dp .or. has_solid ) then
          write(iu,'(a)') '        <DataArray type="Float64" '// &
                          'Name="temperature_solid" format="ascii">'
          do c = 1, m%ncells
@@ -262,6 +269,22 @@ contains
             end do
             do j = 1, nsub
                write(iu,'(es17.8,1x)') fld%T_s(c)
+            end do
+         end do
+         write(iu,'(a)') '        </DataArray>'
+      end if
+      ! solid volumetric heat source (phase 16): only meaningful with a solid
+      ! region, where it is non-zero in the volume-heated cells.
+      if ( has_solid ) then
+         write(iu,'(a)') '        <DataArray type="Float64" '// &
+                         'Name="heat_source_solid" format="ascii">'
+         do c = 1, m%ncells
+            nsub = 0
+            do k = conn%cf_ptr(c)+1, conn%cf_ptr(c+1)
+               nsub = nsub + m%f(conn%cf(k))%nn - 2
+            end do
+            do j = 1, nsub
+               write(iu,'(es17.8,1x)') fld%q_src(c)
             end do
          end do
          write(iu,'(a)') '        </DataArray>'
