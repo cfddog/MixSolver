@@ -1,4 +1,31 @@
 # 工作日志 (worklog)
+## 2026-10-10 | 阶段 15 收尾：唯一可执行入口收敛为 bin/mixnsolver
+
+- 需求（用户）：「阶段15的工作没有收尾，收尾后计入记忆文件，并提交代码」。
+- 收尾内容：把阶段15「零参数自分发」真正收敛为**唯一**求解器入口，移除全部旧的
+  多余/独立驱动可执行目标：
+  - 删除 4 个旧入口主程序：`src/main.f90`、`src/structured/main.f90`、
+    `src/unstructured/main_uns.f90`、`src/unstructured/main_uns_mpi.f90`
+    （逻辑早前已抽入 `mod_mix_driver`/`mod_struct_driver`/`mod_uns_driver`，本节点
+    仅物理删除 + 引用清理，无行为变化）。
+  - `Makefile`：删除 `mixsolver(_mpi)`/`struct_solver(_mpi)`/`uns_solver(_mpi)`
+    目标/规则/依赖边；`all`/`mpi` 收敛为 `bin/mixnsolver(_mpi)`（原结构化/
+    非结构化专用目标一并移除）；`help` 同步；bootstrap 依赖去掉 `structured/main.o`。
+  - `regress/m6wing/run_regression.sh`：`make structured`+`bin/struct_solver`
+    -> `make all`+`bin/mixnsolver`，并在 `$WORK/new/mix.control` 写入 `mode = struct`。
+- 验证：`make all -j4` 在（不含阶段14 unified 源码改动的）HEAD+本收尾基础上零错误
+  编出 `bin/mixnsolver`；`NP=1 regress/m6wing/run_regression.sh` PASS，flow3d.dat
+  md5 `dc134a2d196422043ecad7c86ac8f898` 逐位不变（8 个比较件全 IDENTICAL）。
+- 未混入本节点（仍留作工作区未提交积压）：阶段14 unified DBF 源码
+  （`mod_uns_control/fields/simple`）、`cases/*` 相关控制件/README、`docs/{plan,
+  91_appendix_params}.tex`、`cases/C_P_test/`、`bc3d.inp` 与 `OpenCFD-EC-1.16a.zip`
+  删除等。
+- **备忘（阶段14积压遗留的编译问题，待阶段14提交时处理）**：阶段14 unified 给
+  `mod_uns_control.f90` 新增 `use mod_uns_mesh`，但 Makefile 层依赖未加对应边 =>
+  `make all -j4`（并行）偶发 `Cannot open module file 'mod_uns_mesh.mod'` 编译竞态；
+  串行 `-j1` 不受影响。阶段14正式提交时应把 `mod_uns_control` 排到
+  `mod_uns_mesh` 之后。
+
 
 ## 2026-10-10 | 阶段 15（续）：自分发模式改为由 mix.control 的 mode 键显式声明
 

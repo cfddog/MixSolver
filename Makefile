@@ -92,11 +92,9 @@ STRUCT_F := $(wildcard src/structured/*.f90)
 UNS_F    := $(wildcard src/unstructured/*.f90)
 COUPL_F  := $(wildcard src/coupling/*.f90)
 
-# Standalone driver programs (appear in later phases).
-MAIN_MIX_F    := $(wildcard src/main.f90)
-MAIN_STRUCT_F := $(wildcard src/structured/main.f90)
-MAIN_UNS_F    := $(wildcard src/unstructured/main_uns.f90)
-MAIN_UNS_MPI_F:= $(wildcard src/unstructured/main_uns_mpi.f90)
+# Solver entry points: ONE self-dispatching executable (bin/mixnsolver/_mpi).
+# The legacy arg-taking drivers (mixsolver*, struct_solver*, uns_solver*) and
+# their mains were removed; everything goes through main_dispatch.f90.
 # phase-4 coupling geometry test driver (links structured + unstructured + coupling)
 MAIN_MATCH_F  := $(wildcard src/coupling/test_match.f90)
 # phase-5 units + exchange unit test (links common + coupling only, serial)
@@ -137,29 +135,22 @@ UNS_LIB_S := $(filter-out \
   src/unstructured/mod_uns_partition.f90 \
   src/unstructured/mod_uns_mpi_core.f90,$(UNS_LIB_S))
 
-LIB_SRCS_S := $(call sort_boot,$(filter-out $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_UNS_MPI_F) $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F) $(MAIN_DISPATCH_F), \
+LIB_SRCS_S := $(call sort_boot,$(filter-out $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F) $(MAIN_DISPATCH_F), \
                          $(COMMON_F) $(STRUCT_F) $(UNS_LIB_S) $(COUPL_F)))
-LIB_SRCS_M := $(call sort_boot,$(filter-out $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_UNS_MPI_F) $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F) $(MAIN_DISPATCH_F), \
+LIB_SRCS_M := $(call sort_boot,$(filter-out $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F) $(MAIN_DISPATCH_F), \
                           $(COMMON_F) $(STRUCT_F) $(UNS_F) $(COUPL_F)))
 
 LIB_OBJ_S := $(patsubst src/%.f90,$(S)/%.o,$(LIB_SRCS_S))
 LIB_OBJ_M := $(patsubst src/%.f90,$(M)/%.o,$(LIB_SRCS_M))
 
-MIX_OBJ_S  := $(LIB_OBJ_S) $(patsubst src/%.f90,$(S)/%.o,$(MAIN_MIX_F))
-MIX_OBJ_M  := $(LIB_OBJ_M) $(patsubst src/%.f90,$(M)/%.o,$(MAIN_MIX_F))
-
 DISPATCH_OBJ_S := $(LIB_OBJ_S) $(patsubst src/%.f90,$(S)/%.o,$(MAIN_DISPATCH_F))
 DISPATCH_OBJ_M := $(LIB_OBJ_M) $(patsubst src/%.f90,$(M)/%.o,$(MAIN_DISPATCH_F))
 
-STRUCT_OBJ_S := $(filter $(S)/common/%.o $(S)/structured/%.o,$(LIB_OBJ_S)) \
-                $(patsubst src/%.f90,$(S)/%.o,$(MAIN_STRUCT_F))
-STRUCT_OBJ_M := $(filter $(M)/common/%.o $(M)/structured/%.o,$(LIB_OBJ_M)) \
-                $(patsubst src/%.f90,$(M)/%.o,$(MAIN_STRUCT_F))
+STRUCT_OBJ_S := $(filter $(S)/common/%.o $(S)/structured/%.o,$(LIB_OBJ_S))
+STRUCT_OBJ_M := $(filter $(M)/common/%.o $(M)/structured/%.o,$(LIB_OBJ_M))
 
-UNS_OBJ_S := $(filter $(S)/common/%.o $(S)/unstructured/%.o,$(LIB_OBJ_S)) \
-             $(patsubst src/%.f90,$(S)/%.o,$(MAIN_UNS_F))
-UNS_OBJ_M := $(filter $(M)/common/%.o $(M)/unstructured/%.o,$(LIB_OBJ_M)) \
-             $(patsubst src/%.f90,$(M)/%.o,$(MAIN_UNS_MPI_F))
+UNS_OBJ_S := $(filter $(S)/common/%.o $(S)/unstructured/%.o,$(LIB_OBJ_S))
+UNS_OBJ_M := $(filter $(M)/common/%.o $(M)/unstructured/%.o,$(LIB_OBJ_M))
 
 # phase-4 coupling geometry test: structured (MPI) + unstructured (MPI) + coupling
 MATCH_OBJ_M := $(filter $(M)/common/%.o $(M)/structured/%.o $(M)/unstructured/%.o $(M)/coupling/%.o,$(LIB_OBJ_M)) \
@@ -212,43 +203,23 @@ $(S)/structured/%.o: src/structured/%.f90 | $(ALLDIRS)
 $(M)/structured/%.o: src/structured/%.f90 | $(ALLDIRS)
 	$(MPIFC) $(FFLAGS_M) -MMD -MP -c $< -o $@
 
-# The coupling layer (mod_coupling_exchange) and the mixed driver (main.f90)
-# call MPI_* unconditionally -- the cross-group exchange is inherently
-# multi-rank -- so, exactly like src/structured above, build them with mpif90 in
-# BOTH trees; 'make all' is the single-process-capable MPI build (bin/mixsolver
-# is already LINKED with $(MPIFC) below).  main.f90's restart-save path is the
-# only reference to the MPI-only uns restart stack (mod_uns_restart ->
-# mod_uns_mpi_core/partition/local_mesh); it is guarded by '#ifdef HAVE_MPI' so
-# the serial tree need not link those modules.
+# The coupling layer (mod_coupling_exchange, mod_mix_driver) and the
+# self-dispatching main (main_dispatch.f90) call MPI_* unconditionally -- the
+# cross-group exchange is inherently multi-rank -- so, exactly like
+# src/structured above, build them with mpif90 in BOTH trees.  'make all' is the
+# single-process-capable MPI build (bin/mixnsolver is LINKED with $(MPIFC)).
+# mod_mix_driver's restart-save path is the only reference to the MPI-only uns
+# restart stack (mod_uns_restart -> mod_uns_mpi_core/partition/local_mesh); it
+# is guarded by '#ifdef HAVE_MPI' so the serial tree need not link those modules.
 $(S)/coupling/%.o: src/coupling/%.f90 | $(ALLDIRS)
 	$(MPIFC) $(FFLAGS_S) -MMD -MP -c $< -o $@
 
-$(S)/main.o: src/main.f90 | $(ALLDIRS)
-	$(MPIFC) $(FFLAGS_S) -MMD -MP -c $< -o $@
-
-# The self-dispatching executable calls MPI_* unconditionally and links the
-# full common+structured+unstructured+coupling stack; build it with mpif90 in
-# both trees exactly like main.o, 'make all' is the single-process build.
 $(S)/main_dispatch.o: src/main_dispatch.f90 | $(ALLDIRS)
 	$(MPIFC) $(FFLAGS_S) -MMD -MP -c $< -o $@
 
 # -----------------------------------------------------------------------------
-# Executables
+# Executables (the ONLY solver entry point is bin/mixnsolver[_mpi])
 # -----------------------------------------------------------------------------
-bin/mixsolver: $(MIX_OBJ_S) | bin
-	@test -f src/main.f90 || { \
-	  echo "ERROR: src/main.f90 does not exist yet (scheduled for phase 6)."; \
-	  echo "       Use 'make common' to build the modules currently present."; \
-	  exit 1; }
-	$(MPIFC) $(FFLAGS_S) -o $@ $(MIX_OBJ_S) $(LDLIBS_S)
-
-bin/mixsolver_mpi: $(MIX_OBJ_M) | bin
-	@test -f src/main.f90 || { \
-	  echo "ERROR: src/main.f90 does not exist yet (scheduled for phase 6)."; \
-	  echo "       Use 'make common_mpi' to build the modules currently present."; \
-	  exit 1; }
-	$(MPIFC) $(FFLAGS_M) -o $@ $(MIX_OBJ_M) $(LDLIBS_M)
-
 bin/mixnsolver: $(DISPATCH_OBJ_S) | bin
 	@test -f src/main_dispatch.f90 || { \
 	  echo "ERROR: src/main_dispatch.f90 does not exist yet."; \
@@ -260,30 +231,6 @@ bin/mixnsolver_mpi: $(DISPATCH_OBJ_M) | bin
 	  echo "ERROR: src/main_dispatch.f90 does not exist yet."; \
 	  exit 1; }
 	$(MPIFC) $(FFLAGS_M) -o $@ $(DISPATCH_OBJ_M) $(LDLIBS_M)
-
-bin/struct_solver: $(STRUCT_OBJ_S) | bin
-	@test -f src/structured/main.f90 || { \
-	  echo "ERROR: src/structured/main.f90 does not exist yet (scheduled for phase 2)."; \
-	  exit 1; }
-	$(MPIFC) $(FFLAGS_S) -o $@ $(STRUCT_OBJ_S) $(LDLIBS_S)
-
-bin/struct_solver_mpi: $(STRUCT_OBJ_M) | bin
-	@test -f src/structured/main.f90 || { \
-	  echo "ERROR: src/structured/main.f90 does not exist yet (scheduled for phase 2)."; \
-	  exit 1; }
-	$(MPIFC) $(FFLAGS_M) -o $@ $(STRUCT_OBJ_M) $(LDLIBS_M)
-
-bin/uns_solver: $(UNS_OBJ_S) | bin
-	@test -f src/unstructured/main_uns.f90 || { \
-	  echo "ERROR: src/unstructured/main_uns.f90 does not exist yet (scheduled for phase 3)."; \
-	  exit 1; }
-	$(FC) $(FFLAGS_S) -o $@ $(UNS_OBJ_S) $(LDLIBS_S)
-
-bin/uns_solver_mpi: $(UNS_OBJ_M) | bin
-	@test -f src/unstructured/main_uns_mpi.f90 || { \
-	  echo "ERROR: src/unstructured/main_uns_mpi.f90 does not exist yet (scheduled for phase 3)."; \
-	  exit 1; }
-	$(MPIFC) $(FFLAGS_M) -o $@ $(UNS_OBJ_M) $(LDLIBS_M)
 
 bin/match_test: $(MATCH_OBJ_M) | bin
 	@test -f src/coupling/test_match.f90 || { \
@@ -312,18 +259,13 @@ bin/iface_law_test: $(IFLAW_TEST_OBJ_S) | bin
 # -----------------------------------------------------------------------------
 # Phony targets
 # -----------------------------------------------------------------------------
-.PHONY: all mpi structured structured_mpi unstructured unstructured_mpi \
-        common common_mpi clean help match_test units_test coupling_test \
+.PHONY: all mpi common common_mpi clean help match_test units_test coupling_test \
         iface_law_test mixnsolver mixnsolver_mpi
 
-all:        bin/mixsolver
-mpi:        bin/mixsolver_mpi
+all:        bin/mixnsolver
+mpi:        bin/mixnsolver_mpi
 mixnsolver: bin/mixnsolver
 mixnsolver_mpi: bin/mixnsolver_mpi
-structured: bin/struct_solver
-structured_mpi: bin/struct_solver_mpi
-unstructured:   bin/uns_solver
-unstructured_mpi: bin/uns_solver_mpi
 
 common: $(filter $(S)/common/%.o,$(LIB_OBJ_S))
 common_mpi: $(filter $(M)/common/%.o,$(LIB_OBJ_M))
@@ -337,13 +279,12 @@ clean:
 
 help:
 	@echo "MixNSSolver build targets:"
-	@echo "  make / make all        serial mixed solver         (bin/mixsolver)"
-	@echo "  make mpi               MPI    mixed solver         (bin/mixsolver_mpi)"
-	@echo "  make structured        serial structured solver    (bin/struct_solver)"
-	@echo "  make structured_mpi    MPI    structured solver"
-	@echo "  make unstructured      serial unstructured solver  (bin/uns_solver)"
-	@echo "  make unstructured_mpi  MPI    unstructured solver"
+	@echo "  make / make all        zero-arg serial solver    (bin/mixnsolver)"
+	@echo "  make mpi               zero-arg MPI    solver     (bin/mixnsolver_mpi)"
+	@echo "  make mixnsolver / mixnsolver_mpi (same as the two above)"
 	@echo "  make common[_mpi]      compile common modules only"
+	@echo "  make units_test / coupling_test / match_test / iface_law_test"
+	@echo "                        dev unit/integration test binaries"
 	@echo "  make clean             remove build/ and bin/"
 	@echo "Options: DEBUG=1 (debug flags)"
 	@echo "Parallel: use 'make -j'; for the very first build after adding many new"
@@ -363,8 +304,8 @@ help:
 BOOT_OBJ_S := $(patsubst src/%.f90,$(S)/%.o,$(BOOTSTRAP_ORDER))
 BOOT_OBJ_M := $(patsubst src/%.f90,$(M)/%.o,$(BOOTSTRAP_ORDER))
 
-ALL_MAIN_S := $(patsubst src/%.f90,$(S)/%.o,$(MAIN_MIX_F) $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_DISPATCH_F))
-ALL_MAIN_M := $(patsubst src/%.f90,$(M)/%.o,$(MAIN_MIX_F) $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_DISPATCH_F))
+ALL_MAIN_S := $(patsubst src/%.f90,$(S)/%.o,$(MAIN_DISPATCH_F))
+ALL_MAIN_M := $(patsubst src/%.f90,$(M)/%.o,$(MAIN_DISPATCH_F))
 
 $(filter-out $(BOOT_OBJ_S),$(LIB_OBJ_S) $(ALL_MAIN_S)): $(BOOT_OBJ_S)
 $(filter-out $(BOOT_OBJ_M),$(LIB_OBJ_M) $(ALL_MAIN_M)): $(BOOT_OBJ_M)
@@ -398,8 +339,6 @@ $(call st_objs,$(ST_LAYER3)): $(call st_objs,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYE
 $(call st_objs,$(ST_LAYER4)): $(call st_objs,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3))
 $(call st_objs,$(ST_LAYER5)): $(call st_objs,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3) $(ST_LAYER4))
 $(call st_objs,$(ST_LAYER6)): $(call st_objs,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3) $(ST_LAYER4) $(ST_LAYER5))
-$(S)/structured/main.o: $(call st_objs,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) \
-                                    $(ST_LAYER3) $(ST_LAYER4) $(ST_LAYER5))
 
 $(call st_objm,$(ST_LAYER1)): $(call st_objm,$(ST_LAYER0))
 $(call st_objm,$(ST_LAYER2)): $(call st_objm,$(ST_LAYER0) $(ST_LAYER1))
@@ -407,8 +346,6 @@ $(call st_objm,$(ST_LAYER3)): $(call st_objm,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYE
 $(call st_objm,$(ST_LAYER4)): $(call st_objm,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3))
 $(call st_objm,$(ST_LAYER5)): $(call st_objm,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3) $(ST_LAYER4))
 $(call st_objm,$(ST_LAYER6)): $(call st_objm,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3) $(ST_LAYER4) $(ST_LAYER5))
-$(M)/structured/main.o: $(call st_objm,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) \
-                                    $(ST_LAYER3) $(ST_LAYER4) $(ST_LAYER5))
 
 # Common-layer modules (precision / constants / interface) precede every
 # structured object: the structured solver uses const_var, precision_EC and
@@ -419,9 +356,9 @@ $(M)/structured/main.o: $(call st_objm,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) \
 COMMON_OBJ_S := $(patsubst src/%.f90,$(S)/%.o,$(COMMON_F))
 COMMON_OBJ_M := $(patsubst src/%.f90,$(M)/%.o,$(COMMON_F))
 $(call st_objs,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3) \
-  $(ST_LAYER4) $(ST_LAYER5) $(ST_LAYER6)) $(S)/structured/main.o: $(COMMON_OBJ_S)
+  $(ST_LAYER4) $(ST_LAYER5) $(ST_LAYER6)): $(COMMON_OBJ_S)
 $(call st_objm,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3) \
-  $(ST_LAYER4) $(ST_LAYER5) $(ST_LAYER6)) $(M)/structured/main.o: $(COMMON_OBJ_M)
+  $(ST_LAYER4) $(ST_LAYER5) $(ST_LAYER6)): $(COMMON_OBJ_M)
 
 # Unstructured-solver internal module chain (phase 3).
 # Layers are the real use-edges in conservative total order, which guarantees
@@ -459,8 +396,6 @@ $(call uns_objs,$(UNS_LAYER3_S)): $(call uns_objs,$(UNS_LAYER0_S) $(UNS_LAYER1_S
 $(call uns_objs,$(UNS_LAYER4_S)): $(call uns_objs,$(UNS_LAYER0_S) $(UNS_LAYER1_S) $(UNS_LAYER2_S) $(UNS_LAYER3_S))
 $(call uns_objs,$(UNS_LAYER5_S)): $(call uns_objs,$(UNS_LAYER0_S) $(UNS_LAYER1_S) $(UNS_LAYER2_S) $(UNS_LAYER3_S) $(UNS_LAYER4_S))
 $(call uns_objs,$(UNS_LAYER6_S)): $(call uns_objs,$(UNS_LAYER0_S) $(UNS_LAYER1_S) $(UNS_LAYER2_S) $(UNS_LAYER3_S) $(UNS_LAYER4_S) $(UNS_LAYER5_S))
-$(S)/unstructured/main_uns.o: $(call uns_objs,$(UNS_LAYER0_S) $(UNS_LAYER1_S) $(UNS_LAYER2_S) \
-                                        $(UNS_LAYER3_S) $(UNS_LAYER4_S) $(UNS_LAYER5_S))
 
 # MPI pristine edges
 $(call uns_objm,$(UNS_LAYER1_M)): $(call uns_objm,$(UNS_LAYER0_M))
@@ -472,8 +407,6 @@ $(call uns_objm,$(UNS_LAYER6_M)): $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M
 $(call uns_objm,$(UNS_LAYER7_M)): $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) $(UNS_LAYER3_M) $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M))
 $(call uns_objm,$(UNS_LAYER8_M)): $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) $(UNS_LAYER3_M) $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M))
 $(call uns_objm,$(UNS_LAYER9_M)): $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) $(UNS_LAYER3_M) $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M) $(UNS_LAYER8_M))
-$(M)/unstructured/main_uns_mpi.o: $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) \
-                                        $(UNS_LAYER3_M) $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M) $(UNS_LAYER8_M))
 
 # Coupling-layer modules (phase 5-6): internal dependencies.
 # mod_interface_units  <- common (mod_reference_state)
@@ -502,13 +435,11 @@ $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1)): $(COMMON_OBJ_M) \
   $(call st_objm,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3) $(ST_LAYER4) $(ST_LAYER5) $(ST_LAYER6)) \
   $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) $(UNS_LAYER3_M) $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M) $(UNS_LAYER8_M) $(UNS_LAYER9_M))
 
-# Mixed driver (phase 6): main.f90 'uses' mod_struct_driver, mod_uns_driver and
-# mod_coupling_exchange.  The coupling objects above already transitively follow
-# common + structured + unstructured, so a single edge to the coupling layer
-# orders every prerequisite on a pristine tree before any .d file exists.
-$(S)/main.o: $(call coupl_objs,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2))
-$(M)/main.o: $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2))
-# Self-dispatching main (bin/mixnsolver): needs mod_mix_driver too.
+# Self-dispatching main (bin/mixnsolver): 'uses' mod_mix_driver, which itself
+# 'uses' mod_struct_driver / mod_uns_driver / mod_coupling_exchange.  The
+# coupling objects above already transitively follow common + structured +
+# unstructured, so a single edge to the coupling layer orders every
+# prerequisite on a pristine tree before any .d file exists.
 $(S)/main_dispatch.o: $(call coupl_objs,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2))
 $(M)/main_dispatch.o: $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2))
 
@@ -519,10 +450,9 @@ $(S)/coupling/test_units_exchange.o: $(call coupl_objs,$(COUPL_LAYER0) $(COUPL_L
 
 # Common-layer modules precede every unstructured object.
 $(call uns_objs,$(UNS_LAYER0_S) $(UNS_LAYER1_S) $(UNS_LAYER2_S) $(UNS_LAYER3_S) \
-  $(UNS_LAYER4_S) $(UNS_LAYER5_S) $(UNS_LAYER6_S)) $(S)/unstructured/main_uns.o: $(COMMON_OBJ_S)
+  $(UNS_LAYER4_S) $(UNS_LAYER5_S) $(UNS_LAYER6_S)): $(COMMON_OBJ_S)
 $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) $(UNS_LAYER3_M) \
-  $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M) $(UNS_LAYER8_M) $(UNS_LAYER9_M)) \
-  $(M)/unstructured/main_uns_mpi.o: $(COMMON_OBJ_M)
+  $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M) $(UNS_LAYER8_M) $(UNS_LAYER9_M)): $(COMMON_OBJ_M)
 
 # -----------------------------------------------------------------------------
 # Auto-generated module dependencies

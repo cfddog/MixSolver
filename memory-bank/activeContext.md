@@ -1,5 +1,21 @@
 # 当前上下文 (activeContext)
 
+> **2026-10-10 NEW 阶段 15 收尾：唯一可执行入口收敛为 bin/mixnsolver（已实现并验证）**：
+> 删除 4 个旧入口主程序（src/main.f90、structured/main.f90、
+> unstructured/main_uns.f90、main_uns_mpi.f90）；Makefile
+> 移除 mixsolver*/struct_solver*/uns_solver* 目标与规则，
+> all/mpi 统一到 bin/mixnsolver(_mpi)；M6 回归脚本改走
+> mixnsolver mode=struct（$WORK/new/mix.control 写 mode = struct）。
+> 验证：make all -j4（HEAD+本收尾）零错误；M6 位级回归 PASS
+> （flow3d md5 dc134a2d... 不变，8 件 IDENTICAL）。
+> 遗留：阶段14 unified 源码/控制件/docs/C_P_test 等仍为工作区未提交积压，
+> 未混入本节点；且阶段14 的 mod_uns_control 新增 use mod_uns_mesh
+> 未补 Makefile 依赖边 => make -j4 并行偶发编译竞态（-j1 无碍），
+> 阶段14提交时补。
+
+> **2026-10-10 NEW 阶段 15（续）：自分发模式改由 mix.control 的 mode 键显式声明**：
+
+
 > **2026-10-10 🆕 阶段 15（续）：自分发模式改由 \texttt{mix.control} 的 \texttt{mode} 键显式声明**：
 > 用户要求"在 mix.control 就确定耦合方式，从而确认要读哪些控制文件"。`program mixnsolver`
 > 删除按文件存在自动探测，新增 `parse_mix_mode`：\textbf{必须}有 `mix.control`，读

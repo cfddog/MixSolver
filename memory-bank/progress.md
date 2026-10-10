@@ -4,6 +4,17 @@
 
 ## 已完成
 
+- [x] **阶段 15 收尾：唯一可执行入口收敛为 `bin/mixnsolver`（2026-10-10）**：
+  物理删除 4 个旧入口主程序（`src/main.f90`、`structured/main.f90`、
+  `unstructured/main_uns.f90`、`unstructured/main_uns_mpi.f90`；逻辑早前已抽入
+  `mod_mix_driver`/`mod_struct_driver`/`mod_uns_driver`）；`Makefile` 移除
+  `mixsolver*`/`struct_solver*`/`uns_solver*` 目标/规则/依赖，`all/mpi` 统一到
+  `bin/mixnsolver(_mpi)`；M6 回归脚本改 `make all` + `mixnsolver mode=struct`。
+  验证：`make all -j4`（不含阶段14源码改动）零错误；M6 位级回归 PASS（flow3d
+  md5 dc134a2d... 不变）。阶段14 unified 等积压仍未提交、未混入；并行 `-j`（非
+  `-j1`）下阶段14的 `mod_uns_control` 有 `use mod_uns_mesh` 编译竞态遗留待补。
+
+
 - [x] **阶段 15（续）：`mixnsolver` 模式改由 `mix.control` 的 `mode` 键声明（2026-10-10）**：
   `program mixnsolver` 不再按文件存在自动探测，新增 `parse_mix_mode` 从**必带**的
   `mix.control` 读 `mode = coupled|struct|uns`（大小写不敏感）决定模式；缺 mix.control /
@@ -491,6 +502,25 @@
       工作流扩展为「验证 → 记账 → commit → **push**」，此后自动执行。
 
 ## 待办
+
+### 输入格式：CGNS（2026-10-10 登记，用户「写入待办，不作为编译通过必须项」）
+
+- [ ] 非结构侧解析 **CGNS（`.cgns`/`.h5`）** 网格＋BC＋体区域（cell zone 属性）。
+  **定位**：`cas_reader`（`src/unstructured/mod_uns_cas_reader.f90`）目前只读 Fluent
+  ASCII CAS；CGNS 走同一 `mesh_t` 登记/`build_bc`/`resolve_cell_zones` 流程，作为
+  `.control`（`bc`/`cell_zone`）之上的一个输入开关即可。
+  **可选编译（用户硬性要求，CGNS 不是编译通过的必须项）**：
+  - 编译（`Makefile`）时\textbf{探测 CGNS 库是否可用}：`pkg-config --exists cgns` 或
+    `-lcgns` 试链＋头文件 `cgnslib_f.h` 存在；可用则 `-DHAVE_CGNS` 并链接
+    `LDLIBS`；不可用则**静默走原 `*.cas` / `*.neu`（阶段12）路径**，编译照常通过。
+  - 源码用 `#ifdef HAVE_CGNS` 守护 CGNS 分支（与现有 `#ifdef HAVE_MPI` 同构），
+    `mod_uns_cas_reader` 里加 `read_cgns()`，入口 `read_mesh` 按扩展名
+    `.cgns/.h5`→CGNS、`.cas`→CAS、（NEU 落地后）`.neu`→NEU 分派。
+  - 交付：`read_cgns` 返回与 `read_cas` 相同的 `mesh_t`（node/face/cell/cell-zone、
+    boundary zone id 与 type），复用现有 geometry/connectivity/BC/porous 流程，无
+    新增物理参数。验证：同几何下 `.cgns` 与 `.cas` 的 `solve` 结果位级一致（对照
+    `cases/porous_plug` 等）；`make` 在无 CGNS 库的机器上依旧 RC=0。
+  - 文档：手册 §3 输入文件、附录 A（`*.control` 与格式）、`93_changelog.tex`。
 
 ### 湍流模型（2026-10-10 登记，用户「计入待办」）
 
