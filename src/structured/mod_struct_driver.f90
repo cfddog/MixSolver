@@ -28,6 +28,7 @@ module mod_struct_driver
    public :: struct_extract_iface
    public :: struct_set_iface_bc
    public :: struct_solver_save
+   public :: struct_solver_run
 
 contains
 
@@ -308,5 +309,65 @@ contains
          B%U(5, ig, jg, kg) = E2
       end do
    end subroutine struct_set_iface_bc
+
+   !---------------------------------------------------------------------------
+   ! struct_solver_run -- run the structured solver to the end of its
+   ! pseudo-time horizon as a STANDALONE solve (struct-only mode of the
+   ! self-dispatching bin/mixnsolver).
+   !
+   ! Additive wrapper: struct_solver_init (init) + the time loop mirrored from
+   ! src/structured/main.f90's `program main`.  It deliberately does NOT call
+   ! MPI_Finalize -- the caller owns the MPI lifecycle (the pristine standalone
+   ! program main does finalise, but a library routine must not, or the caller
+   ! would get a double-finalise).
+   !---------------------------------------------------------------------------
+   subroutine struct_solver_run(comm, ctlfile)
+      use mpi
+      use Global_Var
+      use mod_struct_solver, only: NS_Time_advance, NS_2stge_multigrid, &
+                                   NS_3stge_multigrid, Filtering_oneMesh, output_Res
+      use mod_struct_io, only: comput_force, output_flow, output_vt, &
+                               Time_average, output_flow_average
+      implicit none
+      integer,          intent(in) :: comm
+      character(len=*), intent(in), optional :: ctlfile
+
+      call struct_solver_init( comm, ctlfile )
+
+      if ( my_id == 0 ) print*, " Start ......"
+
+      ! time advancement: single / double / triple grid, Euler or RK3
+      do while( Mesh(1)%tt < t_end )
+         if ( Num_Mesh .eq. 1 ) then
+            call NS_Time_advance(1)                ! single-grid, one step
+         else if ( Num_Mesh .eq. 2 ) then
+            call NS_2stge_multigrid                ! two-grid multigrid
+         else
+            call NS_3stge_multigrid                ! three-grid multigrid
+         end if
+
+         ! optional smoothing for stability
+         if ( Kstep_smooth > 0 ) then
+            if ( mod(Mesh(1)%Kstep, Kstep_smooth) == 0 ) call Filtering_oneMesh(1)
+         end if
+
+         ! periodic force + residual output
+         if ( mod(Mesh(1)%Kstep, Kstep_show) == 0 ) then
+            call comput_force
+            call output_Res(1)
+         end if
+         ! periodic field dump (flow3d.dat, PLOT3D format)
+         if ( mod(Mesh(1)%Kstep, Kstep_Save) == 0 ) then
+            call output_flow
+            if ( If_debug == 1 .and. If_viscous == 1 .and. &
+                 Iflag_turbulence_model /= 0 ) call output_vt
+         end if
+         ! time averaging
+         if ( Kstep_average > 0 ) then
+            if ( mod(Mesh(1)%Kstep, Kstep_average) == 0 ) call Time_average
+            if ( mod(Mesh(1)%Kstep, Kstep_Save) == 0 ) call output_flow_average
+         end if
+      end do
+   end subroutine struct_solver_run
 
 end module mod_struct_driver

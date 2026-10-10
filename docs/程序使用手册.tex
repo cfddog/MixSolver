@@ -80,6 +80,8 @@ MixNSSolver 是一个\textbf{弱耦合}（weakly-coupled）多物理场求解器
 \texttt{bin/uns\_solver\_mpi} & \texttt{make unstructured\_mpi} & 非结构侧 MPI 版本（METIS 分区） \\
 \texttt{bin/mixsolver} & \texttt{make all} & 串行混合驱动（\texttt{nproc}=1 时同一进程先跑结构、再跑非结构） \\
 \texttt{bin/mixsolver\_mpi} & \texttt{make mpi} & 弱耦合驱动（推荐）：\texttt{mixsolver\_mpi [mix.control] [struct.cas] [control.ec] [unMesh.cas] [unMesh.control]} \\
+\texttt{bin/mixnsolver} & \texttt{make mixnsolver} & \textbf{零参数自动分发的统一可执行}：在算例目录内直接运行，自动探测是结构/非结构/弱耦合（详见 \S\ref{sec:workflow}） \\
+\texttt{bin/mixnsolver\_mpi} & \texttt{make mixnsolver\_mpi} & 同一分发器的 MPI 版本（\texttt{mpirun -np N}） \\
 \texttt{bin/units\_test} & \texttt{make units\_test} & 量纲换算/插值单元测试（无参数） \\
 \texttt{bin/coupling\_test} & \texttt{make coupling\_test} & 交换协议 MPI 端到端测试：\texttt{mpirun -np 2 bin/coupling\_test} \\
 \texttt{bin/match\_test} & \texttt{make match\_test} & 界面匹配/类型分派测试：\texttt{cd grid\_BC \&\& mpirun -np 1 ../bin/match\_test} \\
@@ -203,6 +205,45 @@ mpirun -np 2 bin/mixsolver\_mpi mix.control grid\_BC/Mesh3d.x \textbackslash\\
 \end{quote}
         \textbf{进程划分}：\texttt{nproc}$\ge$2 时 1 个 rank 跑结构侧、其余跑非结构侧；
 \end{enumerate}
+
+\subsection{零参数自动分发（\texttt{mixnsolver}）}\label{sec:autodispatch}
+
+\textbf{bin/mixnsolver\_mpi}（\texttt{make mixnsolver\_mpi}）是一个\textbf{不需要任何
+命令行参数}的统一可执行，运行时根据\textbf{当前目录（cwd）里有哪些输入文件}自动判断
+该跑哪种模式，然后直接执行对应求解器：
+
+\begin{enumerate}\itemsep2pt
+  \item \textbf{弱耦合（COUPLED）}：目录里有 \texttt{mix.control} ⇒ 读取同目录的
+        \texttt{Mesh3d.x}、\texttt{control.ec}（结构侧）与 \texttt{unMesh.cas}、
+        \texttt{unMesh.control}（非结构侧），跑与 \texttt{mixsolver\_mpi} 相同的
+        耦合循环（\texttt{mod\_mix\_driver} 复用）。
+  \item \textbf{非结构（UNS）}：无 \texttt{mix.control}，但在目录里找到\textbf{唯一一组}
+        同名 \texttt{<stem>.cas} ＋ \texttt{<stem>.control}（优先规范名
+        \texttt{unMesh.cas}＋\texttt{unMesh.control}）⇒ 跑非结构不可压缩求解器，结果写
+        \texttt{<stem>.vtu}。
+  \item \textbf{结构（STRUCT）}：无 \texttt{mix.control}、无非结构配对，但存在
+        \texttt{control.ec} ＋ \texttt{Mesh3d.x} ⇒ 跑结构可压缩求解器。
+  \item 其余情况一律\textbf{报错}：目录同时出现非结构配对与结构输入、或多于一组非结构
+        配对（\texttt{cases/betchen/} 即天然多配对例），会打印候选并退出。
+\end{enumerate}
+
+用法示例（均在\textbf{算例目录内}执行）：
+
+\begin{quote}\ttfamily\small
+cd /path/to/coupled\_case\ \ \ \# 含 mix.control 等 5 个文件\\
+mpirun -np 2 /path/to/bin/mixnsolver\_mpi\\
+\medskip
+cd /path/to/uns\_case\ \ \ \ \ \ \ \# 含 a.cas + a.control\\
+mpirun -np 2 /path/to/bin/mixnsolver\_mpi\\
+\medskip
+cd /path/to/struct\_case\ \ \# 含 control.ec + Mesh3d.x\\
+/path/to/bin/mixnsolver
+\end{quote}
+
+\textbf{进程划分}：COUPLED 时 \texttt{nproc}$\ge$2 取 1 个 rank 跑结构侧、其余跑非结构
+侧（与 \texttt{mixsolver\_mpi} 一致）；STRUCT 时全部 rank 跑结构侧；UNS 时全部 rank
+跑非结构侧——非结构侧采用\textbf{全 rank 各持全网格}的冗余模式（\texttt{-np N} 数值与串行
+一致，非 METIS 分区）。
 
 \subsection{从编译到执行的完整流程示例}\label{sec:workflow}
 

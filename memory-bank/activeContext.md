@@ -1,13 +1,21 @@
 # 当前上下文 (activeContext)
 
-> **2026-10-10 🆕 文档节点：手册 §2 增补「从编译到执行的完整流程示例」（\S\ref{sec:workflow}）**：
-> 把 §2 的依赖 / make 目标 / 运行命令串成端到端可照做的 5 步流程（编译 → 自检 →
-> 准备输入 → 运行[结构/非结构/弱耦合三模式] → 后处理/重启动），并列常见失败点；
-> 纯文档，无源码改动、无新控制参数。`xelatex` 连跑 4 遍零 error / 零 undefined
-> reference，PDF 35 页。本节点已提交并推送（见 worklog 2026-10-10 doc 条）。
-> **注意**：工作区仍有大量**已验收未提交**的旧节点积压（阶段14 unified DBF 源码+
-> 控制件+图、`cases/C_P_test/`、根 `bc3d.inp` 删除），本次 doc 节点**未**混入提交，
-> 遗留待后续节点单独处理。
+> **2026-10-10 🆕 阶段 15：零参数自分发可执行 `mixnsolver`（已实现并验证）**：
+> 把 `src/main.f90` 的两个分组驱动 `struct_group_driver`/`uns_group_driver` 及辅助
+> 过程原样抽出到 `src/coupling/mod_mix_driver.f90`（模块），`main.f90` 变薄调用者；
+> 新增 `src/main_dispatch.f90`（`program mixnsolver` → `bin/mixnsolver(_mpi)`）
+> 零参数自动分派：cwd 有 `mix.control`→COUPLED；唯一同名 `<stem>.cas`+`<stem>.control`
+> →UNS；`control.ec`+`Mesh3d.x`→STRUCT；否则报错。`mod_struct_driver` 新增
+> `struct_solver_run`（镜像 main 时间环，不 finalize）。**验证全绿**：三模式位级对拍
+> （struct flow3d md5 与 struct_solver 一致；uns VTU 与 uns_solver 一致（串/np2）；
+> coupled np2 的 mixnsolver_mpi 与 mixsolver_mpi 的 flow3d/VTU/Step_mess 逐位一致，
+> 仅 restart 时间戳不同）；旧测试 units 3/0、coupling 6/0、iface_law 11/11、
+> match 500/500、M6-wing PASS（md5 dc134a2d…不变）。
+> **遗留旧积压（未混入本节点）**：阶段14 unified DBF 源码/控制件/图、`cases/C_P_test/`、
+> 根 `bc3d.inp` 删除、`docs/{plan,91_appendix_params}.tex`、若干 `cases/*/README.md`
+> 仍为未提交的工作区状态，待后续单独成节点。
+
+> 最后更新：2026-10-10（**阶段 15：新增零参数自分发可执行 `mixnsolver`；三模式位级对拍 + 旧回归全绿**）
 
 > 最后更新：2026-10-10（**阶段 14 续：统一 DBF 求解器 `porous_model = partitioned | unified`**，
 > 默认 `partitioned` **位级不变**；`unified` 在 BJ 上几乎无差别、PLUG 上明显退化 ⇒

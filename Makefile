@@ -105,6 +105,8 @@ MAIN_UNITS_TEST_F := $(wildcard src/coupling/test_units_exchange.f90)
 MAIN_COUPL_TEST_F := $(wildcard src/coupling/test_coupling_exchange.f90)
 # phase-14 interface-closure unit test (common only: mod_iface_law is pure)
 MAIN_IFLAW_TEST_F := $(wildcard src/coupling/test_iface_law.f90)
+# self-dispatching zero-argument executable (bin/mixnsolver[_mpi])
+MAIN_DISPATCH_F := $(wildcard src/main_dispatch.f90)
 
 # Library sources = every module file except standalone mains.
 # MPI-only files ('*_mpi.f90') are excluded from the serial tree ONLY for the
@@ -135,9 +137,9 @@ UNS_LIB_S := $(filter-out \
   src/unstructured/mod_uns_partition.f90 \
   src/unstructured/mod_uns_mpi_core.f90,$(UNS_LIB_S))
 
-LIB_SRCS_S := $(call sort_boot,$(filter-out $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_UNS_MPI_F) $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F), \
+LIB_SRCS_S := $(call sort_boot,$(filter-out $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_UNS_MPI_F) $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F) $(MAIN_DISPATCH_F), \
                          $(COMMON_F) $(STRUCT_F) $(UNS_LIB_S) $(COUPL_F)))
-LIB_SRCS_M := $(call sort_boot,$(filter-out $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_UNS_MPI_F) $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F), \
+LIB_SRCS_M := $(call sort_boot,$(filter-out $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_UNS_MPI_F) $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F) $(MAIN_DISPATCH_F), \
                           $(COMMON_F) $(STRUCT_F) $(UNS_F) $(COUPL_F)))
 
 LIB_OBJ_S := $(patsubst src/%.f90,$(S)/%.o,$(LIB_SRCS_S))
@@ -145,6 +147,9 @@ LIB_OBJ_M := $(patsubst src/%.f90,$(M)/%.o,$(LIB_SRCS_M))
 
 MIX_OBJ_S  := $(LIB_OBJ_S) $(patsubst src/%.f90,$(S)/%.o,$(MAIN_MIX_F))
 MIX_OBJ_M  := $(LIB_OBJ_M) $(patsubst src/%.f90,$(M)/%.o,$(MAIN_MIX_F))
+
+DISPATCH_OBJ_S := $(LIB_OBJ_S) $(patsubst src/%.f90,$(S)/%.o,$(MAIN_DISPATCH_F))
+DISPATCH_OBJ_M := $(LIB_OBJ_M) $(patsubst src/%.f90,$(M)/%.o,$(MAIN_DISPATCH_F))
 
 STRUCT_OBJ_S := $(filter $(S)/common/%.o $(S)/structured/%.o,$(LIB_OBJ_S)) \
                 $(patsubst src/%.f90,$(S)/%.o,$(MAIN_STRUCT_F))
@@ -164,11 +169,11 @@ MATCH_OBJ_M := $(filter $(M)/common/%.o $(M)/structured/%.o $(M)/unstructured/%.
 # MPI-intrinsic (mod_coupling_exchange), so this test is LINKED with $(MPIFC)
 # even though it is a standalone serial test -- exactly like bin/mixsolver, the
 # ser tree is the 'single-process-capable MPI build' (run with -np 1).
-UNITS_TEST_OBJ_S := $(filter $(S)/common/%.o $(S)/coupling/%.o,$(LIB_OBJ_S)) \
+UNITS_TEST_OBJ_S := $(filter-out $(S)/coupling/mod_mix_driver.o,$(filter $(S)/common/%.o $(S)/coupling/%.o,$(LIB_OBJ_S))) \
                     $(patsubst src/%.f90,$(S)/%.o,$(MAIN_UNITS_TEST_F))
 
 # phase-6 MPI coupling-protocol test: common + coupling (MPI tree)
-COUPL_TEST_OBJ_M := $(filter $(M)/common/%.o $(M)/coupling/%.o,$(LIB_OBJ_M)) \
+COUPL_TEST_OBJ_M := $(filter-out $(M)/coupling/mod_mix_driver.o,$(filter $(M)/common/%.o $(M)/coupling/%.o,$(LIB_OBJ_M))) \
                     $(patsubst src/%.f90,$(M)/%.o,$(MAIN_COUPL_TEST_F))
 
 # phase-14 interface-closure unit test: common only (the closures are pure)
@@ -221,6 +226,12 @@ $(S)/coupling/%.o: src/coupling/%.f90 | $(ALLDIRS)
 $(S)/main.o: src/main.f90 | $(ALLDIRS)
 	$(MPIFC) $(FFLAGS_S) -MMD -MP -c $< -o $@
 
+# The self-dispatching executable calls MPI_* unconditionally and links the
+# full common+structured+unstructured+coupling stack; build it with mpif90 in
+# both trees exactly like main.o, 'make all' is the single-process build.
+$(S)/main_dispatch.o: src/main_dispatch.f90 | $(ALLDIRS)
+	$(MPIFC) $(FFLAGS_S) -MMD -MP -c $< -o $@
+
 # -----------------------------------------------------------------------------
 # Executables
 # -----------------------------------------------------------------------------
@@ -237,6 +248,18 @@ bin/mixsolver_mpi: $(MIX_OBJ_M) | bin
 	  echo "       Use 'make common_mpi' to build the modules currently present."; \
 	  exit 1; }
 	$(MPIFC) $(FFLAGS_M) -o $@ $(MIX_OBJ_M) $(LDLIBS_M)
+
+bin/mixnsolver: $(DISPATCH_OBJ_S) | bin
+	@test -f src/main_dispatch.f90 || { \
+	  echo "ERROR: src/main_dispatch.f90 does not exist yet."; \
+	  exit 1; }
+	$(MPIFC) $(FFLAGS_S) -o $@ $(DISPATCH_OBJ_S) $(LDLIBS_S)
+
+bin/mixnsolver_mpi: $(DISPATCH_OBJ_M) | bin
+	@test -f src/main_dispatch.f90 || { \
+	  echo "ERROR: src/main_dispatch.f90 does not exist yet."; \
+	  exit 1; }
+	$(MPIFC) $(FFLAGS_M) -o $@ $(DISPATCH_OBJ_M) $(LDLIBS_M)
 
 bin/struct_solver: $(STRUCT_OBJ_S) | bin
 	@test -f src/structured/main.f90 || { \
@@ -291,10 +314,12 @@ bin/iface_law_test: $(IFLAW_TEST_OBJ_S) | bin
 # -----------------------------------------------------------------------------
 .PHONY: all mpi structured structured_mpi unstructured unstructured_mpi \
         common common_mpi clean help match_test units_test coupling_test \
-        iface_law_test
+        iface_law_test mixnsolver mixnsolver_mpi
 
 all:        bin/mixsolver
 mpi:        bin/mixsolver_mpi
+mixnsolver: bin/mixnsolver
+mixnsolver_mpi: bin/mixnsolver_mpi
 structured: bin/struct_solver
 structured_mpi: bin/struct_solver_mpi
 unstructured:   bin/uns_solver
@@ -338,8 +363,8 @@ help:
 BOOT_OBJ_S := $(patsubst src/%.f90,$(S)/%.o,$(BOOTSTRAP_ORDER))
 BOOT_OBJ_M := $(patsubst src/%.f90,$(M)/%.o,$(BOOTSTRAP_ORDER))
 
-ALL_MAIN_S := $(patsubst src/%.f90,$(S)/%.o,$(MAIN_MIX_F) $(MAIN_STRUCT_F) $(MAIN_UNS_F))
-ALL_MAIN_M := $(patsubst src/%.f90,$(M)/%.o,$(MAIN_MIX_F) $(MAIN_STRUCT_F) $(MAIN_UNS_F))
+ALL_MAIN_S := $(patsubst src/%.f90,$(S)/%.o,$(MAIN_MIX_F) $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_DISPATCH_F))
+ALL_MAIN_M := $(patsubst src/%.f90,$(M)/%.o,$(MAIN_MIX_F) $(MAIN_STRUCT_F) $(MAIN_UNS_F) $(MAIN_DISPATCH_F))
 
 $(filter-out $(BOOT_OBJ_S),$(LIB_OBJ_S) $(ALL_MAIN_S)): $(BOOT_OBJ_S)
 $(filter-out $(BOOT_OBJ_M),$(LIB_OBJ_M) $(ALL_MAIN_M)): $(BOOT_OBJ_M)
@@ -456,12 +481,18 @@ $(M)/unstructured/main_uns_mpi.o: $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M
 # mod_coupling_exchange  <- mod_interface_units + mod_interface_exchange + mpi
 COUPL_LAYER0 := mod_interface_units mod_interface_exchange
 COUPL_LAYER1 := mod_coupling_exchange
+# mod_mix_driver: the coupling group drivers extracted from main.f90. Its two
+# `use` edges are mod_struct_driver / mod_uns_driver (both already transitively
+# ordered by COUPL_LAYER0/1's prerequisites) plus the exchange layer.
+COUPL_LAYER2 := mod_mix_driver
 
 coupl_objs = $(foreach b,$(1),$(S)/coupling/$(b).o)
 coupl_objm = $(foreach b,$(1),$(M)/coupling/$(b).o)
 
 $(call coupl_objs,$(COUPL_LAYER1)): $(call coupl_objs,$(COUPL_LAYER0))
 $(call coupl_objm,$(COUPL_LAYER1)): $(call coupl_objm,$(COUPL_LAYER0))
+$(call coupl_objs,$(COUPL_LAYER2)): $(call coupl_objs,$(COUPL_LAYER0) $(COUPL_LAYER1))
+$(call coupl_objm,$(COUPL_LAYER2)): $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1))
 
 # Coupling modules depend on common + structured + unstructured layers.
 $(call coupl_objs,$(COUPL_LAYER0) $(COUPL_LAYER1)): $(COMMON_OBJ_S) \
@@ -475,8 +506,11 @@ $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1)): $(COMMON_OBJ_M) \
 # mod_coupling_exchange.  The coupling objects above already transitively follow
 # common + structured + unstructured, so a single edge to the coupling layer
 # orders every prerequisite on a pristine tree before any .d file exists.
-$(S)/main.o: $(call coupl_objs,$(COUPL_LAYER0) $(COUPL_LAYER1))
-$(M)/main.o: $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1))
+$(S)/main.o: $(call coupl_objs,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2))
+$(M)/main.o: $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2))
+# Self-dispatching main (bin/mixnsolver): needs mod_mix_driver too.
+$(S)/main_dispatch.o: $(call coupl_objs,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2))
+$(M)/main_dispatch.o: $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2))
 
 # phase-5 units/exchange test main: same pristine-ordering need -- its .d file
 # does not exist yet, so order it after the coupling layer (which itself follows

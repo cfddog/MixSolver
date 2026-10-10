@@ -4,6 +4,25 @@
 
 ## 已完成
 
+- [x] **阶段 15：零参数自分发可执行 `mixnsolver`（2026-10-10，含源码改动）**：
+  把 `src/main.f90` 的 `struct_group_driver`/`uns_group_driver` 及 4 个辅助过程
+  （`convert_to_si`/`convert_uns_to_struct_nd`/`write/read_couple_state`）**原样抽出**
+  到 `src/coupling/mod_mix_driver.f90`，`main.f90` 变薄调用者（旧二进制行为不变）。
+  新增 `src/main_dispatch.f90`（`program mixnsolver` → `bin/mixnsolver(_mpi)`）：
+  **零命令行参数**，按 cwd 探测自动分派——`mix.control`→COUPLED；唯一同名
+  `<stem>.cas`+`<stem>.control`（优先 `unMesh.cas/control`）→UNS；`control.ec`+`Mesh3d.x`
+  →STRUCT；否则/多配对/交叉均报错列候选。`mod_struct_driver` 新增
+  `struct_solver_run(comm,ctlfile)`（镜像 `program main` 时间环，不 finalize）。
+  **验证全绿**（位级对拍）：STRUCT flow3d.dat md5 与 `bin/struct_solver` 一致；UNS
+  `<stem>.vtu` md5 与 `bin/uns_solver` 一致（串行与 `-np 2`）；COUPLED
+  （`cases/couple_porous` np2）`mixnsolver_mpi` 与（重构后）`mixsolver_mpi` 的
+  flow3d/unMesh_coupled.vtu/Step_mess.dat 逐位一致（restart 仅时间戳不同）；错误路径
+  （空目录/多配对）正确报错；旧回归 units 3/0、coupling 6/0、iface_law 11/11、
+  match 500/500、M6-wing PASS。
+  涉及：`src/main.f90`、`src/coupling/mod_mix_driver.f90`（新）、
+  `src/main_dispatch.f90`（新）、`src/structured/mod_struct_driver.f90`、`Makefile`、
+  `docs/程序使用手册.tex`（§2 新增 auto-dispatch + §1 可执行清单）、`docs/93_changelog.tex`。
+
 - [x] **手册 §2 增补「从编译到执行的完整流程示例」（2026-10-10，纯文档节点）**：
   `docs/程序使用手册.tex` 新增 `\S\ref{sec:workflow}`，5 步端到端流程（编译 / 自检 /
   准备输入 / 运行[结构·非结构·弱耦合] / 后处理与重启动）＋常见失败点；

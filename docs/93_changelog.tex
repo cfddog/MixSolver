@@ -31,6 +31,33 @@
 \endhead
 \bottomrule
 \endlastfoot
+2026-10-10 & 14 &
+\textbf{新增零参数自动分发可执行 \texttt{mixnsolver}（\texttt{bin/mixnsolver\_mpi}）}：
+把 \texttt{src/main.f90} 的两个分组驱动（\texttt{struct\_group\_driver} /
+\texttt{uns\_group\_driver}）及其辅助过程\textbf{原样抽出}到
+\texttt{src/coupling/mod\_mix\_driver.f90}（模块），\texttt{main.f90} 变薄调用者；旧
+\texttt{mixsolver*}、\texttt{struct\_solver*}、\texttt{uns\_solver*} 及全部测试二进制
+行为不变。新增 \texttt{src/main\_dispatch.f90}（\texttt{program mixnsolver}）：零参数，运行
+时按 cwd 探测自动分派（\texttt{mix.control}$\to$COUPLED；唯一同名
+\texttt{<stem>.cas}+\texttt{<stem>.control}$\to$UNS；\texttt{control.ec}+\texttt{Mesh3d.x}
+$\to$STRUCT；否则报错列候选）。\texttt{mod\_struct\_driver} 新增
+\texttt{struct\_solver\_run(comm, ctlfile)}（镜像 \texttt{main} 时间环，不 finalize），
+供 STRUCT 模式复用。UNS 模式复用 \texttt{uns\_solver\_init/step}（全 rank 各持全网格，
+数值==串行）。
+& \texttt{src/main.f90}（瘦身）、\texttt{src/coupling/mod\_mix\_driver.f90}（新）、
+\texttt{src/main\_dispatch.f90}（新）、\texttt{src/structured/mod\_struct\_driver.f90}、
+\texttt{Makefile}（\texttt{mixnsolver(mpi)} 目标、\texttt{COUPL\_LAYER2}、
+\texttt{main\_dispatch} pristine 边、\texttt{units/coupling\_test} 剔除
+\texttt{mod\_mix\_driver}）
+& ① 三种模式\textbf{位级对拍}：STRUCT \texttt{flow3d.dat} md5 与 \texttt{bin/struct\_solver}
+逐位一致；UNS \texttt{<stem>.vtu} md5 与 \texttt{bin/uns\_solver}（串行与 \texttt{-np 2}）
+逐位一致；COUPLED（\texttt{cases/couple\_porous} np2）\texttt{mixnsolver\_mpi} 与（重构后）
+\texttt{mixsolver\_mpi} 的 \texttt{flow3d.dat} / \texttt{unMesh\_coupled.vtu} /
+\texttt{Step\_mess.dat} \textbf{全部逐位一致}（仅 \texttt{unMesh\_restart.dat} 含写入时刻
+时间戳不同）。② 错误路径：空目录、多组非结构配对（\texttt{cases/betchen} 天然多配对）均报错
+列候选。③ 旧测试回归：\texttt{units\_test} 3/0、\texttt{coupling\_test} np2 6/0、
+\texttt{iface\_law\_test} 11/11、\texttt{match\_test} 500/500 PASS；\texttt{M6-wing}
+位级回归 PASS（md5 \texttt{dc134a2d\ldots} 不变）。 \\
 2026-10-10 & 文档 &
 \textbf{手册增强：\S2 增补「从编译到执行的完整流程示例」}。把 \S2 前几小节（依赖 /
 make 目标 / 运行命令）串成端到端可照做的流程：第 1 步编译（\texttt{make mpi} /

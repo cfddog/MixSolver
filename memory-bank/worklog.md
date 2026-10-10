@@ -1,5 +1,41 @@
 # 工作日志 (worklog)
 
+## 2026-10-10 | 阶段 15：零参数自分发可执行 mixnsolver
+
+- 需求（用户）：执行时不想带一长串控制/网格文件名，只要可执行文件名；程序运行中自动
+  判断是单跑可压缩（结构）、单跑不可压缩（非结构）、还是耦合。
+- 实现：把 `src/main.f90` 的两个分组驱动 `struct_group_driver`/`uns_group_driver` 及
+  `convert_to_si`/`convert_uns_to_struct_nd`/`write_couple_state`/`read_couple_state`
+  原样抽出到 `src/coupling/mod_mix_driver.f90`；`main.f90` 变薄调用者（保留参数解析与
+  Comm_split，行为逐位不变）。新建 `src/main_dispatch.f90`（`program mixnsolver`）：
+  零参数，cwd 探测分派 `mix.control`→COUPLED / 唯一同名 `*.cas`+`*.control`→UNS /
+  `control.ec`+`Mesh3d.x`→STRUCT / 否则报错列候选（多配对、交叉亦报错）。结构侧
+  `mod_struct_driver` 新增 `struct_solver_run(comm,ctlfile)`（镜像 program main 时间环，
+  不 finalize）。UNS 模式复用 `uns_solver_init/step`（全 rank 各持全网格，数值==串行）。
+  Makefile 增 `mixnsolver`/`mixnsolver_mpi` 目标、`COUPL_LAYER2`(mod_mix_driver)、
+  `main_dispatch` pristine 边；`units_test`/`coupling_test` 对象列表剔除
+  `mod_mix_driver`（它们只链 common+coupling，undefined 引用已修）。
+- 验证（位级）：STRUCT flow3d.dat md5 与 `bin/struct_solver` 逐位一致（grid_BC 短跑）；
+  UNS `x.vtu` md5 与 `bin/uns_solver x.cas x.control` 一致（串行与 `-np 2`）；COUPLED
+  （`cases/couple_porous` np2，n_couple=10）`mixnsolver_mpi` 与重构后 `mixsolver_mpi`
+  的 flow3d.dat / unMesh_coupled.vtu / Step_mess.dat **逐位一致**（unMesh_restart.dat
+  仅 `# generated:` 时刻戳不同）。错误路径：空目录、`cases/betchen` 多配对均报错列候选
+  并 MPI_Abort。回归：units_test 3/0、coupling_test np2 6/0、iface_law_test 11/11、
+  match_test 500/500、`regress/m6wing/run_regression.sh` PASS（md5
+  dc134a2d196422043ecad7c86ac8f898 不变）。
+- 文档：`docs/程序使用手册.tex` §1 可执行清单 ＋ §2.4 新增「零参数自动分发
+  （mixnsolver）」；`docs/93_changelog.tex` 顶部加条；xelatex 4 遍零 error，PDF 38 页。
+- 提交：`feat: 新增零参数自分发可执行 mixnsolver`（本节点提交 7 源码/配置 + 2 文档 +
+  memory-bank 3 文件，**未**混入旧积压）。
+- **遗留旧积压（未混入，待后续单独成节点）**：阶段14 unified DBF 源码
+  `mod_uns_{control,fields,simple}.f90` ＋ `cases/{betchen,beavers_joseph,porous_plug}/*_uni.control`
+  ＋ `compare_unified.py` ＋ `cases/*/images/*unified*.png` ＋ `cases/C_P_test/` ＋
+  `docs/{plan,91_appendix_params}.tex` ＋ 若干 `cases/*/README.md` 改动 ＋ 根 `bc3d.inp`
+  删除。这些均已被登记为「已完成」但上次会话未走自动提交。
+- 推送：`git push origin main`（随提交自动）。
+
+---
+
 ## 2026-10-10 | 文档节点：手册 §2 增补「从编译到执行的完整流程示例」
 
 - 需求（用户）：在 `docs/程序使用手册.tex` 增加「从程序编译到执行过程」的详细步骤。
