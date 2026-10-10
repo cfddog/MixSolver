@@ -32,6 +32,27 @@
 \bottomrule
 \endlastfoot
 2026-10-10 & 14 &
+\textbf{自分发模式由 \texttt{mix.control} 的 \texttt{mode} 键决定（替换“按文件存在自动探测”）}：
+\texttt{bin/mixnsolver\_mpi} 现在\textbf{必须}在当前目录有一份 \texttt{mix.control}，并通过
+\texttt{mode = coupled | struct | uns} 显式声明本次要跑的模式（值大小写不敏感）；分发器据此
+读取对应控制文件，不再猜测目录里有哪些文件。\texttt{mode = coupled}$\to$读取
+\texttt{Mesh3d.x}+\texttt{control.ec}（结构）与 \texttt{unMesh.cas}+\texttt{unMesh.control}
+（非结构）；\texttt{struct}$\to$\texttt{struct\_solver\_run}（读 \texttt{control.ec}+
+\texttt{Mesh3d.x}）；\texttt{uns}$\to$\texttt{run\_uns}(\texttt{unMesh.cas},
+\texttt{unMesh.control})。缺 \texttt{mix.control}、无 \texttt{mode} 键 / 值非法均报错。
+仓库 4 个耦合 \texttt{mix.control}（\texttt{grid\_BC}、\texttt{cases/couple\_porous}、
+\texttt{cases/couple\_channel}、\texttt{cases/C\_P\_test}）各补一行 \texttt{mode = coupled}。
+& \texttt{src/main\_dispatch.f90}（新 \texttt{parse\_mix\_mode}，删除
+\texttt{detect\_in\_cwd}/\texttt{find\_uns\_pair}/\texttt{list\_uns\_pairs}）、
+\texttt{grid\_BC/mix.control}、
+\texttt{cases/{couple\_porous,couple\_channel,C\_P\_test}/mix.control}
+& 三模式位级对拍：STRUCT（\texttt{mode=struct}）\texttt{flow3d.dat} md5 与
+\texttt{struct\_solver} 一致；UNS（\texttt{mode=uns}）\texttt{unMesh.vtu} md5 与
+\texttt{uns\_solver} 一致；COUPLED（\texttt{mode=coupled}，np2 短跑）正常出
+\texttt{flow3d.dat}/\texttt{unMesh\_coupled.vtu}。错误路径：缺 \texttt{mix.control}、
+无 \texttt{mode} 键均报错并 \texttt{MPI\_Abort}。旧回归与 M6-wing 不受影响（仅动
+\texttt{main\_dispatch} 与 \texttt{mix.control} 输入）。 \\
+2026-10-10 & 14 &
 \textbf{新增零参数自动分发可执行 \texttt{mixnsolver}（\texttt{bin/mixnsolver\_mpi}）}：
 把 \texttt{src/main.f90} 的两个分组驱动（\texttt{struct\_group\_driver} /
 \texttt{uns\_group\_driver}）及其辅助过程\textbf{原样抽出}到

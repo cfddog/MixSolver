@@ -1,5 +1,14 @@
 # 当前上下文 (activeContext)
 
+> **2026-10-10 🆕 阶段 15（续）：自分发模式改由 \texttt{mix.control} 的 \texttt{mode} 键显式声明**：
+> 用户要求"在 mix.control 就确定耦合方式，从而确认要读哪些控制文件"。`program mixnsolver`
+> 删除按文件存在自动探测，新增 `parse_mix_mode`：\textbf{必须}有 `mix.control`，读
+> `mode = coupled|struct|uns` 决定模式（缺 mix.control/无 mode/值非法均报错）；
+> `coupled` 读 Mesh3d.x/control.ec/unMesh.cas/unMesh.control；`struct` 走
+> `struct_solver_run`；`uns` 读 unMesh.cas/unMesh.control。仓库耦合 `mix.control`
+> （grid_BC、couple_porous、couple_channel、C_P_test）各补 `mode = coupled`。
+> 验证：三模式位级对拍通过，两错误路径正确报错。旧积压（阶段14 unified DBF 等）未混入。
+
 > **2026-10-10 🆕 阶段 15：零参数自分发可执行 `mixnsolver`（已实现并验证）**：
 > 把 `src/main.f90` 的两个分组驱动 `struct_group_driver`/`uns_group_driver` 及辅助
 > 过程原样抽出到 `src/coupling/mod_mix_driver.f90`（模块），`main.f90` 变薄调用者；

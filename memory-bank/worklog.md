@@ -1,5 +1,28 @@
 # 工作日志 (worklog)
 
+## 2026-10-10 | 阶段 15（续）：自分发模式改为由 mix.control 的 mode 键显式声明
+
+- 需求（用户）："可以在 mix.control 就确定耦合方式，这样就可以确认控制文件需要读哪些"。
+- 实现：`src/main_dispatch.f90` 删除按文件存在自动探测（`detect_in_cwd`/
+  `find_uns_pair`/`list_uns_pairs`），新增 `parse_mix_mode`：**必须**有 `mix.control`，
+  读 `mode = coupled|struct|uns`（大小写不敏感）决定模式；缺 mix.control、无 mode 键、
+  值非法均报错并 MPI_Abort。`mode=coupled` 读 Mesh3d.x/control.ec/unMesh.cas/
+  unMesh.control；`struct` 走 `struct_solver_run`；`uns` 读 unMesh.cas/unMesh.control。
+- 仓库耦合算例的 `mix.control`（grid_BC、cases/couple_porous、cases/couple_channel、
+  cases/C_P_test）各补一行 `mode = coupled`（C_P_test 仍属未提交积压，未纳入本节点）。
+- 验证：STRUCT（mode=struct）flow3d.dat md5 与 struct_solver 逐位一致；UNS（mode=uns）
+  unMesh.vtu md5 与 uns_solver 逐位一致；COUPLED（mode=coupled）np2 短跑出
+  flow3d/unMesh_coupled.vtu；缺 mix.control、无 mode 键两错误路径均正确报错。
+- 文档：手册 §1 可执行清单 + §2.4 改为 mode 声明式；93_changelog 顶部加条；xelatex
+  4 遍零 error，PDF 39 页。
+- 提交：`feat: mixnsolver 的 mode 改由 mix.control 声明`（本节点：main_dispatch.f90 +
+  3 个跟踪 mix.control + 2 文档 + memory-bank 3 文件；C_P_test 未混入）。
+- **遗留旧积压不变（未混入）**：阶段14 unified DBF 源码/控制件/图、`cases/C_P_test/`、
+  `docs/{plan,91_appendix_params}.tex`、若干 `cases/*/README.md`、根 `bc3d.inp` 删除。
+- 推送：`git push origin main`。
+
+---
+
 ## 2026-10-10 | 阶段 15：零参数自分发可执行 mixnsolver
 
 - 需求（用户）：执行时不想带一长串控制/网格文件名，只要可执行文件名；程序运行中自动

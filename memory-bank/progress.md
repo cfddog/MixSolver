@@ -4,6 +4,16 @@
 
 ## 已完成
 
+- [x] **阶段 15（续）：`mixnsolver` 模式改由 `mix.control` 的 `mode` 键声明（2026-10-10）**：
+  `program mixnsolver` 不再按文件存在自动探测，新增 `parse_mix_mode` 从**必带**的
+  `mix.control` 读 `mode = coupled|struct|uns`（大小写不敏感）决定模式；缺 mix.control /
+  无 mode 键 / 值非法均报错。`coupled`→Mesh3d.x/control.ec/unMesh.cas/unMesh.control；
+  `struct`→`struct_solver_run`；`uns`→`run_uns(unMesh.cas,unMesh.control)`。
+  仓库耦合 `mix.control`（grid_BC、couple_porous、couple_channel、C_P_test）各补
+  `mode = coupled`。验证：三模式位级对拍不变（struct flow3d / uns unMesh.vtu / coupled
+  np2 全部与旧求解器一致），两错误路径（缺 mix.control、无 mode）正确报错。
+  涉及 `src/main_dispatch.f90`、3 个跟踪 `mix.control`、`docs/*.tex`。
+
 - [x] **阶段 15：零参数自分发可执行 `mixnsolver`（2026-10-10，含源码改动）**：
   把 `src/main.f90` 的 `struct_group_driver`/`uns_group_driver` 及 4 个辅助过程
   （`convert_to_si`/`convert_uns_to_struct_nd`/`write/read_couple_state`）**原样抽出**

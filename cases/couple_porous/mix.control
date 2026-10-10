@@ -7,6 +7,8 @@
 # The porous bed only changes the converged value (interface pressure set
 # by the Darcy-Forchheimer pressure drop, ~302 Pa, instead of ~0).
 
+mode   = coupled   # solve mode for bin/mixnsolver: coupled | struct | uns
+
 rho_ref = 1.177
 T_ref   = 300.0
 L_ref   = 0.001

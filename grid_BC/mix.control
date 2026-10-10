@@ -3,6 +3,7 @@
 # The structured side is non-dimensionalised with rho_ref, T_ref (a_ref from
 # gamma*R*T_ref); every interface quantity crosses in SI.
 
+mode   = coupled   # solve mode for bin/mixnsolver: coupled | struct | uns
 rho_ref = 1.177
 T_ref   = 300.0
 L_ref   = 0.05

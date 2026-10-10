@@ -3,6 +3,8 @@
 # near-incompressible channel flow (struct Ma=0.1 vs uns incompressible,
 # density variation ~0.5%, matched Re_H=500).
 
+mode   = coupled   # solve mode for bin/mixnsolver: coupled | struct | uns
+
 rho_ref = 1.177
 T_ref   = 300.0
 L_ref   = 0.001
