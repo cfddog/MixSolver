@@ -28,8 +28,9 @@ docs/*.pdf
 *~
 .DS_Store
 
-# 注意：lib/{metis,parmetis,tecplot}/*.a 为 vendored 预编译第三方库，
+# 注意：lib/{metis,parmetis}/*.a 为 vendored 预编译第三方库，
 #       链接必需且不可由本仓库重建，故 **不** 忽略 *.a。
+#       （lib/tecplot/libtecio.a 已于 2026-10-11 随 TecIO 依赖一并移除。）
 
 # ─────────────────────────────────────────────────────────────
 # 算例 / 验证运行产物：**一律不入库**（可重算；生成命令见各

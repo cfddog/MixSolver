@@ -309,11 +309,7 @@ contains
       end if
       n_steps  = max( 1, ctrl%n_time_max )
       n_out    = max( 0, ctrl%n_out_every )
-      if ( ctrl%out_format == 'tecplot' ) then
-         step_ext = '.plt'
-      else
-         step_ext = '.vtu'
-      end if
+      step_ext = '.vtu'
 
       ! ---- matrix pattern (shared by momentum and pressure equations) --------
       call build_cell_csr( m, conn, amat )
@@ -474,14 +470,10 @@ contains
                                          maxval(fld%T)
          end if
 
-         ! ---- optional result snapshot (VTU or Tecplot PLT) ------------------
+         ! ---- optional result snapshot (VTU) ---------------------------------
          if ( n_out > 0 .and. ( mod(it,n_out) == 0 .or. it == n_steps ) ) then
             call make_step_filename( vtu_prefix, it, step_ext, vtufile )
-            if ( ctrl%out_format == 'tecplot' ) then
-               call tecplot_write( m, conn, g, ctrl, fld, trim(vtufile), ios )
-            else
-               call vtk_write( m, conn, g, fld, trim(vtufile), ios )
-            end if
+            call vtk_write( m, conn, g, fld, trim(vtufile), ios )
             if ( ios /= 0 ) then
                write(*,'(a,i0,a)') 'WARNING: result write failed at step ', &
                                   it, ' (continuing)'
@@ -559,11 +551,7 @@ contains
       n_steps = max( 1, ctrl%n_time_max )
       n_outer = max( 1, ctrl%n_outer_iter )
       n_out   = max( 0, ctrl%n_out_every )
-      if ( ctrl%out_format == 'tecplot' ) then
-         step_ext = '.plt'
-      else
-         step_ext = '.vtu'
-      end if
+      step_ext = '.vtu'
 
       call build_cell_csr( m, conn, amat )
       pmat = amat
@@ -721,11 +709,7 @@ contains
 
          if ( n_out > 0 .and. ( mod(it,n_out) == 0 .or. it == n_steps ) ) then
             call make_step_filename( vtu_prefix, it, step_ext, vtufile )
-            if ( ctrl%out_format == 'tecplot' ) then
-               call tecplot_write( m, conn, g, ctrl, fld, trim(vtufile), ios )
-            else
-               call vtk_write( m, conn, g, fld, trim(vtufile), ios )
-            end if
+            call vtk_write( m, conn, g, fld, trim(vtufile), ios )
             if ( ios /= 0 ) then
                write(*,'(a,i0,a)') 'WARNING: result write failed at step ', &
                                   it, ' (continuing)'
@@ -744,7 +728,7 @@ contains
 
    !----------------------------------------------------------------------------
    ! Build "<prefix>_stepNNNN<ext>" filename (zero-padded to 4 digits).
-   ! ext carries the leading dot, e.g. '.vtu' or '.plt'.
+   ! ext carries the leading dot, e.g. '.vtu'.
    !----------------------------------------------------------------------------
    subroutine make_step_filename( prefix, step, ext, fname )
       character(len=*), intent(in)  :: prefix

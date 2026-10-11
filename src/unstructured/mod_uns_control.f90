@@ -160,9 +160,10 @@ module mod_uns_control
                                         ! (deferred, lagged; interior faces)
       character(len=16) :: ppe_precond = 'ic0'  ! PPE CG preconditioner:
                                         ! 'jacobi' or 'ic0' (incomplete Cholesky)
-      character(len=16) :: out_format = 'vtu'  ! result file format:
-                                        ! 'vtu' (VTK XML, default) or
-                                        ! 'tecplot' (binary .plt via TecIO)
+      character(len=16) :: out_format = 'vtu'  ! result file format; only 'vtu'
+                                        ! (VTK XML) is supported.  The Tecplot
+                                        ! .plt writer and its TecIO/libtecio
+                                        ! dependency were removed (phase 17)
       ! --- transient PISO parameters (phase 8) ---
       ! transient = .false. selects steady SIMPLE (simple_run); when .true.,
       ! main dispatches to piso_run and the momentum assembly adds an implicit
@@ -351,10 +352,9 @@ contains
             ctrl%ppe_precond = trim(adjustl( lowercase(val) ))
          case ( 'out_format', 'out_fmt' )
             ctrl%out_format = trim(adjustl( lowercase(val) ))
-            if ( ctrl%out_format /= 'vtu' .and. &
-                 ctrl%out_format /= 'tecplot' ) then
-               write(*,'(a)') 'ERROR: out_format must be vtu or tecplot: ' &
-                              // trim(val)
+            if ( ctrl%out_format /= 'vtu' ) then
+               write(*,'(a)') 'ERROR: out_format must be vtu (the Tecplot ' &
+                              // '.plt output was removed): ' // trim(val)
                ier = 2; exit
             end if
 

@@ -278,7 +278,7 @@ contains
    !
    ! Snapshots are written every n_out_every steps and at the final step:
    ! fields are gathered from all ranks to rank 0, which then calls the
-   ! existing serial vtk_write / tecplot_write on the global mesh.
+   ! existing serial vtk_write on the global mesh.
    !----------------------------------------------------------------------------
    subroutine piso_run_mpi( lm, hi, ctrl, bcs, fld, vtu_prefix, &
                              m_g, c_g, g_g, part, fld_g, ier )
@@ -322,11 +322,7 @@ contains
       end if
       n_steps = max( 1, ctrl%n_time_max )
       n_out   = max( 0, ctrl%n_out_every )
-      if ( ctrl%out_format == 'tecplot' ) then
-         step_ext = '.plt'
-      else
-         step_ext = '.vtu'
-      end if
+      step_ext = '.vtu'
 
       ! ---- matrix pattern ----------------------------------------------------
       call build_cell_csr( lm%m, lm%c, amat )
@@ -529,7 +525,7 @@ contains
          ! ---- optional snapshot (Step 6): gather to rank 0 + global write ----
          if ( n_out > 0 .and. ( mod(it,n_out) == 0 .or. it == n_steps ) ) then
             call make_step_filename( vtu_prefix, it, step_ext, vtufile )
-            call write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, ctrl, &
+            call write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, &
                                      trim(vtufile), fld_g, ios )
             if ( ios /= 0 .and. myrank == 0 ) then
                write(*,'(a,i0,a)') 'WARNING: snapshot write failed at step ', &
@@ -597,11 +593,7 @@ contains
       n_steps = max( 1, ctrl%n_time_max )
       n_outer = max( 1, ctrl%n_outer_iter )
       n_out   = max( 0, ctrl%n_out_every )
-      if ( ctrl%out_format == 'tecplot' ) then
-         step_ext = '.plt'
-      else
-         step_ext = '.vtu'
-      end if
+      step_ext = '.vtu'
 
       call build_cell_csr( lm%m, lm%c, amat )
       pmat = amat
@@ -795,7 +787,7 @@ contains
 
          if ( n_out > 0 .and. ( mod(it,n_out) == 0 .or. it == n_steps ) ) then
             call make_step_filename( vtu_prefix, it, step_ext, vtufile )
-            call write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, ctrl, &
+            call write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, &
                                      trim(vtufile), fld_g, ios )
             if ( ios /= 0 .and. myrank == 0 ) then
                write(*,'(a,i0,a)') 'WARNING: snapshot write failed at step ', &

@@ -43,7 +43,7 @@ MixNSSolver/
 │   │   ├── mod_uns_pimple.f90       -- PIMPLE 算法 (瞬态)
 │   │   ├── mod_uns_bc.f90           -- 边界条件 (含 interface 类型)
 │   │   ├── mod_uns_fields.f90       -- 流场变量
-│   │   ├── mod_uns_output.f90       -- 输出 (VTU/Tecplot)
+│   │   ├── mod_uns_output.f90       -- 输出 (VTU)
 │   │   ├── mod_uns_partition.f90    -- METIS/ParMETIS 分块
 │   │   ├── mod_uns_halo.f90         -- Halo 交换
 │   │   ├── mod_uns_local_mesh.f90   -- 局部网格提取
@@ -59,7 +59,7 @@ MixNSSolver/
 │
 ├── cases/                   -- 测试算例
 │   └── ...
-├── lib/                     -- 预编译库 (metis, parmetis, tecplot)
+├── lib/                     -- 预编译库 (metis, parmetis)
 ├── docs/
 └── Makefile
 ```
@@ -84,7 +84,7 @@ MixNSSolver/
    - 支持 `make unstructured` (仅非结构求解器)
    - 支持 `make all` (混合求解器)
    - 支持 `make mpi` (MPI 并行版本)
-   - 链接 lib/metis, lib/parmetis, lib/tecplot
+   - 链接 lib/metis, lib/parmetis
 
 ---
 

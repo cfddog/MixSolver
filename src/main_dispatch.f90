@@ -202,7 +202,7 @@ contains
       use mod_uns_control, only: ctrl_t
       use mod_uns_bc, only: bc_t
       use mod_uns_fields, only: fields_t
-      use mod_uns_output, only: vtk_write, tecplot_write
+      use mod_uns_output, only: vtk_write
       implicit none
       integer, intent(in) :: comm
       character(len=*), intent(in) :: casfile, ctlfile
@@ -234,22 +234,14 @@ contains
       call MPI_Barrier( comm, ier2 )
 
       if ( rank == 0 ) then
-         ! result file name: <cas-basename>.<ext>, ext from ctrl%out_format
+         ! result file name: <cas-basename>.vtu
          outstem = 'result'
          j = scan( casfile, '/', back=.true. )
          k = scan( casfile(j+1:), '.', back=.true. )
          if ( k > 1 ) outstem = casfile(j+1:j+k-1)
-         if ( ctrl%out_format == 'tecplot' ) then
-            outext = '.plt'
-         else
-            outext = '.vtu'
-         end if
+         outext  = '.vtu'
          vtufile = trim(outstem)//trim(outext)
-         if ( ctrl%out_format == 'tecplot' ) then
-            call tecplot_write( m, c, g, ctrl, fld, trim(vtufile), ier )
-         else
-            call vtk_write( m, c, g, fld, trim(vtufile), ier )
-         end if
+         call vtk_write( m, c, g, fld, trim(vtufile), ier )
          if ( ier /= 0 ) then
             write(*,'(a,i0)') '[mixnsolver/uns] FATAL: result output failed ier=', ier
             call MPI_Abort( comm, ier, ier2 )

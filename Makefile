@@ -48,8 +48,12 @@ MPIFC   := mpif90
 # -----------------------------------------------------------------------------
 LIBDIR     := lib
 METIS_LIB  := $(LIBDIR)/metis/libmetis.a
-TECIO_LIB  := $(LIBDIR)/tecplot/libtecio.a
 PARMETIS_LIB := $(LIBDIR)/parmetis/libparmetis_gnu_mpi.a
+
+# NOTE on TecIO: the binary Tecplot .plt writer was REMOVED from the solver
+# (results are written as ASCII VTU only), so lib/tecplot/libtecio.a is neither
+# required nor linked; the vendored archive has been deleted from the repo.
+# Do NOT re-add a TECIO_LIB here -- no object file references tec*142_ anymore.
 
 # NOTE on ParMETIS: the prebuilt archive in lib/parmetis targets the MPICH ABI
 # (MPI_Comm = int), while this system uses OpenMPI 4.1.6 (MPI_Comm = void*);
@@ -81,8 +85,9 @@ FFLAGS_M   := $(FFLAGS) -DHAVE_MPI -J$(M)/mod
 
 # Archives are pulled in by the linker only when symbols are referenced,
 # so listing conditionally-existing ones unconditionally is harmless.
-LDLIBS_S   := $(wildcard $(TECIO_LIB)) -lstdc++ -lm
-LDLIBS_M   := $(wildcard $(METIS_LIB)) $(wildcard $(TECIO_LIB)) -lstdc++ -lm
+# No C++ runtime is needed anymore (libstdc++ was only pulled in by TecIO).
+LDLIBS_S   := -lm
+LDLIBS_M   := $(wildcard $(METIS_LIB)) -lm
 
 # -----------------------------------------------------------------------------
 # Source discovery

@@ -1,4 +1,51 @@
 # 工作日志 (worklog)
+## 2026-10-11 | 移除 Tecplot/TecIO 依赖：结果输出只保留 VTU
+
+- 需求（用户）：「代码中没有采用 tecplot 库文件，在 makefile 中去掉 tecplot 依赖」。
+- **先取证**（与用户前提不符）：`out_format = tecplot` 是一条真实存在的代码路径，
+  `mod_uns_output.f90` 的 `tecplot_write` 用 `bind(c)` 绑定 TecIO 的
+  `tecini142_/teczne142_/tecdatd142_/tecnod142_/tecend142_`；`nm -u` 显示
+  `build/{ser,mpi}/unstructured/mod_uns_output.o` 各含 5 个未定义 tec* 符号；实测
+  把 `$(TECIO_LIB)` 从 LDLIBS 摘掉后链接失败（10 处 undefined reference）。
+  => 只改 Makefile 不可行，必须连同代码路径一起移除（用户拍板「方案A：彻底移除」）。
+- 实施：
+  - `mod_uns_output.f90`：删除 TecIO `interface` 块（5 个 `bind(c)` 接口）与整个
+    `tecplot_write`（约 200 行）、`use iso_c_binding`、public 中该条目（文件 467 行，
+    仅剩 vtk_write / probe_velocity / ghia_compare / thermal_wall_report）。
+  - `mod_uns_control.f90`：`out_format` 只接受 `vtu`，其它值报错（文案写明 .plt 输出已移除）。
+  - `mod_uns_simple.f90`（PISO/SIMPLE 各 1 处 step_ext + 1 处快照）、
+    `mod_uns_simple_mpi.f90`（2 处 step_ext）：删除 `out_format=='tecplot'` 分支，
+    恒用 `.vtu` + `vtk_write`。
+  - `mod_uns_gather.f90`：`write_snapshot_mpi` 去掉 `ctrl` 哑参（其唯一用途是
+    out_format），rank 0 直接 `vtk_write`；两处调用点同步。
+  - `main_dispatch.f90`：use 列表去掉 `tecplot_write`，零参模式末态输出恒为 `<cas基名>.vtu`。
+  - `Makefile`：删 `TECIO_LIB` 定义与 LDLIBS 引用 → `LDLIBS_S := -lm`、
+    `LDLIBS_M := $(wildcard $(METIS_LIB)) -lm`；`-lstdc++` 一并去掉（它只为 TecIO
+    服务，删后链接通过、`ldd` 确认二进制不再依赖 libstdc++）；外链段留 NOTE。
+  - `git rm lib/tecplot/libtecio.a`（4.5 MB vendored 库）；`lib/README.md`、
+    `.gitignore` 注释同步。
+  - 文档：`docs/91_appendix_params.tex`（out_format 行）、`docs/程序使用手册.tex`
+    （lib/ 说明、依赖清单、输出说明）、`docs/plan.md`（库清单/链接项）。
+- 保留（不属该依赖）：`mod_struct_grid.f90` 输出「tecplot 格式」**网格**文件是仓库自带
+  ASCII 文本写出，不调用 TecIO，功能不变。
+- 顺带修掉的潜在错误：MPI 快照此前只按 out_format 改扩展名而内容仍是 VTU
+  （`.plt` + VTU 数据），分支删除后该不一致消失。
+- 验证：
+  - `make clean` 后 `make -j1 all mpi coupling_test units_test iface_law_test match_test`
+    => `BUILD_EXIT=0`（100 条编译/链接命令、0 error；链接行仅 `lib/metis/libmetis.a -lm`，
+    磁盘上已无 libtecio.a）；`nm -u` 全 build 对象无任何 tec*142 引用。
+  - `units_test` 3/0 PASS、`iface_law_test` 11/0 PASS、`coupling_test` np2 6/0 PASS、
+    `match_test`(grid_BC 单进程) 500/500 PASS。
+  - 运行冒烟：/tmp 下用 `cases/ltne/LNTE1D.cas` + `outer_max=3` 跑 `bin/mixnsolver`
+    （mix.control 写 `mode = uns`）=> EXIT=0，写出合法 VTU（`<cas>.vtu`、14.7 MB、
+    头部 `<VTKFile type="UnstructuredGrid">`），无 `.plt` 产生。
+  - 告警：全为既有（`mod_mix_driver`/`mod_uns_forces`/`mod_uns_driver`/`mod_uns_fields`/
+    `mod_uns_control:538` 等未触碰行），改动文件零新告警。
+- 备注（既有测试局限，非本次回归）：`match_test` 的断言对**所有** rank 求值，但接口分类
+  只在 rank 0 做，故 `-np 2` 必然在 rank 1 `mpi_abort(...,2)`；按既有约定单进程运行。
+- 未纳入本提交：工作区里两个既有无关删除（`OpenCFD-EC-1.16a.zip`、`bc3d.inp`）仍待单独处理。
+
+
 ## 2026-10-10 | 阶段 15 收尾：唯一可执行入口收敛为 bin/mixnsolver
 
 - 需求（用户）：「阶段15的工作没有收尾，收尾后计入记忆文件，并提交代码」。

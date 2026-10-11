@@ -2,7 +2,7 @@
 ! mod_gather.f90 -- Field gathering and parallel result output (Step 6)
 !
 ! The local solver operates on owned + halo cells; output routines (vtk_write,
-! tecplot_write, ghia_compare) need the global field on rank 0.  This module
+! ghia_compare) need the global field on rank 0.  This module
 ! provides two helpers:
 !
 !   gather_fields_to_root:
@@ -15,7 +15,7 @@
 !
 !   write_snapshot_mpi:
 !       Convenience wrapper: gathers fields, then rank 0 dispatches the
-!       existing serial vtk_write or tecplot_write on the global mesh.
+!       existing serial vtk_write on the global mesh.
 !       Non-root ranks participate in the gather but do no file I/O.
 !
 ! NB: rank 0 must have already built m_g / c_g / g_g (the global mesh,
@@ -128,11 +128,11 @@ contains
    end subroutine gather_fields_to_root
 
    !----------------------------------------------------------------------------
-   ! Collective: gather fields and rank 0 writes VTU or PLT on the global mesh.
+   ! Collective: gather fields and rank 0 writes VTU on the global mesh.
    ! fld_g is a persistent work array pre-allocated on rank 0 (unallocated on
    ! other ranks is fine -- they only participate in the gather).
    !----------------------------------------------------------------------------
-   subroutine write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, ctrl, &
+   subroutine write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, &
                                    filename, fld_g, ier )
       type(local_mesh_t), intent(in)    :: lm
       type(fields_t),     intent(in)    :: fld
@@ -140,7 +140,6 @@ contains
       type(mesh_t),       intent(in)    :: m_g
       type(conn_t),       intent(in)    :: c_g
       type(geom_t),       intent(in)    :: g_g
-      type(ctrl_t),       intent(in)    :: ctrl
       character(len=*),   intent(in)    :: filename
       type(fields_t),     intent(inout) :: fld_g
       integer,            intent(out)   :: ier
@@ -152,11 +151,7 @@ contains
       if ( ier /= 0 ) return
 
       if ( myrank == 0 ) then
-         if ( ctrl%out_format == 'tecplot' ) then
-            call tecplot_write( m_g, c_g, g_g, ctrl, fld_g, trim(filename), ios )
-         else
-            call vtk_write( m_g, c_g, g_g, fld_g, trim(filename), ios )
-         end if
+         call vtk_write( m_g, c_g, g_g, fld_g, trim(filename), ios )
          if ( ios /= 0 ) then
             write(*,'(a,a,a,i0)') 'WARNING: result write failed for ', &
                trim(filename), ' (continuing), ier=', ios

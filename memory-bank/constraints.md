@@ -74,7 +74,7 @@
 - MPI 专用源文件命名为 `*_mpi.f90`（串行构建自动排除）；共享文件中 MPI 代码用 `#ifdef HAVE_MPI` 保护。
 - 依赖由 `gfortran -cpp -MMD -MP` 自动生成；干净树大批量新增模块后首次构建建议 `make -j1`，
   或在 Makefile "PRISTINE-BUILD EDGES" 段补显式边；基础模块加入 BOOTSTRAP_ORDER。
-- 分块链接：默认串行 METIS 在 rank0 分块 + TECIO；libparmetis_gnu_mpi.a 为 MPICH ABI，
+- 分块链接：默认串行 METIS 在 rank0 分块（TecIO 自 2026-10-11 起不再链接，见工作日志「移除 Tecplot/TecIO 依赖」）；libparmetis_gnu_mpi.a 为 MPICH ABI，
   与本机 OpenMPI 4.1.6 不兼容，重新编译前不要链接。
 - 编译标准：`-cpp -std=f2008 -Wall`（本机 gfortran 13，需兼容用户的 gfortran 8.3.0）。
 
