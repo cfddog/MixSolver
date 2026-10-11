@@ -1,0 +1,46 @@
+# =========================================================================
+# CLUSTER SCENE: 2D laminar flow past a circular cylinder at Re = 40
+# -------------------------------------------------------------------------
+# Mesh: unMesh.cas  (= cases/cylinder_cas/cylinder.cas, md5 e597487bb48a...,
+#        byte-identical to UNSSolverProj/cases/cylinder_invis/cylinder.cas)
+#   cylinder along the z axis, radius R = 0.5 (D = 1), span z in [0,5]
+#   (ONE cell thick in z -> strictly 2D, forces are per unit span)
+#   far-field circle at r = 10 (20 D from the axis)
+#   zones: 2 = fluid cells, 3 = interior faces, 4 = symmetry (z = 0 / z = 5),
+#          5 = pressure-far-field (r = 10), 6 = wall (cylinder surface r = 0.5)
+#
+# Free stream U_inf = (1,0,0); Re = rho*U*D/mu = 1*1*1/0.025 = 40.
+# Literature (2D cylinder, Re = 40, steady laminar, per unit span):
+#   CD ~ 1.5 (base pressure ~ -0.5 ... -1.0), separation angle ~ 53 deg
+#   from the front stagnation point, recirculation length ~ 2.3 D.
+# The in-repo baseline reference_cylinder_cp.dat (Cp(theta), 80 wall nodes)
+# was produced with this exact mesh by the pre-migration solver; compare with
+# check_cylinder.py.
+#
+# NOTE: this control is the same parameter set as
+#   UNSSolverProj/cases/cylinder_invis/cylinder.control (the run that gave
+#   CD = 1.62, separation +-53 deg, wake 2.34 D), re-homed on the zero-arg
+#   bin/mixnsolver driver (mix.control = uns + unMesh.cas/unMesh.control).
+# =========================================================================
+
+# --- physical properties ----------------------------------------------------
+rho = 1.0
+mu  = 0.025            # Re = rho*U*D/mu = 1*1*1/0.025 = 40
+
+# --- numerical parameters (steady SIMPLE) -----------------------------------
+alpha_u = 0.3
+alpha_p = 0.2
+outer_max = 8000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 500
+conv_blend   = 1.0     # limited 2nd-order upwind (limits wake diffusion)
+nonorth_corr = 0.0     # orthogonal diffusion only (mesh is near-orthogonal)
+ppe_precond  = ic0
+
+# --- boundary conditions ----------------------------------------------------
+# bc = <zone> wall | symmetry | velocity-inlet ux uy uz |
+#       pressure-outlet p | pressure-far-field p ux uy uz | slip-wall
+bc = 6 wall                              # no-slip cylinder surface
+bc = 4 symmetry                          # z = 0 / z = 5 planes (2D)
+bc = 5 pressure-far-field 0.0 1.0 0.0 0.0   # p_inf = 0, U_inf = (1,0,0)

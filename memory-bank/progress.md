@@ -1,8 +1,25 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-10（**新增统一 DBF 开关 `porous_model = partitioned | unified`**：默认 `partitioned` 位级不变（5 算例 md5 一致）；`unified` 在无界面算例上退化等价，BJ 几乎无差别、PLUG 明显退化 ⇒ 界面 kink 处理不可替代）
+> 最后更新：2026-10-11（**新增 `mix.control` 核数声明键 `n_struct_ranks` / `n_uns_ranks`：
+> 和必须等于发作业核数，不符则打印诊断并终止（退出码 6/7/8）；顺带拦截既有缺陷
+> `mode=coupled` 用 `-np>2` 挂死，耦合固定 1+1=2 核**）
 
 ## 已完成
+
+- [x] **阶段 19：mix.control 声明核数 + 与发作业核数强制校验（2026-10-11）**：
+  - 新键 `n_struct_ranks` / `n_uns_ranks`（可选、**成对**），和 = 总核数，必须等于
+    `MPI_Comm_size(MPI_COMM_WORLD)`；校验在 `MPI_Comm_split` 之前、各 rank 读同一文件完成。
+    不符 → rank 0 打印「声明值 / 和 / 实际核数 / 修法」并 `MPI_Abort`：6 只给一个键 /
+    7 和不符 / 8 与模式冲突（`uns` 给 ns>0、`struct` 给 nu>0、`coupled` 非 1+1）。
+    两键缺省 → 旧隐式划分 + 一行 `rank split : undeclared`（旧算例零影响）。
+  - **既有缺陷拦截**：`mode = coupled` 用 `-np>2` 会挂死在跨组交换（两个组根点对点、
+    非结构组无组内集合通信；实测 `-np 3` 挂死、`-np 2` 正常）⇒ 固定 `1+1=2` 核，
+    其它组合与未声明的 `-np>2` 启动即报错（不再挂死）。
+  - 验证：coupled/uns/struct 三模式共 17 组用例（ncouple=1 短跑 + `outer_max=3`），
+    数值路径不受影响（`[checked]` 后照旧跑通）；`make all mpi -j4` 零告警；
+    三个现场 `run.sh` 改为按声明推 np 并预警。
+  - 涉及文件：`src/main_dispatch.f90`、`docs/{程序使用手册,91_appendix_params,93_changelog}.tex`、
+    `cluster_cases/README.md`、三个现场 `run.sh`/`mix.control`/`README.md`。
 
 - [x] **阶段 16：固体传热求解 + 固体-流体（低速）/固体-多孔界面（CHT 共轭传热）（2026-10-10）**：
   - **目标**（用户要求「在目前非结构框架下，增加固体传热求解，增加固体-低速界面条件，

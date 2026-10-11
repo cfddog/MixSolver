@@ -1,0 +1,15 @@
+# MixNSSolver self-dispatching mode file (required, zero-argument binary).
+#   mode = uns      -> unstructured incompressible solver (this scene)
+#   mode = coupled  -> struct + uns weak coupling
+#   mode = struct   -> structured compressible solver
+# The unstructured mode reads unMesh.cas + unMesh.control from the cwd and
+# writes unMesh.vtu (named after the .cas basename) with the global rank 0.
+mode = uns
+
+# Optional rank-count declaration: sum = n_struct_ranks + n_uns_ranks = total
+# ranks, which MUST equal the launched rank count (-np / --ntasks), otherwise
+# the solver prints a diagnosis and aborts (exit code 6/7/8).  Uncomment BOTH
+# (never just one) to have the launch checked; run.sh also defaults its np to
+# this sum.
+# n_struct_ranks = 0
+# n_uns_ranks    = 4

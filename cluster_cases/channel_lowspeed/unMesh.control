@@ -1,0 +1,43 @@
+# Incompressible planar channel (2D Poiseuille) -- mass-flow-inlet stability
+# -----------------------------------------------------------------------
+# Mesh: channel_wall.cas (split from Pointwise channel.cas, see
+#   split_channel_zones.py), x[0,300] dx=1 (300 cells), y[0,10] 100 cells
+#   wall-clustered (dy_wall=0.01, dy_c=0.233), z[0,10] one-cell extrusion.
+#   zone 2 = fluid, zone 4 = symmetry (z=0,z=10 planes),
+#   zone 7 = wall (y=0,y=10, split out of the original merged zone 4),
+#   zone 5 = mass-flow-inlet (x=0), zone 6 = pressure-outlet (x=300).
+# Quasi-SI convention: mesh length unit consumed as-is; mdot per m^2.
+#
+# Air at 300 K: rho=1.177, mu=1.846e-5.  Target Re_H = rho*U*H/mu = 100:
+#   U_bulk = 100*1.846e-5/(1.177*10) = 1.5684e-4
+#   mdot   = rho*U_bulk              = 1.8460e-4 kg/(m^2 s)
+#
+# Fully developed reference (plane Poiseuille, H = full channel height):
+#   u(y)    = 6*U_bulk*y*(H-y)/H^2 ,  u_max = 1.5*U_bulk = 2.3526e-4
+#   dp/dx   = -12*mu*U_bulk/H^2 = -3.474e-10 per unit length
+# Hydraulic entry length L_e = 0.05*Re_H*H = 50 < 300, so x > ~100 should
+# be effectively fully developed.
+
+# --- fluid: air at 300 K (no energy equation) ---
+rho = 1.177
+mu  = 1.846e-5
+
+# --- numerics (steady SIMPLE) ---
+alpha_u = 0.7
+alpha_p = 0.3
+# NOTE: outer_tol is an ABSOLUTE du threshold; U is ~1.57e-4 here, so the
+# usual 1e-6 would equal 0.64% of U and stop the sweep long before the inlet
+# information fills the L=300 domain. Use 1e-10 (~6e-7 of U).
+outer_max = 8000
+outer_tol = 1.0e-10
+lin_tol   = 1.0e-8
+lin_max   = 300
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+
+# --- boundary conditions ---
+bc = 4 symmetry
+bc = 7 wall
+bc = 5 mass-flow-inlet 1.8460e-4
+bc = 6 outflow

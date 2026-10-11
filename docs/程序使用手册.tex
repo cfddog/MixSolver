@@ -54,15 +54,15 @@ MixNSSolver 是一个\textbf{弱耦合}（weakly-coupled）多物理场求解器
 低速$\leftrightarrow$多孔（同一套交换层，仅界面类型分派不同）。
 
 \begin{itemize}\itemsep3pt
-  \item \textbf{结构侧}（\texttt{bin/struct\_solver}）：源自 OpenCFD-EC 3D 的
+  \item \textbf{结构侧}（\texttt{mode = struct}）：源自 OpenCFD-EC 3D 的
         格心有限体积求解器，自带 LU-SGS / 双时间 / 多重网格、Roe / HLLC /
         Van Leer 等通量格式、MUSCL2U$\sim$WENO7 重构与 SA / SST / BL 湍流模型。
         使用\textbf{无量纲}变量。
-  \item \textbf{非结构侧}（\texttt{bin/uns\_solver}）：读 Fluent ASCII \texttt{.cas}
+  \item \textbf{非结构侧}（\texttt{mode = uns}）：读 Fluent ASCII \texttt{.cas}
         网格、单元中心压力修正（SIMPLE / PISO / PIMPLE），支持能量方程（被动标量
         或 Boussinesq 浮力）、多孔介质（Darcy--Forchheimer、LTE/LTNE、热弥散、
         Beavers--Joseph 界面）、MPI + METIS 分区与重启动。使用\textbf{SI}单位。
-  \item \textbf{耦合驱动}（\texttt{bin/mixsolver\_mpi}）：用
+  \item \textbf{耦合驱动}（\texttt{mode = coupled}）：用
         \texttt{MPI\_Comm\_split} 把进程分成 struct / uns 两组，交替推进并交换
         界面数据；界面量先统一到 SI 再交换（第~\ref{sec:coupling} 节）。
 \end{itemize}
@@ -74,17 +74,12 @@ MixNSSolver 是一个\textbf{弱耦合}（weakly-coupled）多物理场求解器
 \toprule
 程序 & 编译目标 & 用途与输入 \\
 \midrule
-\texttt{bin/struct\_solver} & \texttt{make structured} & 结构侧单机求解器（无命令行参数；在当前目录找 \texttt{control.ec}、\texttt{Mesh3d.x/dat}、\texttt{bc3d.inp}） \\
-\texttt{bin/struct\_solver\_mpi} & \texttt{make structured\_mpi} & 结构侧 MPI 版本 \\
-\texttt{bin/uns\_solver} & \texttt{make unstructured} & 非结构侧单机求解器：\texttt{uns\_solver [mesh.cas] [control]} \\
-\texttt{bin/uns\_solver\_mpi} & \texttt{make unstructured\_mpi} & 非结构侧 MPI 版本（METIS 分区） \\
-\texttt{bin/mixsolver} & \texttt{make all} & 串行混合驱动（\texttt{nproc}=1 时同一进程先跑结构、再跑非结构） \\
-\texttt{bin/mixsolver\_mpi} & \texttt{make mpi} & 弱耦合驱动（推荐）：\texttt{mixsolver\_mpi [mix.control] [struct.cas] [control.ec] [unMesh.cas] [unMesh.control]} \\
-\texttt{bin/mixnsolver} & \texttt{make mixnsolver} & \textbf{零参数统一可执行}：读当前目录 \texttt{mix.control} 中的 \texttt{mode = coupled|struct|uns} 决定跑哪套求解器（详见 \S\ref{sec:autodispatch}） \\
-\texttt{bin/mixnsolver\_mpi} & \texttt{make mixnsolver\_mpi} & 同一分发器的 MPI 版本（\texttt{mpirun -np N}） \\
+\texttt{bin/mixnsolver} & \texttt{make all} & \textbf{零参数统一可执行}（串行树）：读当前目录 \texttt{mix.control} 的 \texttt{mode = coupled|struct|uns} 决定跑哪套求解器；无命令行参数（详见 \S\ref{sec:autodispatch}） \\
+\texttt{bin/mixnsolver\_mpi} & \texttt{make mpi} & 同一分发器的 MPI 版本：\texttt{mpirun -np N bin/mixnsolver\_mpi}；\texttt{mode = uns} 且 $N>1$ 时按 METIS 分区并行 \\
 \texttt{bin/units\_test} & \texttt{make units\_test} & 量纲换算/插值单元测试（无参数） \\
 \texttt{bin/coupling\_test} & \texttt{make coupling\_test} & 交换协议 MPI 端到端测试：\texttt{mpirun -np 2 bin/coupling\_test} \\
 \texttt{bin/match\_test} & \texttt{make match\_test} & 界面匹配/类型分派测试：\texttt{cd grid\_BC \&\& mpirun -np 1 ../bin/match\_test} \\
+\texttt{bin/iface\_law\_test} & \texttt{make iface\_law\_test} & 界面律（Beavers--Joseph 等）测试（无参数） \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -116,9 +111,9 @@ $a_{ref}$、$p_{ref}$、$p_{scale}$。\textbf{混用两份参考状态是耦合�
 \midrule
 \texttt{src/common/} & 精度与物理常数、参考状态、界面数据结构 \\
 \texttt{src/structured/} & 结构侧求解器（\texttt{mod\_struct\_*}，源自 OpenCFD-EC 3D） \\
-\texttt{src/unstructured/} & 非结构侧求解器（\texttt{mod\_uns\_*}） \\
+\texttt{src/unstructured/} & 非结构侧求解器（\texttt{mod\_uns\_*}；并行分区驱动 \texttt{mod\_uns\_driver\_mpi}） \\
 \texttt{src/coupling/} & 界面匹配、量纲换算、跨组交换协议与三个测试程序 \\
-\texttt{src/main.f90} & 弱耦合驱动（\texttt{mixsolver} / \texttt{mixsolver\_mpi}） \\
+\texttt{src/main\_dispatch.f90} & \textbf{唯一的求解器入口}（\texttt{bin/mixnsolver[\_mpi]}，零参数；读当前目录 \texttt{mix.control} 的 \texttt{mode} 选择 coupled/struct/uns） \\
 \texttt{cases/} & 验证算例；\textbf{每个算例都有 README.md}，记录网格/参数/复现命令/结果 \\
 \texttt{grid\_BC/} & 耦合共享网格：\texttt{Mesh3d.x}、\texttt{bc3d.inp}、\texttt{control.ec}、\texttt{unMesh.cas}、\texttt{unMesh.control}、\texttt{mix.control} \\
 \texttt{regress/m6wing/} & 位级回归：\texttt{baseline/} ＋ \texttt{run\_regression.sh} \\
@@ -154,12 +149,10 @@ $a_{ref}$、$p_{ref}$、$p_{scale}$。\textbf{混用两份参考状态是耦合�
 \toprule
 命令 & 作用 \\
 \midrule
-\texttt{make all} & 串行混合驱动 \texttt{bin/mixsolver}（含两套库） \\
-\texttt{make mpi} & 弱耦合驱动 \texttt{bin/mixsolver\_mpi}（\textbf{日常使用这个}） \\
-\texttt{make structured} / \texttt{structured\_mpi} & 仅结构侧（串行 / MPI） \\
-\texttt{make unstructured} / \texttt{unstructured\_mpi} & 仅非结构侧（串行 / MPI） \\
+\texttt{make all} & 串行树可执行 \texttt{bin/mixnsolver}（零参数自调度，用 \texttt{mpif90} 链接） \\
+\texttt{make mpi} & MPI 树可执行 \texttt{bin/mixnsolver\_mpi}（\texttt{-DHAVE\_MPI}，链接 METIS） \\
 \texttt{make common} / \texttt{common\_mpi} & 仅公共层 \\
-\texttt{make units\_test} / \texttt{coupling\_test} / \texttt{match\_test} & 三个测试程序 \\
+\texttt{make units\_test} / \texttt{coupling\_test} / \texttt{match\_test} / \texttt{iface\_law\_test} & 四个测试程序 \\
 \texttt{make clean} & 清理 \texttt{build/} 与 \texttt{bin/} \\
 \texttt{make help} & 列出全部目标与选项 \\
 \texttt{DEBUG=1} & 追加到任意目标后，改用 \texttt{-O0 -g -fcheck=all -fbacktrace} 调试编译 \\
@@ -169,43 +162,29 @@ $a_{ref}$、$p_{ref}$、$p_{scale}$。\textbf{混用两份参考状态是耦合�
 
 \subsection{运行命令}
 
-\begin{enumerate}\itemsep3pt
-  \item \textbf{结构侧单机}：在算例目录（含 \texttt{control.ec}、\texttt{Mesh3d.x/dat}、
-        \texttt{bc3d.inp}）内运行：
+当前仓库\textbf{只有一个求解器入口}：零参数自调度可执行 \texttt{bin/mixnsolver}（串行树，
+\texttt{make all}）与 \texttt{bin/mixnsolver\_mpi}（MPI 树，\texttt{make mpi}）。它\textbf{不
+接受任何命令行参数}，模式与文件全部由当前工作目录下的 \texttt{mix.control}＋
+\texttt{unMesh.cas}＋\texttt{unMesh.control}（\texttt{mode = coupled} 时另有
+\texttt{Mesh3d.x}、\texttt{control.ec}）决定，详见 \S\ref{sec:autodispatch}。
+
+历史的多可执行、带参数接口（\texttt{bin/mixsolver}、\texttt{mixsolver\_mpi}、
+\texttt{struct\_solver}、\texttt{uns\_solver}、\texttt{uns\_solver\_mpi}）已全部删除，
+本节旧版对它们的描述不再适用；下面的最小用法即为现行接口：
+
 \begin{quote}\ttfamily\small
-/path/to/bin/struct\_solver
+mode = uns \qquad \# 非结构：读 \texttt{unMesh.cas} + \texttt{unMesh.control}，写 \texttt{unMesh.vtu}\\
+n\_struct\_ranks = 0 \quad n\_uns\_ranks = 4 \qquad \# 声明核数（和 $=$ 4，须与 -np 一致）\\
+mpirun -np 4 /path/to/bin/mixnsolver\_mpi\\
+\medskip
+mode = struct \qquad \# 结构：读 \texttt{control.ec} + \texttt{Mesh3d.x}\\
+n\_struct\_ranks = 1 \quad n\_uns\_ranks = 0\\
+/path/to/bin/mixnsolver\\
+\medskip
+mode = coupled \qquad \# 弱耦合：上述两套输入 + \texttt{mix.control} 里的耦合参数\\
+n\_struct\_ranks = 1 \quad n\_uns\_ranks = 1 \qquad \# 耦合固定 $1+1=2$ 核\\
+mpirun -np 2 /path/to/bin/mixnsolver\_mpi
 \end{quote}
-        \textbf{不接受任何命令行参数}：固定读当前目录的 \texttt{control.ec}，缺失时
-        打印 \texttt{Can not find 'control.ec', stop !} 并退出。
-  \item \textbf{非结构侧单机}：
-\begin{quote}\ttfamily\small
-bin/uns\_solver <mesh.cas> <control文件> [输出文件.vtu]
-\end{quote}
-        省略参数时用的是源码里的历史默认路径（\texttt{Grid\_BC/cavity.cas} 等），
-        这些文件在当前仓库中已不存在，因此\textbf{请总是显式给出两个参数}。
-        可选的第三个参数指定输出文件路径（\texttt{main\_uns.f90} 的 \texttt{out\_user}）；
-        省略时由 \texttt{mesh.cas} 的基名派生（\texttt{plug.cas} $\to$
-        \texttt{plug.vtu}）并写在\textbf{当前目录}。
-  \item \textbf{非结构侧 MPI}：语法看似相同，但\textbf{只解析前两个参数}——
-\begin{quote}\ttfamily\small
-mpirun -np 2 bin/uns\_solver\_mpi <mesh.cas> <control文件>
-\end{quote}
-        第 3 个参数会被\textbf{静默忽略}（\texttt{main\_uns\_mpi.f90}），输出文件名
-        固定由 \texttt{.cas} 基名派生（\texttt{bj.cas} $\to$ \texttt{bj.vtu}），
-        并在同目录写出分区映射 \texttt{<stem>.part.map}。要换输出名请先
-        \texttt{cd} 到目标目录、或运行后自行 \texttt{mv}；否则会\textbf{覆盖}
-        当前目录中的同名文件（例如算例里的参考 \texttt{.vtu}）。
-  \item \textbf{弱耦合（推荐）}：在仓库根目录运行，参数依次为
-        mix 控制文件、结构侧 \texttt{.cas}（网格）、结构侧控制文件、非结构侧
-        \texttt{.cas}、非结构侧控制文件；省略时默认 \texttt{./mix.control} ＋
-        \texttt{grid\_BC/} 下的 \texttt{Mesh3d.x}、\texttt{control.ec}、
-        \texttt{unMesh.cas}、\texttt{unMesh.control}：
-\begin{quote}\ttfamily\small
-mpirun -np 2 bin/mixsolver\_mpi mix.control grid\_BC/Mesh3d.x \textbackslash\\
-\hspace*{1em}grid\_BC/control.ec grid\_BC/unMesh.cas grid\_BC/unMesh.control
-\end{quote}
-        \textbf{进程划分}：\texttt{nproc}$\ge$2 时 1 个 rank 跑结构侧、其余跑非结构侧；
-\end{enumerate}
 
 \subsection{零参数自动分发（\texttt{mixnsolver}）}\label{sec:autodispatch}
 
@@ -222,7 +201,9 @@ mpirun -np 2 bin/mixsolver\_mpi mix.control grid\_BC/Mesh3d.x \textbackslash\\
   \item \textbf{结构（STRUCT）}：\texttt{mode = struct} ⇒ 读取 \texttt{control.ec} ＋
         \texttt{Mesh3d.x}，跑结构可压缩求解器（\texttt{struct\_solver\_run}）。
   \item \textbf{非结构（UNS）}：\texttt{mode = uns} ⇒ 读取 \texttt{unMesh.cas} ＋
-        \texttt{unMesh.control}，跑非结构不可压缩求解器，结果写 \texttt{unMesh.vtu}。
+        \texttt{unMesh.control}，跑非结构不可压缩求解器，结果写
+        \texttt{unMesh.vtu}。\texttt{-np N}$>$1 时该网格被 \textbf{METIS 分块并行}
+        求解（\texttt{mod\_uns\_driver\_mpi}，见下 \texttt{uns\_parallel} 键）。
   \item 目录里\textbf{缺 \texttt{mix.control}}、或其中\textbf{无 \texttt{mode} 键 / 值非法}
         一律\textbf{报错}（提示写 \texttt{mode}）。
 \end{enumerate}
@@ -241,10 +222,73 @@ mode = struct\qquad\# 结构：读 control.ec+Mesh3d.x\\
 \end{quote}
 
 \textbf{进程划分}：COUPLED 时 \texttt{nproc}$\ge$2 取 1 个 rank 跑结构侧、其余跑非结构
-侧（与 \texttt{mixsolver\_mpi} 一致）；STRUCT 时全部 rank 跑结构侧；UNS 时全部 rank
-跑非结构侧——非结构侧采用\textbf{全 rank 各持全网格}的冗余模式（\texttt{-np N} 数值与串行
-一致，非 METIS 分区）。\texttt{mode} 键的解析位于 \texttt{program mixnsolver} 内，
-\texttt{read\_mix\_control} 不识别它、会在耦合模式下忽略，均为预期。
+侧（与 \texttt{mixsolver\_mpi} 一致）；STRUCT 时全部 rank 跑结构侧。
+
+UNS 时的进程划分由 \texttt{mix.control} 里可选键 \texttt{uns\_parallel} 控制：
+
+\begin{itemize}\itemsep2pt
+  \item \texttt{uns\_parallel = auto}（默认）：\texttt{-np 1} 或串行树走\textbf{全 rank 各持
+        全网格}的冗余模式（结果与串行逐位一致）；\texttt{-np N}$>$1（MPI 树）走
+        \texttt{mod\_uns\_driver\_mpi} 的 \textbf{METIS 分区}并行路径——rank 0 计算
+        \texttt{nparts = N} 的分区并广播（映射写 \texttt{<cas 基名>.part.map}，
+        重启动时可用 \texttt{partition\_file} 复用），每个 rank 只解自己的子域
+        （本地网格 + 一层 halo + 本地边界条件），收尾由 rank 0 汇聚并写
+        \texttt{<cas 基名>.vtu}。
+  \item \texttt{uns\_parallel = always}：即使 \texttt{-np 1} 也强制走分区路径（用于在
+        同一 rank 数下比对分区解与整体解；实测 \texttt{-np 1} 时两条路径结果逐位相同）。
+  \item \texttt{uns\_parallel = never}：永远走整体网格冗余路径（\texttt{-np N} 只做 MPI
+        确定性检查，没有加速效果）。
+\end{itemize}
+
+\textbf{核数声明与检查（\texttt{n\_struct\_ranks} / \texttt{n\_uns\_ranks}）}：
+\texttt{mix.control} 里\textbf{可以（推荐）}把两侧核数显式写出来，二者之和就是总核数，它
+\textbf{必须}等于发作业的核数（\texttt{mpirun -np N} / 作业脚本的 \texttt{-{}-ntasks}），
+否则 rank 0 打印诊断并 \texttt{MPI\_Abort} \textbf{终止作业}（这就是防“算例按 $1+3$ 核
+准备、却用 \texttt{-np 2} 提交”这类静默误用的守卫）：
+
+\begin{quote}\ttfamily\small
+mode = coupled\\
+n\_struct\_ranks = 1\quad\# 结构侧核数\\
+n\_uns\_ranks = 1\quad\ \ \# 非结构侧核数（$1+1=2$ $\Rightarrow$ \texttt{mpirun -np 2}）\\
+mpirun -np 2 /path/to/bin/mixnsolver\_mpi
+\end{quote}
+
+\begin{itemize}\itemsep2pt
+  \item 两个键\textbf{要么都写、要么都不写}：只写一个会报
+        \texttt{incomplete rank-count declaration} 并退出（退出码 6），避免“声明了一半”。
+  \item 不一致时的输出（示例：声明 4 核、实际 \texttt{-np 2}；退出码 7）：
+        \texttt{ERROR: rank-count mismatch ... declared sum : 4 rank(s) / launched
+        with : 2 rank(s) (MPI\_COMM\_WORLD)}。
+  \item 检查发生在 \texttt{MPI\_Comm\_split} \textbf{之前}：所有 rank 共享 cwd、各自读同一份
+        \texttt{mix.control}，确定性一致，无需任何通信。
+  \item 三个模式的分工：\texttt{mode = uns} 要求 \texttt{n\_struct\_ranks = 0} 且
+        \texttt{n\_uns\_ranks} $=$ 总核数；\texttt{mode = struct} 要求
+        \texttt{n\_uns\_ranks = 0} 且 \texttt{n\_struct\_ranks} $=$ 总核数；
+        \texttt{mode = coupled} 目前\textbf{只支持} $1+1=2$ 核（原因见下）。
+        与模式冲突（如 \texttt{mode = uns} 却给 \texttt{n\_struct\_ranks}$>$0）报错退出
+        （退出码 8）。
+  \item \textbf{不写这两个键} = 保持旧的隐式划分（COUPLED：1 结构 $+$ 其余非结构；
+        STRUCT/UNS：全部 rank 归该侧），只打印一行
+        \texttt{rank split : undeclared}，不做检查 —— 旧算例目录因此仍然可用。
+\end{itemize}
+
+\textbf{COUPLED 的核数限制（$1+1=2$，多核会挂死）}：跨组交换是\textbf{两个组根之间}的
+点对点通道（\texttt{mod\_coupling\_exchange}：结构根 $=$ \texttt{rank 0}，非结构根 $=$
+第 1 个非结构 rank），非结构组内部\textbf{没有集合通信}，所以多余的 rank 会卡死在交换的
+\texttt{MPI\_Recv} 上（实测 \texttt{-np 3} 挂死）；结构侧界面提取也只在单 rank 上成立
+（\texttt{Interface\_List} 是全局表，而 \texttt{Mesh(1)\%Block} 是\textbf{每 rank 的本地块}
+—— \texttt{mod\_struct\_init} 里 \texttt{Num\_Block} 即本地块数）。因此
+\texttt{mode = coupled} 固定 $1$ 结构 $+1$ 非结构 $=2$ 核：声明其它组合会\textbf{直接报错
+退出而不是挂死}，不写键但用 \texttt{-np}$>$2 跑耦合也会报错退出。要多核耦合需先把
+非结构组的多 rank 交换（组内集合 + 根转发）做出来。
+
+\textbf{核心数上限}：非结构分区路径的有效上限是\textbf{单元数}（METIS 分不出比单元更多的
+子域）；结构化侧的分区单位是\textbf{网格块数}（\texttt{Mesh3d.x} 里的 block，
+\texttt{partation.dat} 保存块$\to$rank 映射，其进程数必须等于 \texttt{-np}，否则报错退出）。
+\texttt{mode} 键的解析位于 \texttt{program mixnsolver} 内，
+\texttt{read\_mix\_control} 不识别它、会在耦合模式下忽略，均为预期；
+\texttt{mode}、\texttt{uns\_parallel}、\texttt{n\_struct\_ranks}、
+\texttt{n\_uns\_ranks} 的键名与取值都\textbf{大小写不敏感}。
 
 \subsection{从编译到执行的完整流程示例}\label{sec:workflow}
 
@@ -294,26 +338,28 @@ mpirun -np 2 ./bin/coupling\_test\\
 \texttt{docs/control.ec.template}。多数算例的 \texttt{README.md} 自带
 \texttt{gen\_*.py} 网格生成器与一键运行命令。
 
-\textbf{第 4 步——运行。}依目的选下述三种之一（均需在\textbf{相应算例目录内}或指对路径）：
-\begin{enumerate}\itemsep2pt
-  \item 结构侧单机（不接参数，固定读当前目录 \texttt{control.ec}）：
+\textbf{第 4 步——运行。}零参数统一接口：\textbf{在算例目录内}准备 \texttt{mix.control}
+（\texttt{mode} 一行）+ 该模式所需输入，然后
 \begin{quote}\ttfamily\small
-/path/to/bin/struct\_solver
+\# 非结构单机（读 unMesh.cas + unMesh.control，写 unMesh.vtu）\\
+echo "mode = uns" > mix.control \&\& /path/to/bin/mixnsolver\\
+\medskip
+\# 非结构 MPI：-np N>1 时自动 METIS 分区并行（uns\_parallel = never 可退回全网格冗余）\\
+printf 'mode = uns\textbackslash nn\_struct\_ranks = 0\textbackslash nn\_uns\_ranks = 4\textbackslash n' > mix.control\\
+mpirun -np 4 /path/to/bin/mixnsolver\_mpi\\
+\medskip
+\# 结构单机（读 control.ec + Mesh3d.x）\\
+echo "mode = struct" > mix.control \&\& /path/to/bin/mixnsolver\\
+\medskip
+\# 弱耦合（读两套输入 + mix.control 的耦合参数；固定 1 结构 + 1 非结构 = 2 核）\\
+printf 'mode = coupled\textbackslash nn\_struct\_ranks = 1\textbackslash nn\_uns\_ranks = 1\textbackslash n' > mix.control\\
+mpirun -np 2 /path/to/bin/mixnsolver\_mpi
 \end{quote}
-  \item 非结构侧（\texttt{bin/uns\_solver\_mpi} 只认前两个参数，输出名由 \texttt{.cas}
-        基名派生并写当前目录）：
-\begin{quote}\ttfamily\small
-mpirun -np 2 bin/uns\_solver\_mpi <mesh.cas> <control.ctl>
-\end{quote}
-  \item 弱耦合（\textbf{推荐}，从仓库根目录，5 个位置参数都可被 \texttt{grid\_BC/} 缺省）：
-\begin{quote}\ttfamily\small
-mpirun -np 2 bin/mixsolver\_mpi mix.control \textbackslash\\
-\hspace*{1em}grid\_BC/Mesh3d.x grid\_BC/control.ec grid\_BC/unMesh.cas grid\_BC/unMesh.control
-\end{quote}
-        进程划分：\texttt{nproc}$\ge$2 时 1 个 rank 跑结构侧、其余跑非结构侧。
-        收敛/落盘判据：固定 \texttt{n\_couple} 轮耦合迭代、每 25 步打印界面均值；末态按
-        \texttt{save\_interval} 存档（须 $\le$ \texttt{n\_couple}，否则周期未到无落盘）。
-\end{enumerate}
+进程划分：COUPLED 固定 1 个 rank 跑结构侧、1 个跑非结构侧（声明 $1+1$；见
+\S\ref{sec:autodispatch} 的核数检查与限制）；UNS/STRUCT 时全部 rank 归该侧，声明
+\texttt{n\_uns\_ranks} / \texttt{n\_struct\_ranks} 后核数不符会直接报错退出。
+收敛/落盘判据：固定 \texttt{n\_couple} 轮耦合迭代、每 25 步打印界面均值；末态按
+\texttt{save\_interval} 存档（须 $\le$ \texttt{n\_couple}，否则周期未到无落盘）。
 
 \textbf{第 5 步——后处理与重启动。}结果默认国际单位制输出：结构侧 \texttt{flow3d.dat}＋
 \texttt{Step\_mess.dat}（可选 \texttt{flow3d\_node.dat} 节点插值），非结构侧 \texttt{*.vtu}
@@ -728,8 +774,9 @@ kPa 量级的压力跳变上（早期方案的实测症状）。改成分区（�
 
 所有算例位于 \texttt{cases/} 下，\textbf{每个目录都有 README.md}，内含网格来源、
 参数、\textbf{复现命令}与预期结果（数值/量级）；下表只给出验证对象与入口。
-运行非结构侧算例的一般形式为
-\texttt{bin/uns\_solver <case>.cas <case>.control}。
+运行非结构侧算例的一般形式为：在算例目录放好 \texttt{mix.control}（\texttt{mode = uns}）、
+\texttt{unMesh.cas}、\texttt{unMesh.control} 后执行 \texttt{bin/mixnsolver}（并行：
+\texttt{mpirun -np N bin/mixnsolver\_mpi}，$N>1$ 时 METIS 分区）。
 
 {\small
 \begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.20\textwidth}>{\raggedright\arraybackslash}p{0.72\textwidth}@{}}

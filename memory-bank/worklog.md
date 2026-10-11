@@ -1,4 +1,60 @@
 # 工作日志 (worklog)
+
+
+## 2026-10-11 | 阶段 19：mix.control 声明核数（n_struct_ranks / n_uns_ranks）+ 与发作业核数强制校验
+
+- 需求（用户）：「可以将所有的作业都在 mix.control 中进行指定核数，结构多少核、非结构多少，
+  然后加在一起就是总的核数，发作业的核数要和这个核数匹配（做检查，不一致打印，停止作业）」。
+- **实现**（`src/main_dispatch.f90`，零参数分发器内，`MPI_Comm_split` 之前）：
+  - 新 `parse_mix_int_key(key,val,rank)`：大小写不敏感、`#` 注释、值可带行尾注释；缺失/非整数
+    返回 `NS_UNSET=-1`（非整数时 rank 0 警告并退化为未声明）。
+  - 新 `resolve_rank_split(mode,nproc,rank,ns,nu,o_ns)`：两个键**必须成对**（只给一个 → 退出码 6）；
+    负值 → 6；`ns+nu /= nproc` → **退出码 7**；模式冲突 → **退出码 8**，全部经
+    `rank_split_error` 在 rank 0 打印（声明值 / 和 / 实际核数 / 修法）后 `MPI_Abort`。
+    模式规则：`uns` 要 `n_struct_ranks=0`、`n_uns_ranks=nproc`；`struct` 反之；
+    `coupled` 只允许 `1+1=2`。两键都缺省 → 保留旧隐式划分（`o_ns=1`，`-np1` 时 0）并打印
+    一行 `rank split : undeclared`（旧算例目录零影响）。
+  - 新 `itoa` / `keyval`（deferred-length，`//` 拼接无空格填充）与 `lowercase_str`；
+    `parse_mix_mode` / `parse_mix_uns_parallel` 的键名与取值改用 `lowercase_str`（由大小写敏感
+    变为不敏感，纯放宽）。
+  - 输出对齐：banner 增加 `Ranks : nproc total = struct n + uns m`（coupled）、
+    `MPI ranks : nproc`（struct）；成功时打印
+    `rank split : n_struct_ranks = 0 + n_uns_ranks = 2 = 2 rank(s) == launched 2 rank(s)   [checked]`。
+- **顺带查实并拦截一个既有挂死缺陷**：`mode = coupled` 用 `-np>2` 会永远卡在跨组交换
+  （结构根 = rank 0、非结构根 = rank 1，`mod_coupling_exchange` 只在两个组根之间点对点；
+  非结构组内**无任何集合通信**（`grep MPI_ mod_mix_driver.f90` 只有 2 处 `MPI_Abort`），
+  多余的 uns rank 卡在 `MPI_Recv(TAG_CNT_S2U)`；结构侧界面提取也只在单 rank 成立：
+  `Interface_List` 是全局表而 `mod_struct_init` 里 `MP_%Num_Block=Num_Block` 是**本地块数**）。
+  实测 `cases/couple_porous`（`n_couple=1`、`timeout 75`）：`-np 3` 输出停在
+  `[uns rank 2] interface faces: 40` 后挂死，`-np 2` 正常 `coupling loop done`。
+  ⇒ 现固定要求 `1+1=2`，声明其它组合或未声明而 `-np>2` 都**启动即报错**（不再挂死）。
+- **验证（新二进制，`/tmp/cline/{unsr,cpl3,scene}`）**：
+  - coupled（couple_porous 短跑）：未声明 `-np 2` → INFO + 两 rank 到 `coupling loop done`；
+    未声明 `-np 3` → 8；声明 `1+1` `-np 2` → `[checked]` + 跑通；声明 `1+1` `-np 3` → 7；
+    声明 `1+2` → 8；声明 `2+0` → 8；只给 `n_struct_ranks` → 6；`1+0` `-np 1` → 8。
+  - uns（`cluster_cases/cylinder_Re40`，`outer_max=3`）：未声明 `-np 1/2` → INFO；
+    声明 `0+2` `-np 2` → `[checked]` + `Path : METIS-partitioned` + 写 `unMesh.vtu`；
+    同文件 `-np 1` → 7；`n_struct_ranks=1` → 8；`n_uns_ranks=abc` → 警告 + 退化未声明（rc=0）。
+  - struct（couple_porous 输入，`timeout 12` 截断）：未声明 `-np 1` → INFO；声明 `1+0` →
+    `[checked]` 且进入求解器（rc=124）；`1+1` → 8；`2+0` → 7。
+  - `make all mpi -j4`：EXIT 0、**零告警**。
+  - 现场脚本：三个 `run.sh` `bash -n` 通过；`cluster_cases/cylinder_Re40` 复制到 `/tmp` 实测
+    `./run.sh`（无参）在无键时 np=1、在键 `0+2` 时自动 np=2 并跑 METIS 路径；
+    `./run.sh 3` / `./run.sh 1` 先打印 `!! mix.control declares 2 rank(s) ... use ./run.sh 2`
+    再由求解器 7 退出。
+- **文档同步**：`docs/程序使用手册.tex`（§\ref{sec:autodispatch} 新增「核数声明与检查」＋
+  「COUPLED 核数限制」两段，§运行命令 与 工作流第 4 步的两个命令行示例改为带键版本、
+  耦合示例由 `-np 4` 修正为 `-np 2`）、`docs/91_appendix_params.tex`（mix.control 表新增
+  `mode`/`uns_parallel`/`n_struct_ranks`/`n_uns_ranks` 四行 + 表前说明改为零参数读当前目录）、
+  `docs/93_changelog.tex`（顶部新增一条）、`cluster_cases/README.md`（第 3 节新增
+  核数声明表 + 耦合 2 核限制）、三个现场 `mix.control`（注释示例）与 `README.md`。
+- 涉及文件：`src/main_dispatch.f90`、`docs/{程序使用手册,91_appendix_params,93_changelog}.tex`、
+  `cluster_cases/README.md`、`cluster_cases/{cylinder_Re40,channel_lowspeed,bj_porous}/{run.sh,mix.control,README.md}`、
+  `memory-bank/{activeContext,progress,worklog}.md`。
+
+---
+
+
 ## 2026-10-11 | 移除 Tecplot/TecIO 依赖：结果输出只保留 VTU
 
 - 需求（用户）：「代码中没有采用 tecplot 库文件，在 makefile 中去掉 tecplot 依赖」。

@@ -2,16 +2,19 @@
 # MixNSSolver -- top-level Makefile
 #
 # Targets:
-#   make / make all         serial mixed solver            -> bin/mixsolver
-#   make mpi                MPI    mixed solver            -> bin/mixsolver_mpi
-#   make structured         serial structured-only solver  -> bin/struct_solver
-#   make structured_mpi     MPI    structured-only solver  -> bin/struct_solver_mpi
-#   make unstructured       serial unstructured-only       -> bin/uns_solver
-#   make unstructured_mpi   MPI    unstructured-only       -> bin/uns_solver_mpi
+#   make / make all         serial zero-arg self-dispatching solver -> bin/mixnsolver
+#   make mpi                MPI    zero-arg self-dispatching solver -> bin/mixnsolver_mpi
 #   make common             compile common modules only (serial sanity check)
 #   make common_mpi         same, MPI toolchain
 #   make clean              remove build/ and bin/
 #   make help
+#
+# NOTE: there is exactly ONE solver entry point (src/main_dispatch.f90, zero
+# command-line arguments, mode read from ./mix.control).  The legacy arg-taking
+# targets/executables (mixsolver[_mpi], struct_solver[_mpi], uns_solver[_mpi])
+# are gone.  Unstructured parallel runs use the same binary:
+#   mpirun -np N bin/mixnsolver_mpi     with  mix.control: mode = uns
+# which METIS-partitions the mesh over the N ranks (see mod_uns_driver_mpi).
 #
 # Options:
 #   DEBUG=1   use -O0 -g -fcheck=all -fbacktrace instead of -O2
@@ -365,6 +368,15 @@ $(call st_objs,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3) \
 $(call st_objm,$(ST_LAYER0) $(ST_LAYER1) $(ST_LAYER2) $(ST_LAYER3) \
   $(ST_LAYER4) $(ST_LAYER5) $(ST_LAYER6)): $(COMMON_OBJ_M)
 
+# Pristine-build edge inside the common layer itself: mod_precision is the root
+# module of both trees and every other common module uses it.  Without this edge
+# a plain 'make -j' on a tree with no .d files yet may start
+# mod_reference_state / mod_interface in parallel with mod_precision and fail
+# with "Cannot open module file 'mod_precision.mod'"; BOOTSTRAP_ORDER alone
+# fixes the compile *order* but does not serialize the jobs.
+$(filter-out $(S)/common/mod_precision.o,$(COMMON_OBJ_S)): $(S)/common/mod_precision.o
+$(filter-out $(M)/common/mod_precision.o,$(COMMON_OBJ_M)): $(M)/common/mod_precision.o
+
 # Unstructured-solver internal module chain (phase 3).
 # Layers are the real use-edges in conservative total order, which guarantees
 # a clean 'make -j' succeeds before any .d file exists.
@@ -390,6 +402,11 @@ UNS_LAYER6_M := mod_uns_linsolver_mpi mod_uns_gather mod_uns_restart
 UNS_LAYER7_M := mod_uns_simple
 UNS_LAYER8_M := mod_uns_simple_mpi
 UNS_LAYER9_M := mod_uns_driver
+# The METIS-partitioned parallel driver 'uses' the whole MPI stack above
+# (uns_simple_mpi / gather / halo / local_mesh / partition / restart), so it
+# must be built last -- on a pristine tree there is no .d file for a brand-new
+# source yet, and the dispatcher main also uses it (edge added below).
+UNS_LAYER10_M := mod_uns_driver_mpi
 
 uns_objs = $(foreach b,$(1),$(S)/unstructured/$(b).o)
 uns_objm = $(foreach b,$(1),$(M)/unstructured/$(b).o)
@@ -412,6 +429,7 @@ $(call uns_objm,$(UNS_LAYER6_M)): $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M
 $(call uns_objm,$(UNS_LAYER7_M)): $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) $(UNS_LAYER3_M) $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M))
 $(call uns_objm,$(UNS_LAYER8_M)): $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) $(UNS_LAYER3_M) $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M))
 $(call uns_objm,$(UNS_LAYER9_M)): $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) $(UNS_LAYER3_M) $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M) $(UNS_LAYER8_M))
+$(call uns_objm,$(UNS_LAYER10_M)): $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) $(UNS_LAYER3_M) $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M) $(UNS_LAYER8_M) $(UNS_LAYER9_M))
 
 # Coupling-layer modules (phase 5-6): internal dependencies.
 # mod_interface_units  <- common (mod_reference_state)
@@ -446,7 +464,8 @@ $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1)): $(COMMON_OBJ_M) \
 # unstructured, so a single edge to the coupling layer orders every
 # prerequisite on a pristine tree before any .d file exists.
 $(S)/main_dispatch.o: $(call coupl_objs,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2))
-$(M)/main_dispatch.o: $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2))
+$(M)/main_dispatch.o: $(call coupl_objm,$(COUPL_LAYER0) $(COUPL_LAYER1) $(COUPL_LAYER2)) \
+                      $(call uns_objm,$(UNS_LAYER10_M))
 
 # phase-5 units/exchange test main: same pristine-ordering need -- its .d file
 # does not exist yet, so order it after the coupling layer (which itself follows
@@ -457,7 +476,8 @@ $(S)/coupling/test_units_exchange.o: $(call coupl_objs,$(COUPL_LAYER0) $(COUPL_L
 $(call uns_objs,$(UNS_LAYER0_S) $(UNS_LAYER1_S) $(UNS_LAYER2_S) $(UNS_LAYER3_S) \
   $(UNS_LAYER4_S) $(UNS_LAYER5_S) $(UNS_LAYER6_S)): $(COMMON_OBJ_S)
 $(call uns_objm,$(UNS_LAYER0_M) $(UNS_LAYER1_M) $(UNS_LAYER2_M) $(UNS_LAYER3_M) \
-  $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M) $(UNS_LAYER8_M) $(UNS_LAYER9_M)): $(COMMON_OBJ_M)
+  $(UNS_LAYER4_M) $(UNS_LAYER5_M) $(UNS_LAYER6_M) $(UNS_LAYER7_M) $(UNS_LAYER8_M) $(UNS_LAYER9_M) \
+  $(UNS_LAYER10_M)): $(COMMON_OBJ_M)
 
 # -----------------------------------------------------------------------------
 # Auto-generated module dependencies

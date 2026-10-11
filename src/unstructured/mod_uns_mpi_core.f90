@@ -15,8 +15,8 @@ module mod_uns_mpi_core
    use iso_c_binding, only: c_ptr, c_int
    implicit none
    private
-   public :: mpi_bootstrap, mpi_shutdown, mpi_check, myrank, nprocs, &
-             mpi_comm, f2c_comm
+   public :: mpi_bootstrap, mpi_shutdown, mpi_check, mpi_set_comm, &
+             myrank, nprocs, mpi_comm, f2c_comm
 
    ! cached world communicator (kept as integer for portability)
    integer, protected :: mpi_comm = MPI_COMM_WORLD
@@ -48,6 +48,26 @@ contains
       call MPI_Comm_rank( MPI_COMM_WORLD, myrank, ierr )
       call MPI_Comm_size( MPI_COMM_WORLD, nprocs, ierr )
    end subroutine mpi_bootstrap
+
+   !---------------------------------------------------------------------------
+   ! mpi_set_comm -- ADOPT an already-initialised communicator.
+   !
+   ! Use this instead of mpi_bootstrap() when the caller has already called
+   ! MPI_Init itself (e.g. src/main_dispatch.f90): a second MPI_Init is a fatal
+   ! error, so only the cached communicator / rank / size are refreshed here.
+   !
+   ! NOTE: the unstructured parallel stack (mod_uns_partition, mod_uns_halo,
+   ! mod_uns_linsolver_mpi, mod_uns_gather) issues its collectives on
+   ! MPI_COMM_WORLD, so only the world communicator is supported for now; the
+   ! sub-communicator case is rejected by the caller (mod_uns_driver_mpi).
+   !---------------------------------------------------------------------------
+   subroutine mpi_set_comm( comm )
+      integer, intent(in) :: comm
+      integer :: ierr
+      call MPI_Comm_rank( comm, myrank, ierr )
+      call MPI_Comm_size( comm, nprocs, ierr )
+      mpi_comm = comm
+   end subroutine mpi_set_comm
 
    subroutine mpi_shutdown()
       integer :: ierr

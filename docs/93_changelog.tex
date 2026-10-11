@@ -31,6 +31,33 @@
 \endhead
 \bottomrule
 \endlastfoot
+2026-10-11 & 19 &
+\textbf{\texttt{mix.control} 声明核数（\texttt{n\_struct\_ranks} / \texttt{n\_uns\_ranks}）并与发作业核数校验}：
+两个键之和 $=$ 总核数，\textbf{必须}等于 \texttt{MPI\_Comm\_World} 的进程数，否则 rank 0 打印
+诊断（声明值、和、实际核数、修法）并 \texttt{MPI\_Abort} \textbf{停止作业} —— 防的就是
+“算例按 $1+3$ 核准备、却用 \texttt{-np 2} 提交”这类静默误用。校验在
+\texttt{MPI\_Comm\_split} \textbf{之前}、各 rank 读同一份文件完成（无通信）：只给一个键 $\to$
+退出码 6（incomplete）；和 $\ne$ 实际核数 $\to$ 7（mismatch）；与模式冲突 $\to$ 8
+（\texttt{mode=uns} 给 \texttt{n\_struct\_ranks}$>$0$、\texttt{mode=struct} 给
+\texttt{n\_uns\_ranks}$>$0$、\texttt{mode=coupled} 不是 $1+1$）。两键都\textbf{缺省}时保留旧隐式
+划分（COUPLED：$1$ 结构 $+$ \texttt{nproc}-1 非结构；STRUCT/UNS：全部 rank）并只打印一行
+\texttt{rank split : undeclared}，旧算例目录不受影响。顺带\textbf{查实并拦截一个既有挂死缺陷}：
+\texttt{mode = coupled} 用 \texttt{-np}$>$2 会永远卡在跨组交换的 \texttt{MPI\_Recv}
+（交换只在两个组根之间点对点、非结构组无组内集合通信，多余的 rank 没人给它发消息；
+实测 \texttt{-np 3} 挂死、\texttt{-np 2} 正常），结构侧界面提取也只在单 rank 成立
+（\texttt{Interface\_List} 全局表 vs \texttt{Num\_Block} 本地块），因此耦合固定
+$1+1=2$ 核并对其余组合（含未声明的 \texttt{-np}$>$2）启动即报错。\texttt{mode} /
+\texttt{uns\_parallel} 键改为大小写不敏感。
+& \texttt{src/main\_dispatch.f90}（新 \texttt{parse\_mix\_int\_key} /
+\texttt{resolve\_rank\_split} / \texttt{rank\_split\_error} / \texttt{lowercase\_str}）
+& \texttt{cases/couple\_porous} 短跑（$n_{couple}=1$）：\texttt{-np 2} 声明 $1+1$ $\to$ 打印
+\texttt{[checked]} 且两个 rank 都到 \texttt{coupling loop done}；\texttt{-np 3} 未声明 $\to$
+8；声明 $1+1$ 而 \texttt{-np 3} $\to$ 7；声明 $1+2$ $\to$ 8；只给 \texttt{n\_struct\_ranks}
+$\to$ 6。\texttt{mode=uns}（\texttt{cluster\_cases/cylinder\_Re40}，\texttt{outer\_max=3}）：
+声明 $0+2$ 与 \texttt{-np 2} 一致 $\to$ 走 METIS 分区并写出 \texttt{unMesh.vtu}；同一
+\texttt{mix.control} 用 \texttt{-np 1} $\to$ 7；\texttt{n\_struct\_ranks=1} $\to$ 8；
+非整数取值 $\to$ 警告 + 退化为未声明。\texttt{mode=struct} 声明 $1+0$ $\to$
+\texttt{[checked]} 并正常进入求解器（\texttt{timeout} 截断） \\
 2026-10-10 & 14 &
 \textbf{自分发模式由 \texttt{mix.control} 的 \texttt{mode} 键决定（替换“按文件存在自动探测”）}：
 \texttt{bin/mixnsolver\_mpi} 现在\textbf{必须}在当前目录有一份 \texttt{mix.control}，并通过

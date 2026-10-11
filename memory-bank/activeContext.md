@@ -1,5 +1,52 @@
 # 当前上下文 (activeContext)
 
+> **2026-10-11 🆕 阶段 19：mix.control 声明核数 + 与发作业核数强制校验（已实现并验证）**：
+> 新增两个（可选、成对）键 **`n_struct_ranks` / `n_uns_ranks`**：二者之和 = 总核数，
+> **必须**等于 `MPI_Comm_size(MPI_COMM_WORLD)`，否则 rank 0 打印诊断（声明值 / 和 / 实际核数 /
+> 修法）并 `MPI_Abort` **停止作业**——防「算例按 4 核准备、却用 `-np 2` 提交」的静默误用。
+> 校验在 `MPI_Comm_split` 之前、各 rank 读同一份 `mix.control` 完成（无通信）：只给一个键 →
+> 退出码 6；`ns+nu /= nproc` → 7；模式冲突（`uns` 给 `n_struct_ranks>0`、`struct` 给
+> `n_uns_ranks>0`、`coupled` 不是 1+1）→ 8。两键都缺省 → 保留旧隐式划分并只打印一行
+> `rank split : undeclared`（旧算例目录零影响）。实现：`main_dispatch.f90` 新
+> `parse_mix_int_key` / `resolve_rank_split` / `rank_split_error` / `itoa` / `keyval` /
+> `lowercase_str`（`mode`/`uns_parallel` 键改为大小写不敏感）。
+> **顺带查实并拦截一个既有挂死缺陷**：`mode = coupled` 用 `-np>2` 永远卡在跨组交换
+> （交换只在两个组根 rank 0 / rank 1 之间点对点，非结构组**无组内集合通信**，多余 rank 卡在
+> `MPI_Recv`；结构侧界面提取也只在单 rank 成立：`Interface_List` 全局表 vs `Num_Block` 本地块。
+> 实测 `-np 3` 挂死、`-np 2` 正常）⇒ 耦合固定 `1+1=2` 核，其它组合与未声明的 `-np>2` 启动即报错。
+> 验证：coupled（couple_porous，`n_couple=1`）1+1/np2 跑通并 `[checked]`、1+1/np3 → 7、
+> 1+2 → 8、2+0 → 8、只给 ns → 6、未声明 np3 → 8（不再挂死）；uns（cylinder_Re40，
+> `outer_max=3`）0+2/np2 → `[checked]` + METIS 分区 + 写 `unMesh.vtu`、同文件 np1 → 7、
+> ns=1 → 8、非整数 → 警告退化；struct 1+0 → `[checked]` 进求解器；`make all mpi -j4` 零告警；
+> 三个现场 `run.sh` 的 np 缺省改为读 `mix.control` 的和并打印 `!! ... use ./run.sh N` 预警。
+> 文档：`docs/程序使用手册.tex`（新「核数声明与检查」+「COUPLED 核数限制」两段、示例改带键、
+> 耦合示例 `-np 4`→`-np 2`）、`docs/91_appendix_params.tex`（表新增 4 行分发键）、
+> `docs/93_changelog.tex`、`cluster_cases/README.md`、三个现场 `mix.control`/`README.md`。
+> 下一步（可选）：① 把非结构组的多 rank 交换（组内集合 + 根转发）做出来，才可能多核耦合；
+> ② 非结构组子通信域参数化（让 coupled 的 uns 子组也能 METIS 分区）。
+
+> **2026-10-11 🆕 阶段 18：非结构并行（METIS 分区）重新接回自分发入口（已实现并验证）**：
+> 阶段 15 删掉 `src/unstructured/main_uns_mpi.f90` 后，非结构侧只剩「每个 rank 一份全网格」
+> 的冗余模式，`-np N` 没有加速。本次把并行路径接回 `bin/mixnsolver_mpi`：
+> 新增 `src/unstructured/mod_uns_driver_mpi.f90`（`uns_run_mpi(comm,cas,ctl)`：全 rank 读
+> 全网格 → rank0 跑 `partition_mesh_distributed`（nparts=nprocs，映射写
+> `<cas 基名>.part.map`，重启动可用 `partition_file` 复用）→ 各 rank
+> `extract_local_mesh`+`halo_setup`+本地 BC/场（镜像 `uns_solver_init`：`allow_empty=.true.`、
+> CHT 纯固面默认绝热、init_T 用全局 x 展布）→ `simple_run_mpi`/`piso_run_mpi`/`pimple_run_mpi`
+> → rank0 `write_snapshot_mpi` 汇聚写 `<cas 基名>.vtu` + Ghia/力系数/Cp/dump）；文件名以
+> `_mpi.f90` 结尾，故串行树由 `UNS_LIB_S` 的 `filter-out %_mpi.f90` 自动排除，Makefile 无需改。
+> `mod_uns_mpi_core` 新增 `mpi_set_comm(comm)`（入口已 `MPI_Init`，不能再 bootstrap）；
+> `main_dispatch.f90` 的 MODE_UNS 分支新增可选键 **`uns_parallel = auto|always|never`**
+> （默认 auto：`-np 1` 走旧的整体网格路径、`-np N>1` 走分区路径）。
+> 验证（cylinder Re=40，强制 300 次外迭代）：np=1 auto 与 np=1 `always`（1 分区）**7 个 VTU
+> 数组逐位相同**；np=2 auto（edgecut 47，1926 owned+47 halo）Cd 1.8417 vs 整体 1.8455（+0.2%，
+> 非逐位——分区 Schwarz/halo 顺序所致，属预期）；np=2 `never` 与 np=1 整体解**逐位相同**；
+> `make all`/`make mpi` 零告警。限制：partition/halo/linsolver/gather 的集合通信硬编码
+> `MPI_COMM_WORLD`，故该驱动只支持世界通信子（coupled 模式的 uns 子组仍走全网格复制）；
+> 文档同步更新 `cluster_cases/README.md`+三个现场 `run.sh`/README、`docs/程序使用手册.tex`
+> （已可执行表/运行命令/进程划分/工作流/算例集，xelatex 40 页零错）、Makefile 头注释。
+
+
 > **2026-10-10 NEW 阶段 15 收尾：唯一可执行入口收敛为 bin/mixnsolver（已实现并验证）**：
 > 删除 4 个旧入口主程序（src/main.f90、structured/main.f90、
 > unstructured/main_uns.f90、main_uns_mpi.f90）；Makefile

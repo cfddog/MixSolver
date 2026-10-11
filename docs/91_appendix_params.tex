@@ -202,10 +202,13 @@
 
 \subsection{耦合 \texttt{mix.control}}\label{app:mix-params}
 
-耦合驱动（\texttt{bin/mixsolver\_mpi}）在第 1 个参数位置读取本文件；所有进程
+耦合驱动（零参数自调度可执行 \texttt{bin/mixnsolver} / \texttt{bin/mixnsolver\_mpi}）
+在\textbf{当前目录}读取本文件（不再有命令行参数位置）；所有进程
 都要能读到同一份文件（先转 SI $\to$ 交换 $\to$ 各自转回，见
 \texttt{mod\_interface\_units}）。前 4 个键给出{\bfseries 参考状态}，由两个求解器
-共享；其余键控制{\bfseries 耦合循环}。
+共享；\texttt{mode} / \texttt{uns\_parallel} / \texttt{n\_struct\_ranks} /
+\texttt{n\_uns\_ranks} 是\textbf{分发键}（由 \texttt{program mixnsolver} 解析）；
+其余键控制{\bfseries 耦合循环}。
 
 {\small
 \begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.22\textwidth}>{\raggedright\arraybackslash}p{0.14\textwidth}>{\raggedright\arraybackslash}p{0.58\textwidth}@{}}
@@ -225,6 +228,10 @@
 \texttt{T\_ref}   & 288.15 & 参考温度 [K] \\
 \texttt{L\_ref}   & 1.0    & 参考长度 [m] \\
 \texttt{u\_ref}   & 0.0    & 参考速度 [m/s]；$0$ 表示取参考声速 $a_{ref}$ \\
+\texttt{mode} & coupled & \textbf{分发键}（零参数二进制必需）：\texttt{coupled}/\texttt{struct}/\texttt{uns}（键名与取值大小写不敏感，见 \S\ref{sec:autodispatch}） \\
+\texttt{uns\_parallel} & auto & \textbf{分发键}：非结构并行路径 \texttt{auto}（\texttt{-np}$>$1 时 METIS 分区）/ \texttt{always} / \texttt{never} \\
+\texttt{n\_struct\_ranks} & 未声明 & \textbf{分发键}：结构侧核数；必须与 \texttt{n\_uns\_ranks} 同时给出，二者之和 $=$ 发作业核数，不符则报错退出 \\
+\texttt{n\_uns\_ranks} & 未声明 & \textbf{分发键}：非结构侧核数；\texttt{mode = coupled} 目前只允许 $1+1=2$ 核（否则报错退出） \\
 \texttt{n\_couple} & 3     & 弱耦合迭代次数（每个耦合步 = 两侧各推进若干子步） \\
 \texttt{n\_uns\_steps} & 50 & 每个耦合步内非结构侧 SIMPLE 外迭代次数 \\
 \texttt{n\_struct\_steps} & 1 & 每个耦合步内结构侧伪时间子步数 \\
