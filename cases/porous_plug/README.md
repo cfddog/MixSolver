@@ -79,6 +79,28 @@ mpirun -np 2 ../../bin/uns_solver_mpi plug.cas plug_darcy.control
   优先级高于 VC 标记（回归 porous_Ra10 报告 source=control，Nu=1.078 与归档一致）。
 - 多孔介质 Darcy 线性项与 Forchheimer 二次项的 1D 压降定量正确。
 
+### 4.0 统一 DBF（`porous_model = unified`）：无界面算例应完全等价（2026-10-10）
+
+本目录全部算例都是**单一块**（纯多孔塞或纯流体），没有流体/多孔界面，因此是
+`unified` 模式（§ `docs/91_appendix_params.tex` 的 `porous_model`）最干净的
+**等价性判据**：`unified` 只在界面处改用距离加权调和平均面系数；同一 ε 区域内该式
+与算术平均等价，故结果应与默认 `partitioned` 路径一致到舍入。
+
+```bash
+../../bin/uns_solver plug.cas plug_darcy_uni.control plug_darcy_uni.vtu
+../../bin/uns_solver plug.cas plug_forch_uni.control plug_forch_uni.vtu
+python3 ../betchen/fdiff_vtu.py plug_darcy.vtu plug_darcy_uni.vtu
+```
+
+| 工况 | 全场 max\|du\| | 全场 max\|dp\| |
+|---|---|---|
+| plug_darcy | 2.52e-16（u_max=0.104） | **0（逐位相同）** |
+| plug_forch | 3.02e-15（u_max=1.010） | **0（逐位相同）** |
+
+压力场**逐位相同**，速度差是浮点舍入（`mu_f = lf·m + (1-lf)·m` 与
+`1/((1-lf)/m + lf/m)` 在 `m₁=m₂` 时的最后 1–2 ulp 差），证明统一路径在无界面时
+退化为分区路径。⇒ `*_uni.control` 保留在本目录作为回归夹具。
+
 ## 4. 各向异性渗透率验证（2026-10-05 追加）
 
 `cell_zone` 新增可选对角张量分量 `perm_xx=` `perm_yy=` `perm_zz=`（轴对齐各向异性；
@@ -112,6 +134,8 @@ token（缺省仍 0）。本目录 control 均写明 T=300；刷新后 darcy/for
 - `gen_plug.py`：网格生成器（cell zone 名称内嵌 VC:porous）
 - `plug.cas`：网格
 - `plug_darcy.control` / `plug_forch.control`：两工况控制文件
+- `plug_darcy_uni.control` / `plug_forch_uni.control`：`porous_model = unified`
+  对照（见 §4.0）；对应 `plug_*_uni.vtu`
 - `plug_darcy.log` / `plug_forch.log`：运行日志
 - `plug_darcy.vtu` / `plug_forch.vtu`：收敛流场
 - `plot_plug.py`、`images/plug_pressure.png`：对比图

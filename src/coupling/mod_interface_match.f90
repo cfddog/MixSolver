@@ -31,7 +31,8 @@ module mod_interface_match
                             PEER_STRUCT, PEER_UNS, MATCH_MATCHED, MATCH_UNMATCHED, &
                             classify_interface, iface_type_name, iface_recipe_string, &
                             IFACE_UNKNOWN, IFACE_COMP_FLUID_FLUID, &
-                            IFACE_COMP_FLUID_POROUS, IFACE_UNS_FLUID_POROUS
+                            IFACE_COMP_FLUID_POROUS, IFACE_UNS_FLUID_POROUS, &
+                            IFACE_COMP_FLUID_SOLID
    implicit none
    private
    public :: match_interfaces, dispatch_interfaces
@@ -178,13 +179,13 @@ contains
    ! type).  Unmatched structured faces stay IFACE_UNKNOWN and are counted.
    !---------------------------------------------------------------------------
    subroutine dispatch_interfaces
-      integer :: i, j, it, cnt_ff, cnt_fp, cnt_uu, cnt_unk, ns_side
+      integer :: i, j, it, cnt_ff, cnt_fp, cnt_uu, cnt_fs, cnt_unk, ns_side
 
       do i = 1, Num_Interface
          Interface_List(i)%iface_type = IFACE_UNKNOWN
       end do
 
-      cnt_ff = 0; cnt_fp = 0; cnt_uu = 0; cnt_unk = 0; ns_side = 0
+      cnt_ff = 0; cnt_fp = 0; cnt_uu = 0; cnt_fs = 0; cnt_unk = 0; ns_side = 0
       do i = 1, Num_Interface
          if ( Interface_List(i)%solver /= PEER_STRUCT ) cycle
          ns_side = ns_side + 1
@@ -204,6 +205,7 @@ contains
          case ( IFACE_COMP_FLUID_FLUID );  cnt_ff = cnt_ff + 1
          case ( IFACE_COMP_FLUID_POROUS ); cnt_fp = cnt_fp + 1
          case ( IFACE_UNS_FLUID_POROUS );  cnt_uu = cnt_uu + 1
+         case ( IFACE_COMP_FLUID_SOLID );  cnt_fs = cnt_fs + 1
          case default;                     cnt_unk = cnt_unk + 1
          end select
       end do
@@ -229,6 +231,12 @@ contains
             trim(iface_type_name(IFACE_UNS_FLUID_POROUS))
          write(*,'(a,a)')      '        recipe:', &
             trim(iface_recipe_string(IFACE_UNS_FLUID_POROUS))
+      end if
+      if ( cnt_fs > 0 ) then
+         write(*,'(a,i0,a,a)') '  faces ', cnt_fs, '  ', &
+            trim(iface_type_name(IFACE_COMP_FLUID_SOLID))
+         write(*,'(a,a)')      '        recipe:', &
+            trim(iface_recipe_string(IFACE_COMP_FLUID_SOLID))
       end if
       write(*,'(a)') '--- end dispatch ---'
    end subroutine dispatch_interfaces

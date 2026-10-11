@@ -1,0 +1,59 @@
+# mix.control -- coupling-driver parameters for the cht_solid case (phase 17)
+# Compressible mainstream (struct) + pure-solid slab (uns) conjugate heat
+# transfer: interface is an isothermal no-slip wall for the struct side whose
+# temperature is the solid surface temperature (temperature continuity).
+
+mode   = coupled
+
+rho_ref = 1.177
+T_ref   = 300.0
+L_ref   = 1.0
+# U_inf = Ma*a_ref = 0.3*sqrt(1.4*287.058*300) = 0.3*347.22
+u_ref   = 104.166
+
+# --- coupling loop ---
+n_couple        = 30
+# steady cadence: both sides exchange after 50 internal steps (逐步同频)
+n_uns_steps     = 50
+n_struct_steps  = 50
+
+# phase-13 start-up schedule: the struct side starts with 1000 sub-steps per
+# coupling iteration (alternating: struct 1000 -> uns -> struct 500 -> uns ...)
+# and halves the count every coupling iteration until it reaches n_struct_steps,
+# i.e. both solvers end up exchanging at the same frequency.
+n_struct_steps_start = 1000
+step_decay_every     = 1
+
+# --- interface BC under-relaxation + ramp ---
+iface_relax = 1.0
+iface_ramp  = 5
+# phase 17: relaxation of the CHT interface temperature.  On the pure-solid
+# (CHT) faces the struct side pins the received solid surface temperature as an
+# isothermal wall value, which closes the Dirichlet-Neumann loop
+#   T_wall -> q_f = h_f*(T1-T_wall) -> T_surf = T_s0 + R_s*q_f -> T_wall'
+# whose gain h_f*R_s is ~35 here (5e-6 m first fluid cell over a 0.1 m steel
+# slab), i.e. an un-relaxed iteration doubles every coupling step and diverges
+# (measured: w=1 -> q_iface = 2.4e7 W, |r| = 109 K after 10 coupling steps).
+#   0.0      = adaptive Aitken Delta^2 (auto-tunes the gain from the residual
+#              history).  Stable, but on THIS case the residual is dominated by
+#              the physical transient (the slab needs ~1e3 coupling steps to
+#              reach steady state), so the estimator keeps collapsing onto its
+#              safeguard floor and the varying factor imprints a spatial
+#              pattern on q_f: |q_iface_in + q_base_in| ~ 1.3e5 W at iter 10.
+#   0 < w <=1 = fixed under-relaxation factor.  w = 1/(1+h_f*R_s) ~ 0.028 is the
+#              steady-state optimum; 0.03 is stable in both regimes
+#              (|1-w*(1+G)| = 0.6 during the transient, 0.08 at steady state)
+#              and drops the interface energy imbalance to ~4x the base flux
+#              (|q_iface_in + q_base_in| = 2.4e4 W vs q_base_in = 8.6e3 W at
+#              iter 10).  Larger w (0.07) tracks the transient twice as well
+#              but |1-w*(1+G)| = 1.5 at the steady gain, i.e. it would diverge
+#              once the slab approaches steady state.
+# Only IFACE_COMP_FLUID_SOLID faces are relaxed; all other interface types keep
+# their legacy behaviour.
+iface_t_relax = 0.03
+iface_velocity = balance
+iface_p_anchor = 1
+
+# --- periodic save / joint restart ---
+save_interval  = 10
+couple_restart = 0

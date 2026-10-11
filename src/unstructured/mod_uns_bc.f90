@@ -14,6 +14,7 @@ module mod_uns_bc
    private
    public :: bc_t, build_bc, bc_face_vel, bc_face_p, bc_face_T, bc_type_name, &
              set_interface_vel, set_interface_p, set_interface_T, &
+             set_interface_q, set_interface_T_mode, &
              set_inlet_ramp_factor, set_pval_ramp_factor, &
              bc_face_p_dirichlet, set_iface_p_dirichlet, iface_p_is_dirichlet, &
              set_interface_slip, set_iface_slip_mode, iface_slip_is_on, &
@@ -128,6 +129,19 @@ module mod_uns_bc
       ! ---- interface tangential stress jump (phase 14, iface_slip = bj) ----
       real(dp), allocatable :: iface_slip_C(:)     ! (nfaces) conductance [kg/s]
       real(dp), allocatable :: iface_peer_vel(:,:) ! (3,nfaces) peer face vel
+      ! ---- phase 17: interface heat-flux (Neumann) mode ----
+      ! For a CHT pair the peer compressible side is an isothermal no-slip
+      ! wall, so it is the SOLID surface that must be flux-driven: the fluid
+      ! side computes its resolved wall heat flux q_f [W/m^2] (positive =
+      ! fluid -> solid) and it is imposed here as a Neumann surface flux.
+      !   iface_T_mode(i) = 0 : legacy Dirichlet, T_face = iface_T(i) (default)
+      !                   = 1 : Neumann,       q_face = iface_q(i) (>0 heats
+      !                         the solid domain -- same sign convention as the
+      !                         fixed-flux tbc qval)
+      ! Standalone uns runs leave iface_q = 0, so a CHT-interface solid patch
+      ! defaults to ADIABATIC rather than the (unfilled) iface_T = 0 Dirichlet.
+      real(dp), allocatable :: iface_q(:)          ! (nfaces) [W/m^2]
+      integer,  allocatable :: iface_T_mode(:)     ! (nfaces) 0=Dirichlet,1=Neumann
    end type bc_t
 
 contains
@@ -311,13 +325,16 @@ contains
       ! fills them via set_interface_vel / set_interface_p each coupling step)
       allocate( bcs%iface_vel(3, m%nfaces), bcs%iface_p(m%nfaces), &
                 bcs%iface_T(m%nfaces), bcs%iface_slip_C(m%nfaces), &
-                bcs%iface_peer_vel(3, m%nfaces), bcs%iface_Ts(m%nfaces) )
+                bcs%iface_peer_vel(3, m%nfaces), bcs%iface_Ts(m%nfaces), &
+                bcs%iface_q(m%nfaces), bcs%iface_T_mode(m%nfaces) )
       bcs%iface_vel = 0.0_dp
       bcs%iface_p   = 0.0_dp
       bcs%iface_T   = 0.0_dp
       bcs%iface_slip_C   = 0.0_dp
       bcs%iface_peer_vel = 0.0_dp
       bcs%iface_Ts       = 0.0_dp
+      bcs%iface_q        = 0.0_dp   ! phase 17: default heat flux = 0
+      bcs%iface_T_mode   = 0        ! phase 17: default Dirichlet
 
       do i = 1, m%nzone
          if ( zone_is_interface( m, m%zone(i)%id ) ) &
@@ -653,13 +670,26 @@ contains
 
       case ( BC_INTERFACE )
          ! The peer solver supplies the inflow temperature (velocity-specified
-         ! coupling interface).  Dirichlet is mandatory: with a zero-gradient
-         ! inflow the scalar has no exterior source and advection drains it.
+         ! coupling interface).  Dirichlet is mandatory for a fluid inflow: with
+         ! a zero-gradient inflow the scalar has no exterior source and advection
+         ! drains it.
          ! Phase 14 (iface_t_model = zhang, LTNE): the porosity-weighted split
          ! of Zhang 2011 Eq.27-29 gives each phase its own interface value --
          ! the fluid phase bcs%iface_T, the solid phase bcs%iface_Ts -- so the
          ! individual fluxes are eps*F and (1-eps)*F and their sum is exactly
          ! the clear-fluid flux (energy conserving).
+         ! Phase 17 (CHT solid side): when iface_T_mode(i) == 1 the interface is
+         ! instead a NEUMANN patch driven by the peer fluid wall heat flux
+         ! bcs%iface_q(i) (positive = into the solid domain).  This is the
+         ! flux-continuity half of the Dirichlet-Neumann CHT partition: the
+         ! compressible side is the isothermal no-slip wall, the solid side is
+         ! flux-driven, so the fixed point is consistent in both T and q.
+         if ( bcs%iface_T_mode(i) == 1 ) then
+            is_neumann = .true.
+            q_face     = bcs%iface_q(i)
+            T_face     = T_cell
+            return
+         end if
          is_neumann = .false.
          q_face     = 0.0_dp
          T_face     = bcs%iface_T(i)
@@ -726,6 +756,41 @@ contains
          bcs%iface_T(faces(k)) = T(k)
       end do
    end subroutine set_interface_T
+
+   !----------------------------------------------------------------------------
+   ! set_interface_q -- impose a Neumann (fixed-heat-flux) coupling-interface
+   ! temperature condition on the given faces (phase 17, CHT).  Sets the
+   ! per-face flux [W/m^2, positive = into the domain] AND switches those
+   ! faces to flux mode (iface_T_mode = 1); bc_face_T then returns
+   ! is_neumann=.true. with q_face = iface_q.  Used by the coupling driver to
+   ! drive the solid surface with the compressible side's resolved wall heat
+   ! flux.  Sign convention matches the fixed-flux tbc qval.
+   !----------------------------------------------------------------------------
+   subroutine set_interface_q( bcs, faces, q )
+      type(bc_t), intent(inout) :: bcs
+      integer,    intent(in)    :: faces(:)
+      real(dp),   intent(in)    :: q(size(faces))
+      integer :: k
+      do k = 1, size(faces)
+         bcs%iface_q(faces(k))      = q(k)
+         bcs%iface_T_mode(faces(k)) = 1
+      end do
+   end subroutine set_interface_q
+
+   !----------------------------------------------------------------------------
+   ! set_interface_T_mode -- set the per-face interface temperature treatment
+   ! on the given faces: 0 = Dirichlet (bcs%iface_T), 1 = Neumann
+   ! (bcs%iface_q).  Default (all faces) is 0, i.e. bit-identical legacy.
+   !----------------------------------------------------------------------------
+   subroutine set_interface_T_mode( bcs, faces, mode )
+      type(bc_t), intent(inout) :: bcs
+      integer,    intent(in)    :: faces(:)
+      integer,    intent(in)    :: mode
+      integer :: k
+      do k = 1, size(faces)
+         bcs%iface_T_mode(faces(k)) = mode
+      end do
+   end subroutine set_interface_T_mode
 
    !----------------------------------------------------------------------------
    ! set_interface_T_ltne -- per-face porous-phase interface temperatures from

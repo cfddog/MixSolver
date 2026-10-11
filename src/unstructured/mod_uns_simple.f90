@@ -895,6 +895,14 @@ contains
       ! of velocity body-force after *vol).  ~1e15 is many orders above the
       ! convective/diffusive terms, so the solid-cell velocity solves to ~0.
       real(dp), parameter :: SOLID_VEL_SOURCE = 1.0e15_dp
+      ! Porosity floor for the Brinkman mu_eff = mu/por division.  A stationary
+      ! solid cell (porosity = 0, phase 16) would otherwise give mu_eff = Inf and
+      ! stamp Inf/NaN into the momentum matrix (all solid-solid faces get
+      ! D = Inf -> BiCGSTAB NaN solution -> NaN mass balance).  Clamping to a
+      ! tiny floor keeps the coefficients finite: SOLID_VEL_SOURCE still
+      ! dominates the solid-cell diagonal so its velocity solves to ~0, and real
+      ! porous media (porosity >> 1e-8) are untouched.
+      real(dp), parameter :: POROSITY_FLOOR = 1.0e-8_dp
 
       A%val = 0.0_dp
       rhs   = 0.0_dp
@@ -923,8 +931,8 @@ contains
          dvec = g%xc(:,c1) - g%xc(:,c0)
          dn   = norm2( dvec )
          ! effective (Brinkman) viscosity: mu_eff = mu / porosity
-         mu_eff0 = ctrl%mu / fld%porosity(c0)
-         mu_eff1 = ctrl%mu / fld%porosity(c1)
+         mu_eff0 = ctrl%mu / max( fld%porosity(c0), POROSITY_FLOOR )
+         mu_eff1 = ctrl%mu / max( fld%porosity(c1), POROSITY_FLOOR )
          if ( fld%unified ) then
             ! Unified single-domain model: every face carries the same two-point
             ! diffusion formula, but where (mu/eps) jumps (fluid/porous
@@ -1064,7 +1072,7 @@ contains
          call bc_face_vel( bcs, i, g%xf(:,i), g%sf(:,i), fld%u(:,c0), uf )
          call bc_face_p( bcs, i, fld%p(c0), pf )
          dw = norm2( g%xf(:,i) - g%xc(:,c0) )
-         D  = ( ctrl%mu / fld%porosity(c0) ) * g%area(i) / dw
+         D  = ( ctrl%mu / max( fld%porosity(c0), POROSITY_FLOOR ) ) * g%area(i) / dw
          F  = ctrl%rho * dot_product( uf, g%sf(:,i) )
 
          select case ( bcs%gb(gi)%btype )

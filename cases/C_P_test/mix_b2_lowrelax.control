@@ -1,0 +1,41 @@
+# mix_b_momentum.control -- C_P_test with the phase-14 interface pressure model
+#   iface_p_model = momentum : Betchen 2006 Eq.43/44 normal-momentum estimate
+#   (+ two-sided blend, deferred p-mdot coupling) imposed as a DIRICHLET
+#   interface pressure instead of the legacy zero-gradient pressure.
+#   Consequence: the slab PPE is no longer pure-Neumann, so the gauge datum is
+#   fixed by the mainstream (iface_p_anchor is bypassed) and the uniform
+#   interface-flux correction (du_n) is not applied -- the interface mass flux
+#   follows from continuity.
+
+rho_ref = 1.177
+T_ref   = 300.0
+L_ref   = 1.0
+u_ref   = 104.166
+
+n_couple        = 30
+n_uns_steps     = 50
+n_struct_steps  = 50
+n_struct_steps_start = 1000
+step_decay_every     = 1
+
+iface_relax = 0.3
+iface_ramp  = 10
+
+# --- phase-14: interface pressure from the normal momentum balance ---
+iface_p_model   = momentum
+iface_pm_subiter = 3      # damped sub-iteration (G<1 only; G is reported)
+iface_p_blend    = 0.5    # weight of the porous-side extrapolated estimate
+
+# iface_velocity is ignored while iface_p_model /= grad0 (the pressure is the
+# interface constraint; the velocity is the slab's own extrapolation).  Kept
+# here only to make the comparison with run A explicit.
+iface_velocity = balance
+
+# the datum anchor stays ON: it re-datums the (pure-Neumann) slab pressure onto
+# the peer's level at the START of every coupling iteration -- a pure shift, no
+# solution change -- so the Dirichlet update below is only the small physical
+# difference rather than an absolute value from a cold-start peer field.
+iface_p_anchor = 1
+
+save_interval  = 10
+couple_restart = 0

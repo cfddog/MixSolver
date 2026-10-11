@@ -1,0 +1,40 @@
+# mix.control -- coupling-driver parameters for the C_P_test case
+# Compressible mainstream (struct) + porous plate (uns) transpiration cooling.
+
+mode   = coupled   # solve mode for bin/mixnsolver: coupled | struct | uns
+
+rho_ref = 1.177
+T_ref   = 300.0
+L_ref   = 1.0
+# U_inf = Ma*a_ref = 0.3*sqrt(1.4*287.058*300) = 0.3*347.22
+u_ref   = 104.166
+
+# --- coupling loop ---
+n_couple        = 30
+# steady cadence: both sides exchange after 50 internal steps (逐步同频)
+n_uns_steps     = 50
+n_struct_steps  = 50
+
+# phase-13 start-up schedule: the struct side starts with 1000 sub-steps per
+# coupling iteration (alternating: struct 1000 -> uns -> struct 500 -> uns ...)
+# and halves the count every coupling iteration until it reaches n_struct_steps,
+# i.e. both solvers end up exchanging at the same frequency.
+n_struct_steps_start = 1000
+step_decay_every     = 1
+
+# --- interface BC under-relaxation + ramp ---
+iface_relax = 1.0
+iface_ramp  = 5
+# interface velocity treatment: 'normal' imposes only the interface-normal
+# (mass-flux) component received from the struct side, with the tangential
+# components taken zero-gradient from the slab.  'full' (legacy) imposes the
+# whole peer vector, which drags the K=5e-7 m^2 slab at ~100 m/s and diverges.
+iface_velocity = balance
+# anchor the (pure-Neumann) slab gauge-pressure datum to the struct interface
+# pressure each coupling iteration; without it the datum drifts and the two
+# interface pressures run away from each other.
+iface_p_anchor = 1
+
+# --- periodic save / joint restart ---
+save_interval  = 10
+couple_restart = 0

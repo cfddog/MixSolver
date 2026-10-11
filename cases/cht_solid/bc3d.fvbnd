@@ -1,0 +1,26 @@
+FVBND 1 3
+No_Boundary_Condition
+Solid_Surface
+Symmetry
+Farfield
+Inflow
+Outflow
+Pole
+Generic_#1
+Generic_#2
+Generic_#3
+BOUNDARIES
+       3        1        1       61        1      101        1        1
+       3        1        1       61        1      101        2        2
+       8        1        1       61        1        1        1        2
+       4        1        1       61      101      101        1        2
+       3        2        1       21        1      101        1        1
+       3        2        1       21        1      101        2        2
+       5        2        1        1        1      101        1        2
+       2        2        1       21        1        1        1        2
+       4        2        1       21      101      101        1        2
+       3        3        1       21        1      101        1        1
+       3        3        1       21        1      101        2        2
+       6        3       21       21        1      101        1        2
+       2        3        1       21        1        1        1        2
+       4        3        1       21      101      101        1        2

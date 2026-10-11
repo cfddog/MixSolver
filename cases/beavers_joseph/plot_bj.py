@@ -100,6 +100,20 @@ runs = [('bj_a0.vtu', 0.0, 'C0', 'continuity (alpha=0)'),
         ('bj_a1.vtu', 1.0, 'C1', 'BJ alpha=1'),
         ('bj_a2.vtu', 2.0, 'C2', 'BJ alpha=2')]
 
+# Optional override of the VTU file names (e.g. to plot the unified runs),
+# keeping the alpha -> colour/label map above:
+#   plot_bj.py 0.0=bj_a0_uni.vtu 1.0=bj_a1_uni.vtu 2.0=bj_a2_uni.vtu
+# The output figure name can be redirected with $BJ_PLOT_OUT.
+import os as _os
+import sys as _sys
+if len(_sys.argv) > 1:
+    _m = {}
+    for _a in _sys.argv[1:]:
+        _k, _v = _a.split('=')
+        _m[float(_k)] = _v
+    runs = [(_m.get(_al, _fn), _al, _c, _l) for (_fn, _al, _c, _l) in runs]
+_out = _os.environ.get('BJ_PLOT_OUT', 'images/beavers_joseph.png')
+
 fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
 yc = (np.arange(NY) + 0.5) * LY / NY          # cell centres from bottom wall
 yf = np.linspace(0, H, 120)
@@ -155,5 +169,5 @@ axes[1].grid(alpha=0.3)
 axes[1].set_ylim(-0.002, 0.005)
 
 fig.tight_layout()
-fig.savefig('images/beavers_joseph.png', dpi=140)
-print('wrote images/beavers_joseph.png')
+fig.savefig(_out, dpi=140)
+print('wrote ' + _out)

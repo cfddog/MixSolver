@@ -186,6 +186,32 @@ module mod_reference_state
    !                 the fluid-phase equation receives eps*F (Eq.28), the
    !                 solid-phase equation (1-eps)*F (Eq.29).
    integer,  save :: g_iface_t_model = 0
+   !   iface_t_relax : under-relaxation factor for the interface TEMPERATURE of
+   !   the phase-17 CHT faces (compressible fluid <-> PURE SOLID).  That path is
+   !   a Dirichlet-Neumann split: the struct side sends its resolved wall heat
+   !   flux q_f (-> Neumann on the solid) and the uns side sends the solid
+   !   surface temperature T_s, which the struct pins as an isothermal wall
+   !   value.  The fixed-point loop gain is the product of the fluid-side wall
+   !   conductance h_f = k_f/(dg/2) and the solid-side resistance R_s (for the
+   !   cht_solid case, a 5e-6 m first fluid cell over a 0.1 m steel slab:
+   !   h_f*R_s ~ 35), so the un-relaxed iteration diverges.  This factor damps
+   !   the pinned temperature,  T_app = T_app_old + w*(T_recv - T_app_old):
+   !     0 (default) = adaptive Aitken Delta^2: w is estimated from the
+   !                   residual history (w -> 1/(1+gain)); the estimate is
+   !                   safeguarded to [0.02, 1].  Stable, but in a strongly
+   !                   transient coupled run the physical drift of the solid
+   !                   surface dominates the residual and drives the estimate
+   !                   onto the floor, and the varying w imprints a spatial
+   !                   pattern on q_f -- prefer a fixed factor there.
+   !     > 0        = fixed factor (clamped to (0,1]); the first CHT exchange
+   !                   always uses w = 1 (warm start from t_app = 0).
+   !   cht_solid measurement (gain ~ 35): w = 0.03 = 1/(1+gain) keeps
+   !   |q_base_in + q_iface_in| ~ 2.4e4 W at coupling iter 10 (q_base_in is
+   !   8.6e3 W), the adaptive mode leaves ~1.3e5 W, and w = 1 diverges to
+   !   2.4e7 W -- see the 'CHT relax' / 'CHT energy' diagnostic lines.
+   !   Only IFACE_COMP_FLUID_SOLID faces are touched -- every other interface
+   !   type (and mode=struct/uns standalone runs) stays bit-identical.
+   real(dp), save :: g_iface_t_relax = 0.0_dp
    ! phase-10 auto-save / joint restart
    integer,  save :: g_save_interval = 0   ! 0 = off, >0 = save every N coupling iters
    integer,  save :: g_couple_restart = 0  ! 0 = cold start, 1 = joint restart
@@ -393,6 +419,15 @@ contains
             read( val, *, iostat = ios ) g_iface_relax
          case ( 'iface_ramp' )
             read( val, *, iostat = ios ) g_iface_ramp
+         case ( 'iface_t_relax', 'iface_trelax', 'iface_t_omega' )
+            ! phase 17: 0 = adaptive Aitken (default), >0 = fixed factor.
+            read( val, *, iostat = ios ) rv
+            if ( ios == 0 ) then
+               if ( rv < 0.0_dp .or. rv > 1.0_dp ) &
+                  write(*,'(a,es12.4,a)') 'WARNING: iface_t_relax = ', rv, &
+                     ' outside [0,1] (clamped)'
+               g_iface_t_relax = max( 0.0_dp, min( 1.0_dp, rv ) )
+            end if
          case ( 'save_interval' )
             read( val, *, iostat = ios ) g_save_interval
          case ( 'couple_restart' )
@@ -428,6 +463,11 @@ contains
          write(*,'(a,f8.4)')  '    bj alpha      = ', g_iface_slip_alpha
       write(*,'(a,i0,a)')     '  iface_t_model  = ', g_iface_t_model, &
            merge(' (zhang Eq.27-29)', '                 ', g_iface_t_model == 1)
+      if ( g_iface_t_relax > 0.0_dp ) then
+         write(*,'(a,f8.4)')  '  iface_t_relax  = ', g_iface_t_relax
+      else
+         write(*,'(a)')       '  iface_t_relax  = 0 (adaptive Aitken)'
+      end if
       if ( g_iface_vel_mode == 3 .or. g_iface_zhang == 1 ) &
          write(*,'(a,2f10.4,a,f8.4)') '    zhang beta/beta1 = ', &
               g_iface_beta, g_iface_beta1, '  d_f/d_p =', g_iface_df_ratio
@@ -452,7 +492,7 @@ contains
                                    iface_p_model, iface_slip, iface_pm_subiter, &
                                    iface_p_blend, iface_slip_alpha, &
                                    iface_t_model, iface_beta, iface_beta1, &
-                                   iface_df_ratio )
+                                   iface_df_ratio, iface_t_relax )
       integer,  intent(out) :: n_couple, n_uns_steps, iface_ramp
       integer,  intent(out), optional :: n_struct_steps
       integer,  intent(out), optional :: save_interval, couple_restart
@@ -464,6 +504,7 @@ contains
       real(dp), intent(out), optional :: iface_p_blend, iface_slip_alpha
       integer,  intent(out), optional :: iface_t_model
       real(dp), intent(out), optional :: iface_beta, iface_beta1, iface_df_ratio
+      real(dp), intent(out), optional :: iface_t_relax
       real(dp), intent(out) :: iface_relax
       n_couple    = g_n_couple
       n_uns_steps = g_n_uns_steps
@@ -486,6 +527,7 @@ contains
       if ( present(iface_beta) )           iface_beta           = g_iface_beta
       if ( present(iface_beta1) )          iface_beta1          = g_iface_beta1
       if ( present(iface_df_ratio) )       iface_df_ratio       = g_iface_df_ratio
+      if ( present(iface_t_relax) )        iface_t_relax        = g_iface_t_relax
    end subroutine get_coupling_params
 
    !---------------------------------------------------------------------------

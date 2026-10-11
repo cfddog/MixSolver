@@ -1,0 +1,44 @@
+# unMesh.control -- C_P_test unstructured (porous) side
+# Mesh unstucutred.cas (Pointwise export, units = m)
+#   cell zone : 2 = porous slab (2400 hex), x in [0.2,0.8], y in [-0.1,0]
+#   face zones: 4 = interface (y=0, 60 faces)   -> coupling exchange layer
+#               5 = wall      (x=0.2 and x=0.8 sides, 80 faces)
+#               6 = symmetry  (z=0 and z=1, 4800 faces)
+#               7 = mass-flow-inlet (y=-0.1, 60 faces, coolant injection)
+# -------------------------------------------------------------------------
+
+# --- mesh units: CAS already in metres ---
+mesh_scale = 1.0
+
+# --- physical properties (matched to the structured side) ---
+rho = 1.177
+mu  = 2.452e-3
+
+# --- numerical parameters (SIMPLE) ---
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 200
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+
+# --- initial temperature field (interface T exchange) ---
+init_t = 300.0
+
+# --- cell (volume) zones: <id|name> fluid|porous [perm= inertial= porosity=] ---
+# Da = K/L^2 = 5e-7 with L=1 -> K = 5e-7 m^2 ; CF=0 -> inertial=0 ; eps=0.5
+cell_zone = 2 porous perm=5.0e-7 inertial=0.0 porosity=0.5
+
+# --- boundary conditions ---
+bc = 5 wall
+bc = 6 symmetry
+# coolant injection F = Vc/Uinf = 0.1% ; Vc = 1.0417e-1 m/s -> m' = rho*Vc
+# 4th token = coolant static temperature [K]; REQUIRED whenever the energy
+# equation is solved (defaults to 0 K otherwise -> the porous slab would be
+# drained towards T=0 and the energy equation diverges).
+bc = 7 mass-flow-inlet 0.1226 300.0
+# zone 4 "interface" needs no bc: handled by the coupling exchange layer

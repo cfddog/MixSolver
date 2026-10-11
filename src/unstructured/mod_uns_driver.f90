@@ -19,13 +19,15 @@ module mod_uns_driver
    use mod_uns_geometry, only: geom_t
    use mod_uns_control, only: ctrl_t, BC_INTERFACE
    use mod_uns_bc, only: bc_t
-   use mod_uns_fields, only: fields_t, init_fields, setup_porous_fields
+   use mod_uns_fields, only: fields_t, init_fields, setup_porous_fields, &
+                             is_solid_cell, is_porous_cell
    use mod_uns_cas_reader, only: read_cas
    use mod_uns_connectivity, only: build_connectivity
    use mod_uns_geometry, only: compute_geometry, register_interface_zones, &
                                tag_interface_cell_zones
    use mod_uns_control, only: read_control, resolve_cell_zones, read_mesh_scale
-   use mod_interface, only: report_interface_dispatch, PEER_STRUCT, IFACE_CZ_FLUID
+   use mod_interface, only: report_interface_dispatch, PEER_STRUCT, &
+                            IFACE_CZ_FLUID, IFACE_CZ_POROUS, IFACE_CZ_SOLID
    use mod_uns_bc, only: build_bc
    use mod_uns_simple, only: simple_run
    ! The coupled restart reader lives in the MPI-only mod_uns_restart stack
@@ -107,6 +109,34 @@ contains
 
       call init_fields( m, g, fld )
       call setup_porous_fields( m, ctrl, fld )
+
+      ! ---- phase 17: CHT interface default (adiabatic Neumann) ----------------
+      ! A coupling-interface face whose owner is a PURE SOLID cell has no peer
+      ! temperature to advect: the solid surface must be FLUX driven.  The
+      ! legacy Dirichlet path read bcs%iface_T, which the standalone solver
+      ! never fills (0 K) -> the interface was pinned at 0 K and the solid
+      ! drained (Tmin -> 0.18).  Default such faces to mode=1 with q=0, i.e. an
+      ! ADIABATIC patch, which is the correct standalone behaviour.  In a
+      ! coupled run the driver overwrites iface_q every coupling iteration via
+      ! set_interface_q, restoring the fluid -> solid wall flux.
+      block
+         integer :: gi2, i2, c02
+         logical :: any_solid
+         any_solid = .false.
+         do gi2 = 1, bcs%nb
+            if ( bcs%gb(gi2)%btype /= BC_INTERFACE ) cycle
+            do i2 = 1, bcs%gb(gi2)%nf
+               c02 = m%f( bcs%gb(gi2)%faces(i2) )%c0
+               if ( is_solid_cell( m, fld, c02 ) ) then
+                  bcs%iface_T_mode( bcs%gb(gi2)%faces(i2) ) = 1
+                  any_solid = .true.
+               end if
+            end do
+         end do
+         if ( any_solid ) write(*,'(a)') &
+            '[uns] CHT interface: pure-solid faces default to adiabatic ' // &
+            '(Neumann) mode'
+      end block
 
       ! Optional uniform initial temperature (+ x-asymmetric perturbation).
       ! Mirrors main_uns.f90: the coupled driver needs a physically correct
@@ -192,18 +222,27 @@ contains
    !
    ! For each BC_INTERFACE face the owner-cell state is taken as the face
    ! state (zero-gradient extrapolation -- the unstructured side sends its
-   ! near-interface cell state to the structured side).
+   ! near-interface cell state to the structured side).  A cell-zone class
+   ! per face is returned as well (IFACE_CZ_FLUID / IFACE_CZ_POROUS /
+   ! IFACE_CZ_SOLID) so the struct side can dispatch the peer type without
+   ! re-deriving it from geometry (phase 17: comp-fluid <-> pure-solid CHT
+   ! interfaces).
    !
+   ! Solid owner cells (CZ_SOLID): the flow state is meaningless, so the
+   ! face state is fixed to u=0 with the solid cell temperature T_s (this is
+   ! what the struct side sees as the isothermal no-slip wall temperature).
    ! Output arrays are sized to the number of interface faces and returned
    ! alongside the face index list so the exchange layer can map them.
    !---------------------------------------------------------------------------
-   subroutine uns_solver_extract_iface( m, g, bcs, fld, faces, rho, u, T, p, ier, rho_in )
+   subroutine uns_solver_extract_iface( m, g, bcs, fld, faces, rho, u, T, p, &
+                                        cz, ier, rho_in )
       type(mesh_t),   intent(in)  :: m
       type(geom_t),   intent(in)  :: g
       type(bc_t),     intent(in)  :: bcs
       type(fields_t), intent(in)  :: fld
       integer, allocatable, intent(out) :: faces(:)
       real(dp), allocatable, intent(out) :: rho(:), T(:), p(:), u(:,:)
+      integer, allocatable, intent(out) :: cz(:)     ! per-face cell-zone class
       integer,        intent(out)   :: ier
       real(dp),       intent(in), optional :: rho_in   ! SI density (ctrl%rho)
 
@@ -221,7 +260,7 @@ contains
          if ( bcs%gb(i)%btype == BC_INTERFACE ) nif = nif + bcs%gb(i)%nf
       end do
 
-      allocate( faces(nif), rho(nif), T(nif), p(nif), u(3, nif) )
+      allocate( faces(nif), rho(nif), T(nif), p(nif), u(3, nif), cz(nif) )
       nif = 0
       do gi = 1, bcs%nb
          if ( bcs%gb(gi)%btype /= BC_INTERFACE ) cycle
@@ -229,10 +268,25 @@ contains
             nif = nif + 1
             faces(nif) = bcs%gb(gi)%faces(i)
             c0 = m%f(faces(nif))%c0
-            rho(nif) = rho_const
-            u(:,nif) = fld%u(:,c0)
-            T(nif)   = fld%T(c0)
-            p(nif)   = fld%p(c0)
+            if ( is_solid_cell(m, fld, c0) ) then
+               ! pure-solid owner: no flow state, send the solid temperature
+               ! as the wall temperature seen by the compressible peer
+               cz(nif)   = IFACE_CZ_SOLID
+               u(:,nif)  = 0.0_dp
+               T(nif)    = fld%T_s(c0)
+               rho(nif)  = rho_const
+               p(nif)    = fld%p(c0)
+            else
+               if ( is_porous_cell(fld, c0) ) then
+                  cz(nif) = IFACE_CZ_POROUS
+               else
+                  cz(nif) = IFACE_CZ_FLUID
+               end if
+               rho(nif) = rho_const
+               u(:,nif) = fld%u(:,c0)
+               T(nif)   = fld%T(c0)
+               p(nif)   = fld%p(c0)
+            end if
          end do
       end do
 

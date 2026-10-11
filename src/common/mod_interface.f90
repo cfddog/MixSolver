@@ -45,6 +45,7 @@ module mod_interface
    integer, parameter :: IFACE_COMP_FLUID_FLUID  = 1  ! struct(comp|fluid) <-> uns(low-speed|fluid)  : flow B
    integer, parameter :: IFACE_COMP_FLUID_POROUS = 2  ! struct(comp|fluid) <-> uns(low-speed|porous) : C2
    integer, parameter :: IFACE_UNS_FLUID_POROUS  = 3  ! uns(fluid)        <-> uns(porous)            : C1 (internal)
+   integer, parameter :: IFACE_COMP_FLUID_SOLID  = 4  ! struct(comp|fluid) <-> uns(pure solid)      : CHT (phase 17)
 
    ! own-side cell-zone class stored on each registered face.  Mirrors the
    ! unstructured CZ_FLUID / CZ_POROUS / CZ_SOLID constants without creating a
@@ -55,7 +56,7 @@ module mod_interface
 
    !---- exchange-quantity list vocabulary (phase 11) -----------------------
    ! exchanged quantity id
-   integer, parameter :: Q_RHO = 1, Q_U = 2, Q_T = 3, Q_P = 4
+   integer, parameter :: Q_RHO = 1, Q_U = 2, Q_T = 3, Q_P = 4, Q_Q = 5
    ! role of an exchanged quantity at the interface (bit flags)
    integer, parameter :: XQ_NONE      = 0
    integer, parameter :: XQ_DIRICHLET = 1   ! state imposed as Dirichlet on the receiver
@@ -120,15 +121,21 @@ contains
    pure integer function classify_interface( solver_own, cz_own, &
                                              solver_peer, cz_peer ) result( it )
       integer, intent(in) :: solver_own, cz_own, solver_peer, cz_peer
-      integer :: uns_porous
+      integer :: uns_solid, uns_porous
 
       if ( (solver_own == PEER_STRUCT .and. solver_peer == PEER_UNS) .or. &
            (solver_own == PEER_UNS .and. solver_peer == PEER_STRUCT) ) then
-         ! cross-solver: the unstructured cell-zone class picks fluid vs porous
+         ! cross-solver: the unstructured cell-zone class picks solid / porous /
+         ! fluid (solid first, phase 17 CHT)
+         uns_solid  = 0
          uns_porous = 0
+         if ( solver_own  == PEER_UNS .and. cz_own  == IFACE_CZ_SOLID  ) uns_solid  = 1
+         if ( solver_peer == PEER_UNS .and. cz_peer == IFACE_CZ_SOLID  ) uns_solid  = 1
          if ( solver_own  == PEER_UNS .and. cz_own  == IFACE_CZ_POROUS ) uns_porous = 1
          if ( solver_peer == PEER_UNS .and. cz_peer == IFACE_CZ_POROUS ) uns_porous = 1
-         if ( uns_porous == 1 ) then
+         if ( uns_solid == 1 ) then
+            it = IFACE_COMP_FLUID_SOLID
+         else if ( uns_porous == 1 ) then
             it = IFACE_COMP_FLUID_POROUS
          else
             it = IFACE_COMP_FLUID_FLUID
@@ -148,6 +155,7 @@ contains
       case ( IFACE_COMP_FLUID_FLUID );  s = 'comp-fluid<->lowspeed-fluid'
       case ( IFACE_COMP_FLUID_POROUS ); s = 'comp-fluid<->lowspeed-porous'
       case ( IFACE_UNS_FLUID_POROUS );  s = 'fluid<->porous (internal)'
+      case ( IFACE_COMP_FLUID_SOLID );  s = 'comp-fluid<->solid'
       case default;                     s = 'unknown'
       end select
    end function iface_type_name
@@ -160,6 +168,7 @@ contains
       case ( Q_U );   s = 'u'
       case ( Q_T );   s = 'T'
       case ( Q_P );   s = 'p'
+      case ( Q_Q );   s = 'q'
       case default;   s = '?'
       end select
    end function quantity_name
@@ -201,6 +210,22 @@ contains
          ! internal C1: Beavers-Joseph slip + stress jump, no cross-solver exchange
          nq = 1
          qid(1) = Q_U;   role(1) = XQ_JUMP
+      case ( IFACE_COMP_FLUID_SOLID )
+         ! CHT (phase 17): temperature continuity + heat-flux continuity in the
+         ! weak Dirichlet-Neumann sense (viewed from the uns solid side):
+         !   * T (XQ_DIRICHLET): the compressible fluid side applies the solid
+         !     surface temperature T_s as an isothermal no-slip wall; conversely
+         !     the solid side receives the fluid near-wall temperature.  This
+         !     enforces per-face temperature continuity at the fixed point.
+         !   * q (XQ_FLUX): the compressible side computes its own wall heat flux
+         !     q_f = k*(T_1 - T_wall)/d in SI [W/m^2] and the solid side applies
+         !     it as a Neumann (energy-conserving) surface flux.  With one side
+         !     Dirichlet and the other Neumann the fixed point satisfies both
+         !     T_i and q continuity exactly (partitioned CHT standard result);
+         !     imposing Dirichlet on BOTH sides freezes the interface instead.
+         nq = 2
+         qid(1) = Q_T;   role(1) = XQ_DIRICHLET
+         qid(2) = Q_Q;   role(2) = XQ_FLUX
       case default
          nq = 0
       end select
@@ -228,7 +253,7 @@ contains
    subroutine report_interface_dispatch( peer_solver, peer_cz )
       integer, intent(in) :: peer_solver   ! PEER_STRUCT / PEER_UNS
       integer, intent(in) :: peer_cz       ! assumed peer cell-zone class
-      integer :: i, it, cnt(3)
+      integer :: i, it, cnt(4)
       character(len=40) :: peer_lbl
 
       if ( Num_Interface <= 0 ) return
@@ -242,6 +267,7 @@ contains
          case ( IFACE_COMP_FLUID_FLUID );  cnt(1) = cnt(1) + 1
          case ( IFACE_COMP_FLUID_POROUS ); cnt(2) = cnt(2) + 1
          case ( IFACE_UNS_FLUID_POROUS );  cnt(3) = cnt(3) + 1
+         case ( IFACE_COMP_FLUID_SOLID );  cnt(4) = cnt(4) + 1
          end select
       end do
 
@@ -271,6 +297,12 @@ contains
             trim(iface_type_name(IFACE_UNS_FLUID_POROUS))
          write(*,'(a,a)')      '        recipe:', &
             trim(iface_recipe_string(IFACE_UNS_FLUID_POROUS))
+      end if
+      if ( cnt(4) > 0 ) then
+         write(*,'(a,i0,a,a)') '  faces ', cnt(4), '  ', &
+            trim(iface_type_name(IFACE_COMP_FLUID_SOLID))
+         write(*,'(a,a)')      '        recipe:', &
+            trim(iface_recipe_string(IFACE_COMP_FLUID_SOLID))
       end if
       write(*,'(a)') '--- end dispatch ---'
    end subroutine report_interface_dispatch

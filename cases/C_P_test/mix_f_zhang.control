@@ -1,0 +1,58 @@
+# mix_f_zhang.control -- C_P_test with the Zhang 2011 interface closure
+# (Sec.3.5.1, Eqs.22-29).
+#
+#   iface_velocity = zhang : ONE interface velocity shared by both domains
+#     (Eq.22); its normal part from the two-sided normal stress balance
+#     (Eq.25, conductance/reciprocal-distance blend of the two near-interface
+#     cell velocities) and its tangential part from the stress-jump balance
+#     (Eq.26, Ochoa-Tapia & Whitaker with the excess coefficients beta, beta1).
+#     Imposed as a full-vector Dirichlet on the slab, so the coupling
+#     interface has NO unconstrained tangential mode -- the failure mode of
+#     'balance'/'full', and exactly the closure the paper prescribes.
+#   beta defaults to eps*bj_alpha (bj_alpha unset here => 1.0, the O(1) value
+#     Ochoa-Tapia & Whitaker report), beta1 = 0 => linear Beavers-Joseph.
+#
+#   iface_t_model = off : the LTE thermal interface already degenerates to
+#     Eq.27 (T_f = T_s => <T>^p = T), so the temperature side needs no change
+#     for this case; set it to 'zhang' for the LTNE split (Eqs.28/29).
+#
+#   The interface pressure stays on the legacy zero-gradient path: the velocity
+#   law now closes both components (Eqs.25/26), which is the combination the
+#   paper prescribes; the pure-Neumann PPE datum comes from the anchor and the
+#   uniform interface-flux (mass balance) correction, both of which vanish at
+#   convergence.
+
+rho_ref = 1.177
+T_ref   = 300.0
+L_ref   = 1.0
+u_ref   = 104.166
+
+n_couple        = 30
+n_uns_steps     = 50
+n_struct_steps  = 50
+n_struct_steps_start = 1000
+step_decay_every     = 1
+
+iface_relax = 0.4
+iface_ramp  = 5
+
+# --- phase-14: Zhang 2011 Eqs.22/25/26 interface velocity ---
+iface_velocity  = zhang
+iface_beta      = 0.0     # 0 => eps*bj_alpha (=> 1.0 here)
+iface_beta1     = 0.0     # linear Beavers-Joseph
+# d_f/d_p: the peer's near-interface cell gap is NOT part of the exchange
+# protocol.  Here the slab is refined at the interface (d_p ~ 1e-4 m) while the
+# structured mainstream mesh is O(5e-3 m) there, so d_f/d_p ~ 50.  This ratio
+# controls the fixed point of Eqs.25/26 (u_i -> G_f u_f/(G_f + beta mu_e/sqrt K):
+# too small a d_f lets the peer value dominate and the outer loop runs away).
+iface_df_ratio  = 50.0
+
+# --- interface temperature: LTE, Eq.27 degenerates to the plain value ---
+iface_t_model = off
+
+# --- interface pressure: legacy zero-gradient + anchored datum ---
+iface_p_model  = grad0
+iface_p_anchor = 1
+
+save_interval  = 10
+couple_restart = 0

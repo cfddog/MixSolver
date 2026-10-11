@@ -88,8 +88,8 @@ contains
       type(geom_t),  intent(in)  :: g
       type(fields_t), intent(out) :: fld
 
-      integer :: i, c0, c1, icd
-      real(dp) :: d0, d1, xm
+      integer :: i, c0, c1
+      real(dp) :: d0, d1
 
       allocate( fld%u(3,m%ncells), fld%p(m%ncells) )
       allocate( fld%gp(3,m%ncells), fld%gu(3,3,m%ncells) )
@@ -109,15 +109,8 @@ contains
       allocate( fld%q_src(m%ncells) )
 
       fld%u        = 0.0_dp
-      fld%u(1,:)   = 0.3472_dp  ! TEMP DEBUG: small 1D init eigenmode test
-      fld%T        = 300.0_dp   ! TEMP DEBUG
+      fld%T        = 0.0_dp
       fld%p        = 0.0_dp
-      ! TEMP DEBUG: analytic pressure: 302.1 Pa in fluid region, linear in bed
-      do icd = 1, m%ncells
-         xm = g%xc(1,icd) * 1.0e3_dp
-         if ( xm >= 100.0_dp ) fld%p(icd) = 0.03021_dp * (200.0_dp - xm)
-         if ( xm <  100.0_dp ) fld%p(icd) = 3.021_dp
-      end do
       fld%gp       = 0.0_dp
       fld%gu       = 0.0_dp
       fld%flux     = 0.0_dp

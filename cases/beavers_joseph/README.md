@@ -48,6 +48,11 @@ python3 plot_bj.py
 mpirun -np 2 ../../bin/uns_solver_mpi bj.cas bj_a1.control
 ```
 
+> 注意：`uns_solver_mpi`（`main_uns_mpi.f90`）只解析**前两个**命令行参数，输出名
+> **固定**由 `.cas` 基名派生（`bj.cas` → `bj.vtu`）并写在**当前目录**，第 3 个参数
+> 会被**静默忽略**（与串行 `bin/uns_solver` 支持第 3 参数不同）。要用别的名字就
+> 先 `cd` 到目标目录或事后 `mv`。
+
 ## 4. 结果（串行，outer_max=800）
 
 x=L/2 剖面对拍（plot_bj.py 输出）：
@@ -65,6 +70,32 @@ x=L/2 剖面对拍（plot_bj.py 输出）：
   反证正确参考必须是双层耦合系统；图中以竖点线标出对比。
 - 图：`images/beavers_joseph.png`（左：全剖面；右：界面放大，实线为
   双层参考解）。
+
+### 4.1 统一 DBF（`porous_model = unified`）下 `bj_alpha` 失效（2026-10-10）
+
+把三个算例复制成 `bj_a0/a1/a2_uni.control`（末尾加一行 `porous_model = unified`）
+后重跑：
+
+```bash
+../../bin/uns_solver bj.cas bj_a0_uni.control bj_a0_uni.vtu
+../../bin/uns_solver bj.cas bj_a1_uni.control bj_a1_uni.vtu
+../../bin/uns_solver bj.cas bj_a2_uni.control bj_a2_uni.vtu
+# 三个文件 md5 完全相同！
+BJ_PLOT_OUT=images/beavers_joseph_unified.png \
+  python3 plot_bj.py 0.0=bj_a0_uni.vtu 1.0=bj_a1_uni.vtu 2.0=bj_a2_uni.vtu
+```
+
+| α | 首流体单元 u（partitioned） | 首流体单元 u（unified） | 全剖面 RMS（unified） |
+|---|---|---|---|
+| 0 | 8.539e-3 | 8.664e-3 | 1.05% |
+| 1 | 1.173e-2 | **8.664e-3**（=α=0） | 9.21% |
+| 2 | 1.002e-2 | **8.664e-3**（=α=0） | 4.98% |
+
+即 `unified` 下界面速度跳变**完全消失**：α=0/1/2 给出**逐位相同**的解
+（`bj_a0_uni.vtu == bj_a1_uni.vtu == bj_a2_uni.vtu`）。原因是 BJ 滑移是界面上的
+**Robin（应力跳变）条件**，而 `unified` 只用体区系数装配同一个方程，界面不做任何
+显式处理——滑移无法用「ε/K/cE 跳变」表达。故本算例（界面应力跳变验证）**必须**用
+默认的 `partitioned` 路径。
 
 ## 5. 建模细节与教训
 
@@ -84,5 +115,8 @@ x=L/2 剖面对拍（plot_bj.py 输出）：
 - `gen_bj.py`：双层槽道网格（zone 2 fluid 上半 / 3 VC:porous 下半 /
   4 interior / 5 z-sym / 6 底壁 / 7 顶壁 / 8,9 pressure-outlet）
 - `bj.cas`、`bj_a0/a1/a2.control`、`bj_a0/a1/a2.log`、`bj_a0/a1/a2.vtu`
+- `bj_a0/a1/a2_uni.control`、`bj_a0/a1/a2_uni.vtu`（`porous_model = unified`
+  对照，见 §4.1；三份 VTU md5 相同）
 - `bj_mpi.log`、`bj_mpi.vtu`（np=2 验证）
-- `plot_bj.py`、`images/beavers_joseph.png`
+- `plot_bj.py`（可选 CLI：`<alpha>=<file.vtu>` 覆盖算例文件，`$BJ_PLOT_OUT`
+  改图名）、`images/beavers_joseph.png`、`images/beavers_joseph_unified.png`

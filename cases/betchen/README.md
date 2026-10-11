@@ -27,6 +27,9 @@
 `gen_plug.py` 的第 3 个参数支持 `n1,n2,n3`（每段 x 方向网格数，缺省 20/20/20），
 用于界面附近加密网格的网格收敛性研究。
 
+每个算例另配一个 `*_uni.control`（仅末尾追加一行 `porous_model = unified`），
+用于 §3.5 的统一 DBF（单域、无显式界面处理）对照研究。
+
 ## 2. 数值设置与变量约定
 
 **体积平均（Brinkman + Darcy-Forchheimer）动量方程**，采用 Vafai-Kim 的"按孔隙率
@@ -194,6 +197,82 @@ Da=1e-3：2.266%→2.271%，该工况的 L2 由界面过渡层主导）。
 与 `plug_2` 都是），而我们两侧均匀段是 1.498 —— 一个 −0.35% 的常数偏置就
 足以产生 ~0.35% 的 L2。故 PLUG 的残余不应再逐点归因于入口。
 
+
+### 3.5 统一 DBF（`porous_model = unified`）与分区路径对比（2026-10-10）
+
+新增顶层开关 `porous_model = partitioned | unified`（默认 `partitioned`，位级向后
+兼容）。`unified` 把流体区与多孔区统一为**单域逐单元系数** DBF：每个单元按
+(ε, K, cE) 装配同一个动量方程，流体单元 ε=1、1/K=0、cE=0 使 DBF 项消失（→ NS）；
+界面**不做**显式处理——关闭 `kink_face_pressure` 与 `bj_alpha`，仅把 (μ/ε) 的界面
+跳变交给**距离加权调和平均**面系数（Patankar 式(40)）：
+
+```
+mu_f = 1 / [ (1-lf)/(mu/eps0) + lf/(mu/eps1) ]
+```
+
+同一 ε 区域内（含全部流体面、全部多孔面）该式与算术平均等价，故**无界面**算例
+不受影响：`cases/porous_plug` 的 `plug_darcy`/`plug_forch` 重跑，压力场与分区路径
+**逐位相同**（max|dp| = 0），速度 max|du| = 2.5e-16（u~0.1，纯舍入）。
+
+复现：
+
+```bash
+for b in bj_dae2 bj_dae3 plug_dae2 plug_dae3 plug_hir; do
+  ../../bin/uns_solver ${b}.cas ${b}_uni.control ${b}_uni.vtu
+done
+python3 compare_unified.py     # -> images/{bj,plug}_unified_vs_partitioned.png
+```
+
+（`*_uni.control` 只是原控制文件末尾加一行 `porous_model = unified`。）
+
+**界面条件在垂直界面算例里不可替代**：
+
+| 算例 | 量 | partitioned | unified | 参考 |
+|---|---|---|---|---|
+| bj_dae2 | 形状 L2(u) | 3.538% | 3.633% | BJ_1 |
+| bj_dae3 | 形状 L2(u) | 2.871% | 2.916% | BJ_2 |
+| plug_dae2 | alt_amp | **0.0181** | 0.1151 | — |
+| plug_dae2 | 中心线 u L2 (x/H≥2) | **0.494%** | 1.318% | plug_1_u |
+| plug_dae2 | 中心线 p L2 | 2.157% | 1.937% | plug_1_p |
+| plug_dae3 | alt_amp | **0.0739** | 0.6285 | — |
+| plug_dae3 | 中心线 u L2 (x/H≥2) | **2.348%** | 11.268% | plug_2_u |
+| plug_dae3 | 中心线 p L2 | 1.741% | 2.201% | plug_2_p |
+
+（alt_amp = x/H∈[2.3,5.8] 中心线速度二阶差分幅值，速度以 U0=μ/(ρH) 无量纲化；
+L2 口径同 `compare_unified.py`。plug_hir：alt_amp 0.0638 → 0.172，同为退化趋势。）
+
+**`plug_hir` 的 alt_amp 与 §3.1 历史值（0.022）量级不同——已查明是入口剖面差异，
+不是分区路径回归。** §3.1 的 Re_H=1000 行取自 `abtest_interface_pressure.sh` 的 A/B，
+当时 `plug_hir.control` 用的是**均匀** `velocity-inlet`；当日 23:13 改成
+`velocity-inlet-parabolic`（§3.4）并重跑出 23:17 的 `plug_hir.vtu`。复核（把入口行
+改回 `velocity-inlet 1.5684 0.0 0.0 300.0`，其余不动，81 步收敛）：
+
+| 入口 | 命令 | alt_amp | 界面邻域 u/U0 |
+|---|---|---|---|
+| 均匀（§3.1 口径） | `velocity-inlet 1.5684 0.0 0.0 300.0` | **0.0215** | 1.032–1.195 |
+| 抛物（现行） | `velocity-inlet-parabolic 1.5684 0.01 2 0.0 300.0` | 0.0638 | 1.057–1.499 |
+
+0.0215 与 §3.1 记录的 **0.022（u∈1.032–1.195）** 逐项吻合 ⇒ 分区路径未变，
+alt_amp 差异**全部来自入口剖面**（抛物入口把界面邻域的 u 从 1.03–1.20 抬到
+1.06–1.50），本次另有 `md5` 证明分区路径逐位不变。
+
+结论：
+
+- **平行界面（BJ）几乎无差别**（形状 L2 只差 0.1%）：界面与流向平行，Darcy 汇的
+  斜率折转只在横向起作用，显式界面处理收益本来就小（§3.2）。
+- **垂直界面（PLUG）明显退化**：`unified` 下界面奇偶抖动重新出现
+  （0.018→0.115、0.074→0.629），中心线 u L2 升到 1.32%/11.27%，接近 2026-10-08
+  修复前水平（2.94%/13.72%）。**调和平均面系数不足以替代 kink 一致化**：它修正的
+  是粘性扩散系数的跳变，而 PLUG 的主导误差来自 kink 面压力以力偶极子形式驱动的
+  odd-even 模态（§4.1）。压力 L2 反而略好（2.157→1.937），是去掉 kink 后界面压力
+  缓变、与参考线性段拟合更贴合的假象，掩盖不了速度场抖动。
+- **`bj_alpha` 在 `unified` 下失效**：`cases/beavers_joseph` 的 α=0/1/2 三个算例
+  给出**逐位相同**的 VTU（md5 一致）。滑移/应力跳变是界面上的 Robin 条件，
+  不是体区物性，无法用「同一方程 + 系数跳变」表达。
+
+⇒ 需要应力跳变（BJ 滑移）或界面压力一致化（PLUG kink）时用 `partitioned`（默认）；
+`unified` 适合「同一套系数、无显式界面模型」的对照/教学与纯 Darcy-Brinkman
+平滑界面问题。
 
 ## 4. 本次修复（2026-10-08）
 

@@ -196,6 +196,7 @@
 \texttt{tbc}          & ---   & 分区温度边界条件，语法见 \S\ref{app:tbc} \\
 \texttt{tbc\_plane}   & ---   & 平面过滤温度边界条件，语法见 \S\ref{app:tbc} \\
 \texttt{cell\_zone}   & ---   & 体区类型与多孔/热物性，语法见 \S\ref{app:cz} \\
+\texttt{porous\_model} & partitioned & 流体/多孔耦合模型：\texttt{partitioned}（默认，界面显式处理）或 \texttt{unified}（单域逐单元系数 DBF，无界面特殊处理），见 \S\ref{app:porous-model} \\
 \end{longtable}
 }
 
@@ -261,6 +262,18 @@ $T_{fl}=\langle T\rangle^p=\varepsilon\langle T_f\rangle^f+(1-\varepsilon)\langl
 \texttt{iface\_beta1} & 0 & Eq.26 过量惯性系数 $\beta_1$（$0$＝线性 Beavers--Joseph） \\
 \texttt{iface\_df\_ratio} & 1.0 & Eq.25/26 对侧间隙比 $d_f/d_p$（交换协议不含 $d_f$；按对侧界面网格尺度取，
 C\_P\_test 取 $\approx 50$） \\
+\texttt{iface\_t\_relax} & 0 & 阶段 17 CHT（可压流体 $\leftrightarrow$ 纯固体）界面\textbf{温度}欠松弛因子：
+$0$＝自适应 Aitken $\Delta^2$（由残差历史估计回路增益，$w\to 1/(1+G)$，限幅 $[0.02,1]$，默认）；
+$>0$＝固定 $w$（$T_{app} \leftarrow T_{app} + w(T_{recv}-T_{app})$，首个交换步自动取 $w=1$ 暖启动）。
+仅作用于 \texttt{IFACE\_COMP\_FLUID\_SOLID} 面：该 Dirichlet--Neumann 分区的回路增益
+$G=h_fR_s$（流体侧壁面导纳 $\times$ 固体侧热阻）通常 $\gg1$（cht\_solid 算例
+$G\approx35$：$5\times10^{-6}$ m 首层流体网格、0.1 m 钢块），不松弛时每耦合步翻倍发散
+（实测 10 耦合步 $q_{iface}\to2.4\times10^7$ W、$|r|=109$ K）。\\
+& & \textbf{cht\_solid 建议用固定值 $w\approx0.03=1/(1+G)$}：强瞬态耦合中自适应估计会被
+物理漂移（钢块需 $\sim10^3$ 耦合步才趋于稳态）反复压到下界，$w$ 的抖动还会在 $q_f$ 上
+刻出空间花样（$|q_{base,in}+q_{iface,in}|\sim1.3\times10^5$ W）；固定 $0.03$ 两个区制都稳定
+（瞬态 $|1-w(1+G)|=0.6$、稳态 $0.08$），能量不平衡降到 $2.4\times10^4$ W（$q_{base,in}=8.6\times10^3$ W）。
+更大的 $w$（如 $0.07$）瞬态跟踪快一倍但稳态 $|1-w(1+G)|=1.5>1$，会发散 \\
 \texttt{save\_interval} & 0 & 每 N 个耦合步存档（\texttt{flow3d.dat} ＋ 耦合状态）；0 = 不存档。\textbf{复现算例须设 $\le$ \texttt{n\_couple}} \\
 \texttt{couple\_restart} & 0 & 1 = 联合重启：结构侧强制从 \texttt{flow3d.dat} 续算，非结构侧从耦合状态续算 \\
 \end{longtable}
@@ -300,8 +313,19 @@ $p_{uns}^{gauge}+p_{ref}$ 当作\textbf{绝对}背压使用。基准不锁定时
 （界面压力取零梯度），非结构$\to$结构只传\textbf{背压} $p_b$。结构侧用与亚声速
 出口相同的线性化 Riemann 反射构造 ghost 单元，强度
 $\alpha = 0.3\min(1, iter/\texttt{iface\_ramp})$；其中 $0.3$ 是
-\texttt{src/main.f90} 里的硬编码 \texttt{ALPHA\_MAX}，\textbf{不受}
+\texttt{src/coupling/mod\_mix\_driver.f90} 里的硬编码 \texttt{ALPHA\_MAX}，\textbf{不受}
 \texttt{iface\_relax} 影响。两侧交换的 $\rho,u,T$ 仅用于诊断输出。
+
+阶段 17 的 CHT 分区（对侧为\textbf{纯固体}，\texttt{IFACE\_COMP\_FLUID\_SOLID}）在该契约上追加
+两条\textbf{真正参与边界条件}的量：结构$\to$非结构额外传其解出的壁面热流 $q_f$（SI，$>0$＝流体$\to$固体，
+非结构侧按 Neumann 通量施加到固体面），非结构$\to$结构额外传固体壁面温度（结构侧把它
+钉为等温壁）。该温度是此分区的耦合未知量，回路增益 $G=h_fR_s$（流体侧壁面导纳 $\times$
+固体侧热阻）通常 $\gg1$，故必须欠松弛（\texttt{iface\_t\_relax}：$0$＝自适应 Aitken、
+$>0$＝固定因子），否则每耦合步翻倍发散；稳态能量闭合为
+$q_{base,in}+q_{iface,in}\to0$（见 \texttt{CHT energy} 诊断行）。
+cht\_solid 算例实测（$G\approx35$）：固定 $w=0.03$ 时界面能量不平衡在 10 耦合步内降到
+$2.4\times10^4$ W（底壁供热 $8.6\times10^3$ W 同量级），而自适应模式因瞬态漂移把 $w$ 压到
+下界、不平衡约 $1.3\times10^5$ W；$w=1$（不松弛）则 10 步内涨到 $2.4\times10^7$ W 而发散。
 
 \subsection{\texttt{bc} 行语法与边界类型}\label{app:bc}
 
@@ -391,6 +415,60 @@ id 区间。写成 \texttt{1+i+j*NX+k*NX*NY}（$k$ 最慢）会把 x 串联写�
 \bottomrule
 \end{tabular}
 \end{center}
+
+\subsection{流体/多孔耦合模型 \texttt{porous\_model}}\label{app:porous-model}
+
+顶层开关 \texttt{porous\_model}（\texttt{mod\_uns\_control:ctrl\_t\%porous\_model}，
+默认 \texttt{partitioned}）选择流体区与多孔区如何耦合：
+
+\begin{itemize}\itemsep2pt
+  \item \texttt{partitioned}（默认）：流体块与多孔块按各自方程组装配，流体/多孔
+        \textbf{内部面}获得显式界面处理——(i) 一致化界面压力（\texttt{kink\_face\_pressure}，
+        界面压力斜率折点的一侧二次重构，用于压力梯度与动量压力力 $-p_f S_f$）；
+        (ii) 可选 Beavers--Joseph 滑移（\texttt{cell\_zone ... bj\_alpha}$>0$，应力跳变
+        的 Robin 面条件）。\textbf{位级向后兼容}：本次新增该开关后，
+        \texttt{cases/porous\_plug/plug\_darcy}、\texttt{plug\_forch}、
+        \texttt{cases/betchen/bj\_dae2}、\texttt{plug\_dae3}、\texttt{plug\_hir} 用
+        默认设置重跑，VTU 与历史文件 \texttt{md5} \textbf{逐位相同}。
+  \item \texttt{unified}：\textbf{单域}（one-domain）Darcy--Brinkman--Forchheimer 动量
+        方程对\textbf{每个单元}装配一次，只由逐单元系数
+        （\texttt{porosity}$=\varepsilon$、\texttt{perm}$=K$、\texttt{inertial}$=c_E/\sqrt K$）
+        驱动：
+        \[
+          \frac{\rho}{\varepsilon}\partial_t \mathbf{u}
+          + \frac{\rho}{\varepsilon^{2}}\nabla\!\cdot\!(\mathbf{uu})
+          = -\nabla p + \frac{\mu}{\varepsilon}\nabla^{2}\mathbf{u}
+          - \frac{\mu}{K}\mathbf{u}
+          - \rho\,\frac{c_E}{\sqrt K}\,|\mathbf{u}|\,\mathbf{u}.
+        \]
+        流体单元携带 $\varepsilon=1$、$1/K=0$（\texttt{perm}$=0$）、$c_E=0$，故
+        DBF 三项自动消失、方程退化为 NS；多孔单元保留它们。界面\textbf{不做任何
+        显式处理}：压力面值一律取距离加权线性插值，BJ 滑移分支整体关闭，
+        而 $(\mu/\varepsilon)$ 的界面跳变由\textbf{距离加权调和平均}
+        （Patankar 式(40)）吸收：
+        \[
+          \mu_f = \Bigl[\frac{1-\lambda_f}{\mu/\varepsilon_0}
+                        + \frac{\lambda_f}{\mu/\varepsilon_1}\Bigr]^{-1},
+          \qquad \lambda_f = \texttt{fld\%lf}(i).
+        \]
+        同一系数（同一区域内）时该式与算术平均等价，故\textbf{无界面}算例
+        （\texttt{cases/porous\_plug}）结果不变：重跑与分区路径的压力场
+        \texttt{max|dp|}$=0$（逐位）、速度 \texttt{max|du|}$=2.5\times10^{-16}$
+        （$u\sim0.1$，纯舍入）。
+  \item 别名：\texttt{partitioned}/\texttt{partition}/\texttt{block}；
+        \texttt{unified}/\texttt{one-domain}/\texttt{onedomain}/\texttt{single-domain}。
+        非法值在解析阶段报错退出。
+\end{itemize}
+
+\textbf{结论（Betchen 2006 对拍，详见 \texttt{cases/betchen/README.md}）}：
+去掉界面显式处理后，\texttt{unified} 在\textbf{平行}界面 BJ 算例上与
+\texttt{partitioned} 几乎一致（形状 L2 仅差 $0.1\%$），但在\textbf{垂直}界面
+PLUG 算例上明显退化——界面奇偶抖动重新出现、中心线速度 L2 从 $0.49\%/2.35\%$
+升到 $1.32\%/11.27\%$（Da$=10^{-2}/10^{-3}$）。即：$(10^{-2},10^{-3})$ 的
+PLUG 算例\textbf{必须}保留界面压力一致化（kink）处理；调和平均面系数不足以替代
+它。此外 \texttt{unified} 下 \texttt{bj\_alpha} 无意义，
+\texttt{cases/beavers\_joseph} 的 $\alpha=0/1/2$ 三个算例退化为\textbf{逐位相同}
+的解（$\alpha$ 依赖性消失）。
 
 \subsection{\texttt{tbc} / \texttt{tbc\_plane} / \texttt{lid}}\label{app:tbc}
 

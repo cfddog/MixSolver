@@ -7,16 +7,23 @@
 !
 ! Tests:
 !   1. constant field struct->uns: every received value equals the expected
-!      SI conversion of the non-dim constant (protocol + units in the chain)
+!      SI conversion of the non-dim constant (protocol + units in the chain).
+!      Phase 17: the row-7 wall heat flux q [W/m^2] is checked to arrive
+!      unchanged (it is already SI, no conversion).
 !   2. ramp field uns->struct: per-face distinct values arrive in the same
 !      order (index preservation through the payload buffer)
 !   3. zero faces on the struct side (count=0 round, no deadlock, peer count ok)
 !   4. zero faces on the uns side   (mirror of 3)
 !   5. ramp field struct->uns: per-face SI values checked against hand-computed
-!      expectations (conversion + ordering), stored for the echo round
+!      expectations (conversion + ordering), stored for the echo round; the
+!      phase-17 q ramp (100*i) is checked face by face as well
 !   6. unit round-trip over the wire: the SI state received in round 5 is
 !      echoed back; the struct side converts SI->non-dim and compares with
 !      the ramp it originally sent (nd -> SI -> MPI -> MPI -> SI -> nd)
+!
+! Wire protocol (phase 17): struct->uns payload grew from 6 to 7 rows,
+! row 7 = struct-side wall heat flux q_f [W/m^2] (positive = fluid->solid).
+! The uns->struct direction is unchanged (6 rows: rho, u, v, w, T, p).
 !===============================================================================
 program test_coupling_exchange
    use mpi
@@ -24,6 +31,7 @@ program test_coupling_exchange
    use mod_reference_state, only: init_reference_state, get_ref_state, &
                                   reference_state_t
    use mod_interface_units, only: SI_to_struct
+   use mod_interface, only: IFACE_CZ_FLUID, IFACE_CZ_POROUS, IFACE_CZ_SOLID
    use mod_coupling_exchange, only: exchange_struct_to_uns, &
                                     exchange_uns_to_struct, recv_uns_iface_state
    implicit none
@@ -118,17 +126,21 @@ contains
       integer, intent(inout) :: nfail
       integer, parameter :: NS = 3
       real(dp) :: rho_nd(NS), u_nd(NS), v_nd(NS), w_nd(NS), T_nd(NS), p_nd(NS)
+      real(dp) :: q_nd(NS)
       real(dp), allocatable :: urho(:), uu(:,:), uT(:), up(:)
+      integer, allocatable :: ucz(:)
       integer :: nu, i, ie
 
       rho_nd = 1.234_dp; u_nd =  0.111_dp; v_nd = -0.222_dp
       w_nd   = 0.333_dp; T_nd =  0.999_dp; p_nd =  0.00123_dp
+      ! phase 17: struct-side wall heat flux [W/m^2], passed through verbatim
+      q_nd   = 3500.0_dp
 
-      call exchange_struct_to_uns( rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, &
+      call exchange_struct_to_uns( rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, q_nd, &
                                    NS, UNS_ROOT, ie )
       call expect( real(ie,dp), 0.0_dp, 'r1 struct send ierr', nfail )
 
-      call recv_uns_iface_state( nu, urho, uu, uT, up, UNS_ROOT, ie )
+      call recv_uns_iface_state( nu, urho, uu, uT, up, ucz, UNS_ROOT, ie )
       call expect( real(nu,dp), 5.0_dp, 'r1 struct recv nfaces', nfail )
       if ( nu == 5 ) then
          do i = 1, nu
@@ -138,6 +150,8 @@ contains
             call expect( uu(3,i),  30.0_dp + 2.0_dp*i,            'r1 uu_z', nfail )
             call expect( uT(i),    300.0_dp + i,                  'r1 uT',   nfail )
             call expect( up(i),    101325.0_dp + 100.0_dp*i,      'r1 up',   nfail )
+            call expect( real(ucz(i),dp), real(IFACE_CZ_FLUID,dp), &
+                                                                    'r1 ucz',  nfail )
          end do
       end if
    end subroutine round1_struct
@@ -150,7 +164,8 @@ contains
       integer, intent(inout) :: nfail
       integer, parameter :: NU = 5
       real(dp) :: irho(NU), iu(3,NU), iT(NU), ip(NU)
-      real(dp), allocatable :: srho(:), su(:,:), sT(:), sp(:)
+      integer  :: icz(NU)
+      real(dp), allocatable :: srho(:), su(:,:), sT(:), sp(:), sq(:)
       type(reference_state_t) :: r
       integer :: i, ie
 
@@ -159,10 +174,11 @@ contains
          iu(:,i)   = [ 10.0_dp + i, -20.0_dp - i, 30.0_dp + 2.0_dp*i ]
          iT(i)     =  300.0_dp + i
          ip(i)     =  101325.0_dp + 100.0_dp*i
+         icz(i)    =  IFACE_CZ_FLUID
       end do
 
-      call exchange_uns_to_struct( irho, iu, iT, ip, NU, STRUCT_ROOT, &
-                                   srho, su, sT, sp, ie )
+      call exchange_uns_to_struct( irho, iu, iT, ip, icz, NU, STRUCT_ROOT, &
+                                   srho, su, sT, sp, sq, ie )
       call expect( real(ie,dp), 0.0_dp, 'r1 uns exch ierr', nfail )
 
       r = get_ref_state()
@@ -175,6 +191,7 @@ contains
             call expect( su(3,i), 0.333_dp  * r%a_ref,   'r1 su_z', nfail )
             call expect( sT(i),   0.999_dp  * r%T_ref,   'r1 sT',   nfail )
             call expect( sp(i),   0.00123_dp * r%p_scale, 'r1 sp',  nfail )
+            call expect( sq(i),   3500.0_dp,             'r1 sq',  nfail )
          end do
       end if
    end subroutine round1_uns
@@ -186,19 +203,21 @@ contains
       integer, intent(inout) :: nfail
       real(dp), allocatable :: empty(:)
       real(dp), allocatable :: urho(:), uu(:,:), uT(:), up(:)
+      integer, allocatable :: ucz(:)
       integer :: nu, i, ie
 
       allocate( empty(0) )
       call exchange_struct_to_uns( empty, empty, empty, empty, empty, empty, &
-                                   0, UNS_ROOT, ie )
+                                   empty, 0, UNS_ROOT, ie )
       call expect( real(ie,dp), 0.0_dp, 'r2 struct send0 ierr', nfail )
 
-      call recv_uns_iface_state( nu, urho, uu, uT, up, UNS_ROOT, ie )
+      call recv_uns_iface_state( nu, urho, uu, uT, up, ucz, UNS_ROOT, ie )
       call expect( real(nu,dp), 4.0_dp, 'r2 struct recv nfaces', nfail )
       if ( nu == 4 ) then
          do i = 1, nu
             call expect( urho(i), 2.0_dp + i,    'r2 urho', nfail )
             call expect( uT(i),   310.0_dp + i,  'r2 uT',   nfail )
+            call expect( real(ucz(i),dp), real(IFACE_CZ_POROUS,dp), 'r2 ucz', nfail )
          end do
       end if
    end subroutine round2_struct
@@ -211,7 +230,8 @@ contains
       integer, intent(inout) :: nfail
       integer, parameter :: NU = 4
       real(dp) :: irho(NU), iu(3,NU), iT(NU), ip(NU)
-      real(dp), allocatable :: srho(:), su(:,:), sT(:), sp(:)
+      integer  :: icz(NU)
+      real(dp), allocatable :: srho(:), su(:,:), sT(:), sp(:), sq(:)
       integer :: i, ie
 
       do i = 1, NU
@@ -219,10 +239,11 @@ contains
          iu(:,i)   = [ 1.0_dp, 2.0_dp, 3.0_dp ] * i
          iT(i)     =  310.0_dp + i
          ip(i)     =  100000.0_dp + i
+         icz(i)    =  IFACE_CZ_POROUS
       end do
 
-      call exchange_uns_to_struct( irho, iu, iT, ip, NU, STRUCT_ROOT, &
-                                   srho, su, sT, sp, ie )
+      call exchange_uns_to_struct( irho, iu, iT, ip, icz, NU, STRUCT_ROOT, &
+                                   srho, su, sT, sp, sq, ie )
       call expect( real(ie,dp), 0.0_dp, 'r2 uns exch ierr', nfail )
       call expect( real(size(srho),dp), 0.0_dp, 'r2 uns recv nfaces=0', nfail )
    end subroutine round2_uns
@@ -235,17 +256,20 @@ contains
       integer, intent(inout) :: nfail
       integer, parameter :: NS = 2
       real(dp) :: rho_nd(NS), u_nd(NS), v_nd(NS), w_nd(NS), T_nd(NS), p_nd(NS)
+      real(dp) :: q_nd(NS)
       real(dp), allocatable :: urho(:), uu(:,:), uT(:), up(:)
+      integer, allocatable :: ucz(:)
       integer :: nu, ie
 
       rho_nd = 2.0_dp; u_nd = 0.5_dp; v_nd = 0.0_dp
       w_nd   = 0.0_dp;  T_nd = 1.1_dp; p_nd = 0.9_dp
+      q_nd   = 0.0_dp
 
-      call exchange_struct_to_uns( rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, &
+      call exchange_struct_to_uns( rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, q_nd, &
                                    NS, UNS_ROOT, ie )
       call expect( real(ie,dp), 0.0_dp, 'r3 struct send ierr', nfail )
 
-      call recv_uns_iface_state( nu, urho, uu, uT, up, UNS_ROOT, ie )
+      call recv_uns_iface_state( nu, urho, uu, uT, up, ucz, UNS_ROOT, ie )
       call expect( real(nu,dp), 0.0_dp, 'r3 struct recv nfaces=0', nfail )
    end subroutine round3_struct
 
@@ -255,13 +279,14 @@ contains
    subroutine round3_uns( nfail )
       integer, intent(inout) :: nfail
       real(dp), allocatable :: empty(:), empty3(:,:)
-      real(dp), allocatable :: srho(:), su(:,:), sT(:), sp(:)
+      integer,  allocatable :: empty_cz(:)
+      real(dp), allocatable :: srho(:), su(:,:), sT(:), sp(:), sq(:)
       type(reference_state_t) :: r
       integer :: i, ie
 
-      allocate( empty(0), empty3(3,0) )
-      call exchange_uns_to_struct( empty, empty3, empty, empty, 0, &
-                                   STRUCT_ROOT, srho, su, sT, sp, ie )
+      allocate( empty(0), empty3(3,0), empty_cz(0) )
+      call exchange_uns_to_struct( empty, empty3, empty, empty, empty_cz, 0, &
+                                   STRUCT_ROOT, srho, su, sT, sp, sq, ie )
       call expect( real(ie,dp), 0.0_dp, 'r3 uns exch ierr', nfail )
 
       r = get_ref_state()
@@ -298,18 +323,21 @@ contains
       integer, intent(inout) :: nfail
       integer, parameter :: NS = 4
       real(dp) :: rho_nd(NS), u_nd(NS), v_nd(NS), w_nd(NS), T_nd(NS), p_nd(NS)
+      real(dp) :: q_nd(NS)
       real(dp), allocatable :: urho(:), uu(:,:), uT(:), up(:)
+      integer, allocatable :: ucz(:)
       integer :: nu, i, ie
 
       do i = 1, NS
          call ramp_nd( i, rho_nd(i), u_nd(i), v_nd(i), w_nd(i), T_nd(i), p_nd(i) )
+         q_nd(i) = 100.0_dp * i
       end do
 
-      call exchange_struct_to_uns( rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, &
+      call exchange_struct_to_uns( rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, q_nd, &
                                    NS, UNS_ROOT, ie )
       call expect( real(ie,dp), 0.0_dp, 'r4 struct send ierr', nfail )
 
-      call recv_uns_iface_state( nu, urho, uu, uT, up, UNS_ROOT, ie )
+      call recv_uns_iface_state( nu, urho, uu, uT, up, ucz, UNS_ROOT, ie )
       call expect( real(nu,dp), 1.0_dp, 'r4 struct recv nfaces', nfail )
    end subroutine round4_struct
 
@@ -321,14 +349,17 @@ contains
    subroutine round4_uns( nfail )
       integer, intent(inout) :: nfail
       real(dp) :: irho(1), iu(3,1), iT(1), ip(1)
+      integer  :: icz(1)
       type(reference_state_t) :: r
       real(dp) :: r_nd, u_nd, v_nd, w_nd, T_nd, p_nd
+      real(dp), allocatable :: sq(:)
       integer :: i, ie
 
       irho = 1.0_dp; iu = 0.0_dp; iT = 300.0_dp; ip = 101325.0_dp
+      icz  = IFACE_CZ_SOLID
 
-      call exchange_uns_to_struct( irho, iu, iT, ip, 1, STRUCT_ROOT, &
-                                   echo_rho, echo_u, echo_T, echo_p, ie )
+      call exchange_uns_to_struct( irho, iu, iT, ip, icz, 1, STRUCT_ROOT, &
+                                   echo_rho, echo_u, echo_T, echo_p, sq, ie )
       call expect( real(ie,dp), 0.0_dp, 'r4 uns exch ierr', nfail )
 
       r = get_ref_state()
@@ -342,6 +373,7 @@ contains
             call expect( echo_u(3,i),   w_nd * r%a_ref,   'r4 su_z', nfail )
             call expect( echo_T(i),     T_nd * r%T_ref,   'r4 sT',   nfail )
             call expect( echo_p(i),     p_nd * r%p_scale, 'r4 sp',   nfail )
+            call expect( sq(i),         100.0_dp * i,     'r4 sq',   nfail )
          end do
       end if
    end subroutine round4_uns
@@ -353,19 +385,22 @@ contains
    subroutine round5_struct( nfail )
       integer, intent(inout) :: nfail
       real(dp) :: rho_nd(1), u_nd(1), v_nd(1), w_nd(1), T_nd(1), p_nd(1)
+      real(dp) :: q_nd(1)
       real(dp), allocatable :: urho(:), uu(:,:), uT(:), up(:)
+      integer, allocatable :: ucz(:)
       real(dp) :: r_nd, u_nd0, v_nd0, w_nd0, T_nd0, p_nd0
       real(dp) :: r2, u2, v2, w2, T2, p2
       integer :: nu, i, ie
 
       rho_nd = 1.0_dp; u_nd = 0.0_dp; v_nd = 0.0_dp
       w_nd   = 0.0_dp;  T_nd = 1.0_dp; p_nd = 1.0_dp
+      q_nd   = 0.0_dp
 
-      call exchange_struct_to_uns( rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, &
+      call exchange_struct_to_uns( rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, q_nd, &
                                    1, UNS_ROOT, ie )
       call expect( real(ie,dp), 0.0_dp, 'r5 struct send ierr', nfail )
 
-      call recv_uns_iface_state( nu, urho, uu, uT, up, UNS_ROOT, ie )
+      call recv_uns_iface_state( nu, urho, uu, uT, up, ucz, UNS_ROOT, ie )
       call expect( real(nu,dp), 4.0_dp, 'r5 struct recv nfaces', nfail )
       if ( nu == 4 ) then
          do i = 1, nu
@@ -388,12 +423,15 @@ contains
    !---------------------------------------------------------------------------
    subroutine round5_uns( nfail )
       integer, intent(inout) :: nfail
-      real(dp), allocatable :: srho(:), su(:,:), sT(:), sp(:)
+      real(dp), allocatable :: srho(:), su(:,:), sT(:), sp(:), sq(:)
+      integer,  allocatable :: ecz(:)
       integer :: ie
 
-      call exchange_uns_to_struct( echo_rho, echo_u, echo_T, echo_p, &
+      allocate( ecz(size(echo_rho)) )
+      ecz = IFACE_CZ_SOLID
+      call exchange_uns_to_struct( echo_rho, echo_u, echo_T, echo_p, ecz, &
                                    size(echo_rho), STRUCT_ROOT, &
-                                   srho, su, sT, sp, ie )
+                                   srho, su, sT, sp, sq, ie )
       call expect( real(ie,dp), 0.0_dp, 'r5 uns exch ierr', nfail )
       call expect( real(size(srho),dp), 1.0_dp, 'r5 uns recv nfaces', nfail )
    end subroutine round5_uns

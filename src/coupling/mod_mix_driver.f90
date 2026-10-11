@@ -34,6 +34,9 @@ contains
                                     struct_extract_iface, struct_set_iface_bc, &
                                     struct_solver_save
       use mod_coupling_exchange, only: exchange_struct_to_uns, recv_uns_iface_state
+      use mod_interface, only: Interface_List, Num_Interface, classify_interface, &
+                               PEER_STRUCT, PEER_UNS, IFACE_CZ_FLUID, &
+                               IFACE_COMP_FLUID_SOLID
       use mod_interface_units, only: struct_to_SI, SI_to_struct
       use mod_reference_state, only: get_ref_state, reference_state_t, &
                                      get_coupling_params, scheduled_steps
@@ -48,10 +51,26 @@ contains
       integer :: n_struct_steps_start_d, step_decay_d, n_sub
       integer :: iface_p_model_d
       real(dp) :: iface_relax_d
+      ! phase 17: CHT (Dirichlet-Neumann) interface-temperature relaxation.
+      ! The struct side pins the received solid surface temperature as its
+      ! isothermal wall value, which closes a fixed-point loop whose gain is
+      ! h_f*R_s (fluid wall conductance x solid resistance) -- >>1 for the
+      ! cht_solid case, so the raw iteration diverges.  t_cht_app holds the
+      ! pinned value per CHT face, r_cht_* the Aitken residual pair
+      ! r = T_recv - T_app.  See iface_t_relax in mod_reference_state.
+      real(dp) :: iface_t_relax_d, cht_w
+      real(dp) :: cht_num, cht_den, cht_ra
+      integer  :: n_cht, k_cht
+      logical  :: cht_warm
+      integer,  allocatable :: cht_face(:)
+      real(dp), allocatable :: t_cht_app(:), r_cht_old(:), r_cht_cur(:)
       real(dp), allocatable :: rho_nd(:), u_nd(:), v_nd(:), w_nd(:), T_nd(:), p_nd(:)
+      real(dp), allocatable :: q_nd(:)   ! phase 17: struct wall heat flux [W/m^2]
       real(dp), allocatable :: urho(:), uu(:,:), uT(:), up(:)
+      integer,  allocatable :: ucz(:)   ! per-face uns cell-zone class (phase 17)
       real(dp), allocatable :: rho_nd2(:), u_nd2(:), v_nd2(:), w_nd2(:), T_nd2(:), p_nd2(:)
       real(dp), allocatable :: rho_si(:), u_si(:), v_si(:), w_si(:), T_si(:), p_si(:)
+      integer :: i, cnt
       type(reference_state_t) :: r
 
       call get_coupling_params( n_couple, n_uns_steps_d, iface_relax_d, iface_ramp_d, &
@@ -60,7 +79,8 @@ contains
                                 couple_restart = couple_restart, &
                                 n_struct_steps_start = n_struct_steps_start_d, &
                                 step_decay_every = step_decay_d, &
-                                iface_p_model = iface_p_model_d )
+                                iface_p_model = iface_p_model_d, &
+                                iface_t_relax = iface_t_relax_d )
       n_uns_root = 1   ! uns root is global rank 1 (struct is rank 0)
       if ( n_struct_steps_start_d > n_struct_steps_d ) then
          write(*,'(a,i0,a,i0,a)') '[struct rank 0] struct substeps/coupling iter: ', &
@@ -85,27 +105,28 @@ contains
 
       ! ---- coupling loop ------------------------------------------------------
       do iter = iter0+1, n_couple
-         ! extract interface state (non-dim)
-         call struct_extract_iface(rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, nfaces)
+         ! extract interface state (non-dim + phase-17 CHT wall heat flux)
+         call struct_extract_iface(rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, nfaces, &
+                                   q_si = q_nd)
          if (iter == 1) &
             write(*,'(a,i0,a,i0,a)') '[struct rank ', rank, '] interface faces: ', nfaces
 
          ! send struct SI state to uns root (count + payload, works for nfaces=0)
          if (nfaces > 0) then
             call exchange_struct_to_uns(rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, &
-                                        nfaces, n_uns_root, ierr2)
+                                        q_nd, nfaces, n_uns_root, ierr2)
          else
             call exchange_struct_to_uns(rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, &
-                                        0, n_uns_root, ierr2)
+                                        q_nd, 0, n_uns_root, ierr2)
          end if
 
          ! receive uns SI state from uns root
-         call recv_uns_iface_state(n_uns_recv, urho, uu, uT, up, n_uns_root, ierr2)
+         call recv_uns_iface_state(n_uns_recv, urho, uu, uT, up, ucz, n_uns_root, ierr2)
          if (iter == 1) &
             write(*,'(a,i0,a,i0,a)') '[struct rank ', rank, '] received uns faces: ', n_uns_recv
 
          ! periodic SI diagnostics (interface means, both peers)
-         if ( mod(iter,25)==0 .or. iter==1 .or. iter==n_couple ) then
+         if ( mod(iter,25)==0 .or. iter<=8 .or. iter==1 .or. iter==n_couple ) then
             if (nfaces > 0) then
                allocate(rho_si(nfaces), u_si(nfaces), v_si(nfaces), &
                         w_si(nfaces), T_si(nfaces), p_si(nfaces))
@@ -116,6 +137,28 @@ contains
                   ' struct SI: mean u_x, mean p(abs), mean T =', &
                   sum(u_si)/nfaces, sum(p_si)/nfaces, sum(T_si)/nfaces
                deallocate(rho_si, u_si, v_si, w_si, T_si, p_si)
+            end if
+            ! phase 17: CHT wall heat flux balance (Sum q*A [W]; positive =
+            ! fluid -> solid).  At the coupled fixed point this must equal the
+            ! heat that the solid conducts out through its fixed-T base.
+            if (nfaces > 0 .and. allocated(q_nd)) then
+               block
+                  real(dp) :: q_suma, qsum, qmax
+                  integer  :: ii, cc2
+                  q_suma = 0.0_dp; qsum = 0.0_dp; qmax = 0.0_dp
+                  cc2 = 0
+                  do ii = 1, Num_Interface
+                     if (Interface_List(ii)%solver /= PEER_STRUCT) cycle
+                     cc2 = cc2 + 1
+                     if (cc2 > nfaces) exit
+                     q_suma = q_suma + q_nd(cc2) * Interface_List(ii)%area
+                     qsum   = qsum   + q_nd(cc2)
+                     qmax   = max( qmax, abs(q_nd(cc2)) )
+                  end do
+                  write(*,'(a,i0,a,i0,a,3es12.4)') '[struct rank ', rank, &
+                     '] diag iter ', iter, ' CHT q_f: Sum(q*A) [W], mean, max =', &
+                     q_suma, qsum/real(max(nfaces,1),dp), qmax
+               end block
             end if
             if (n_uns_recv > 0) then
                write(*,'(a,i0,a,i0,a,3es12.4)') &
@@ -149,6 +192,26 @@ contains
          ! the acoustic gain 1/(rho*c) makes the exchange loop gain > 1).
          ! At convergence p1 -> p_peer for any alpha>0 because the struct
          ! inner pressure relaxes toward pb every coupling iteration.
+         ! phase 17: dispatch each interface's peer type from the per-face
+         ! cell-zone class received in payload row 7.  The uns root sends one
+         ! class per interface face in the SAME order as the 1:1
+         ! convert_uns_to_struct_nd mapping (n_uns_recv == nfaces), and the
+         ! struct side always owns the compressible-fluid side of the pair, so
+         ! classify_interface reduces to a function of ucz.  The production
+         ! coupling path never runs match_interfaces/dispatch_interfaces (the
+         ! geometric matcher is a test-only path), so without this dispatch
+         ! Interface_List(i)%iface_type would stay IFACE_UNKNOWN and every
+         ! interface would be treated as a compressible-fluid outlet.
+         if ( allocated(ucz) .and. n_uns_recv == nfaces ) then
+            cnt = 0
+            do i = 1, Num_Interface
+               if (Interface_List(i)%solver /= PEER_STRUCT) cycle
+               cnt = cnt + 1
+               if (cnt > n_uns_recv) exit
+               Interface_List(i)%iface_type = classify_interface( &
+                  PEER_STRUCT, IFACE_CZ_FLUID, PEER_UNS, ucz(cnt) )
+            end do
+         end if
          if (nfaces > 0 .and. n_uns_recv > 0) then
             block
                real(dp), parameter :: ALPHA_MAX = 0.3_dp
@@ -159,6 +222,106 @@ contains
             call convert_uns_to_struct_nd(urho, uu, uT, up, n_uns_recv, &
                                           rho_nd2, u_nd2, v_nd2, w_nd2, T_nd2, p_nd2, &
                                           nfaces, r)
+            ! ---- phase-17 CHT interface-temperature relaxation ---------------
+            ! The CHT partition is a Dirichlet-Neumann split: the struct side
+            ! sends its resolved wall heat flux q_f (imposed as a Neumann flux on
+            ! the pure-solid side) and receives the solid surface temperature,
+            ! which it pins as an isothermal wall value.  That closes the loop
+            !     T_wall -> q_f = h_f*(T1 - T_wall) -> T_surface = T_s0 + R_s*q_f
+            !     -> T_wall'
+            ! with gain h_f*R_s.  For the cht_solid case (5e-6 m first fluid
+            ! cell => h_f ~ 5.2e3 W/m^2/K, 0.1 m steel slab => R_s = 6.7e-3
+            ! m^2K/W) the gain is ~35, so the raw fixed point doubles each
+            ! coupling iteration and diverges.  The pinned value is therefore
+            ! under-relaxed on the CHT faces only:
+            !     T_app <- T_app + w*(T_recv - T_app)
+            ! with w = iface_t_relax (fixed, >0) or the adaptive Aitken
+            ! Delta^2 factor (default).  Everything else (all legacy interface
+            ! types) is untouched.
+            if ( .not. allocated(cht_face) ) then
+               allocate( cht_face(nfaces) )
+               n_cht = 0
+               cnt   = 0
+               do i = 1, Num_Interface
+                  if (Interface_List(i)%solver /= PEER_STRUCT) cycle
+                  cnt = cnt + 1
+                  if (cnt > nfaces) exit
+                  if (Interface_List(i)%iface_type == &
+                      IFACE_COMP_FLUID_SOLID) then
+                     n_cht = n_cht + 1
+                     cht_face(n_cht) = cnt
+                  end if
+               end do
+               if ( n_cht > 0 ) then
+                  allocate( t_cht_app(n_cht), r_cht_old(n_cht), r_cht_cur(n_cht) )
+                  t_cht_app = 0.0_dp
+                  r_cht_old = 0.0_dp
+                  r_cht_cur = 0.0_dp
+                  cht_w      = 1.0_dp
+                  cht_warm   = .false.
+                  write(*,'(a,i0,a,i0,a,i0,a,f8.4,a)') '[struct rank ', rank, &
+                     '] CHT faces: ', n_cht, ' of ', nfaces, &
+                     ' (Dirichlet-Neumann, iface_t_relax = ', &
+                     iface_t_relax_d, ')'
+               end if
+            end if
+            if ( n_cht > 0 ) then
+               cht_num = 0.0_dp
+               cht_ra  = 0.0_dp
+               do k_cht = 1, n_cht
+                  r_cht_cur(k_cht) = T_nd2( cht_face(k_cht) ) - t_cht_app(k_cht)
+                  cht_num = cht_num + r_cht_old(k_cht)*r_cht_old(k_cht)
+                  cht_ra  = cht_ra  + r_cht_cur(k_cht)*r_cht_cur(k_cht)
+               end do
+               if ( iface_t_relax_d > 0.0_dp ) then
+                  ! Fixed factor -- but warm-start the FIRST CHT exchange with
+                  ! w = 1: t_cht_app starts at 0, and creeping up from 0 by
+                  ! w*(T_recv-0) would pin the wall at a fraction of the solid
+                  ! surface temperature (measured: w = 0.03 -> T_wall ~ 9 K
+                  ! against a 300 K fluid -> |r| ~ 4e2 K, q_iface ~ 1e6 W).
+                  if ( cht_warm ) then
+                     cht_w = iface_t_relax_d
+                  else
+                     cht_w = 1.0_dp
+                  end if
+               else if ( cht_warm ) then
+                  ! Aitken Delta^2 (scalar factor, vector residual):
+                  !   w_k = -w_{k-1} (r_{k-1}.r_{k-1}) / (r_{k-1}.(r_k-r_{k-1}))
+                  ! For the linear loop this equals 1/(1+gain) exactly, so the
+                  ! coupling error is annihilated in one step.
+                  cht_den = 0.0_dp
+                  do k_cht = 1, n_cht
+                     cht_den = cht_den + r_cht_old(k_cht) &
+                             * ( r_cht_cur(k_cht) - r_cht_old(k_cht) )
+                  end do
+                  if ( abs(cht_den) > 1.0e-30_dp ) &
+                     cht_w = -cht_w * cht_num / cht_den
+                  ! Safeguard: keep w in [0.02,1] (the floor also catches a
+                  ! negative or noisily small estimate).  Measured on cht_solid
+                  ! (gain ~35, 50 substeps per exchange), the estimate does not
+                  ! settle: the interface residual is dominated by the physical
+                  ! drift of the coupled transient (|r|max ~ |r|rms, i.e. a
+                  ! uniform tracking lag of the pinned wall temperature behind
+                  ! the still-warming solid surface), so the Aitken history is
+                  ! not a clean geometric sequence and w keeps collapsing onto
+                  ! the floor -- leaving |q_base_in + q_iface_in| ~ 1.3e5 W.
+                  ! A fixed w = 0.03 = 1/(1+G) tracks better in both regimes;
+                  ! see iface_t_relax in mod_reference_state and the case file.
+                  cht_w = max( 0.02_dp, min( 1.0_dp, cht_w ) )
+               end if
+               do k_cht = 1, n_cht
+                  t_cht_app(k_cht) = t_cht_app(k_cht) + cht_w*r_cht_cur(k_cht)
+                  T_nd2( cht_face(k_cht) ) = t_cht_app(k_cht)
+               end do
+               r_cht_old = r_cht_cur
+               cht_warm  = .true.
+               if ( iter <= 8 .or. mod(iter,25)==0 .or. iter==n_couple ) &
+                  write(*,'(a,i0,a,i0,a,3es12.4)') '[struct rank ', rank, &
+                     '] diag iter ', iter, &
+                     ' CHT relax: w, |r|max [K], |r|rms [K] =', &
+                     cht_w, maxval(abs(r_cht_cur))*r%T_ref, &
+                     sqrt(cht_ra/real(n_cht,dp))*r%T_ref
+            end if
             alpha_p = ALPHA_MAX * min(1.0_dp, &
                         real(iter,dp)/real(max(iface_ramp_d,1),dp))
             ! Phase 14 (iface_p_model = dirichlet|momentum): the interface
@@ -218,10 +381,13 @@ contains
       use mod_uns_control, only: ctrl_t, BC_INTERFACE, BC_POUTLET, BC_FARFIELD
       use mod_uns_bc, only: bc_t, set_interface_vel, &
                             set_interface_T, bc_face_vel, set_interface_p, &
+                            bc_face_T, &
                             set_interface_slip, set_iface_p_dirichlet, &
                             set_iface_slip_mode, set_interface_T_ltne, &
                             set_iface_zhang_vel, &
-                            set_iface_t_ltne_mode, iface_t_ltne_is_on
+                            set_iface_t_ltne_mode, iface_t_ltne_is_on, &
+                            set_interface_q
+      use mod_interface, only: IFACE_CZ_SOLID
       use mod_iface_law, only: iface_slip_conductance, iface_p_momentum, &
                                iface_p_blend, iface_p_flux_response, &
                                iface_p_gain, iface_zhang_velocity, &
@@ -251,7 +417,9 @@ contains
       integer :: ier, ierr, iter, iter0, n_couple, n_uns_steps, n_struct_root
       integer, allocatable :: ifaces(:)
       real(dp), allocatable :: irho(:), iT(:), ip(:), iu(:,:)
+      integer, allocatable :: icz(:)   ! per-face cell-zone class (phase 17)
       real(dp), allocatable :: srho(:), su(:,:), sT(:), sp(:)
+      real(dp), allocatable :: sq(:)      ! phase 17: struct wall q [W/m^2]
       real(dp), allocatable :: su_bc(:,:)
       integer :: n_uns_faces, iface_ramp, save_interval, couple_restart
       integer :: n_uns_steps_start, step_decay, n_uns_cur, iface_vel_mode
@@ -339,7 +507,8 @@ contains
          write(*,'(a,i0,a,i0)') '[uns rank ', rank, '] restart from coupling iter ', iter0
 
       ! ---- extract initial interface state (for exchange sizing) ---------------
-      call uns_solver_extract_iface( m, g, bcs, fld, ifaces, irho, iu, iT, ip, ier, ctrl%rho )
+      call uns_solver_extract_iface( m, g, bcs, fld, ifaces, irho, iu, iT, ip, &
+                                     icz, ier, ctrl%rho )
       n_uns_faces = size(ifaces)
       write(*,'(a,i0,a,i0)') '[uns rank ', rank, '] interface faces: ', n_uns_faces
 
@@ -349,8 +518,8 @@ contains
          ! receive struct SI state, send uns SI state back
          ! (skipped when there is no struct group, e.g. nproc==1)
          if ( has_struct ) then
-            call exchange_uns_to_struct(irho, iu, iT, ip, n_uns_faces, &
-                                        n_struct_root, srho, su, sT, sp, ierr)
+            call exchange_uns_to_struct(irho, iu, iT, ip, icz, n_uns_faces, &
+                                        n_struct_root, srho, su, sT, sp, sq, ierr)
 
             ! Optional interface pressure datum anchoring (iface_p_anchor=1).
             ! The uns PPE is pure-Neumann (no pressure BC: the slab is closed
@@ -815,6 +984,38 @@ contains
                else
                   call set_interface_T( bcs, ifaces, sT )
                end if
+
+               ! ---- phase 17: CHT solid faces are FLUX driven -----------------
+               ! For a compressible<->solid CHT pair the peer's interface is an
+               ! isothermal NO-SLIP wall (u=0 there), so the solid surface may
+               ! not be handed a Dirichlet temperature at all: the temperature
+               ! field is owned by the solid and the fluid supplies the flux.
+               ! Impose the peer's resolved wall heat flux q_f [W/m^2] as a
+               ! Neumann surface condition (positive = fluid -> solid, the sign
+               ! convention of the fixed-flux tbc qval) on every interface face
+               ! whose owner cell is PURE SOLID.  All other interface faces keep
+               ! the Dirichlet value set above, so the legacy porous/fluid
+               ! coupling path is bit-identical.
+               if ( n_uns_faces > 0 .and. allocated(sq) ) then
+                  block
+                     integer :: fi6, n_ch6
+                     integer,  allocatable :: if_ch(:)
+                     real(dp), allocatable :: q_ch(:)
+                     n_ch6 = count( icz(1:n_uns_faces) == IFACE_CZ_SOLID )
+                     if ( n_ch6 > 0 ) then
+                        allocate( if_ch(n_ch6), q_ch(n_ch6) )
+                        n_ch6 = 0
+                        do fi6 = 1, n_uns_faces
+                           if ( icz(fi6) /= IFACE_CZ_SOLID ) cycle
+                           n_ch6        = n_ch6 + 1
+                           if_ch(n_ch6) = ifaces(fi6)
+                           q_ch(n_ch6)  = omega * sq(fi6)
+                        end do
+                        call set_interface_q( bcs, if_ch, q_ch )
+                        deallocate( if_ch, q_ch )
+                     end if
+                  end block
+               end if
                deallocate( su_bc )
             end if
          end if
@@ -834,7 +1035,8 @@ contains
          end if
 
          ! extract interface state for next exchange
-         call uns_solver_extract_iface( m, g, bcs, fld, ifaces, irho, iu, iT, ip, ier, ctrl%rho )
+         call uns_solver_extract_iface( m, g, bcs, fld, ifaces, irho, iu, iT, ip, &
+                                        icz, ier, ctrl%rho )
          ! ---- Zhang 2011 Eq.27: what the clear-fluid side must see ----------
          ! The fluid side may NOT be handed the porous FLUID-phase temperature:
          ! Eq.27 makes the interface temperature it sees the porosity-weighted
@@ -871,6 +1073,67 @@ contains
                   ' uns SI: mean u_x, mean p(gauge), |u|max =', &
                   sum(iu(1,:))/size(ifaces), sum(ip)/size(ifaces), &
                   maxval( sqrt( sum(iu*iu, dim=1) ) )
+         end if
+
+         ! ---- phase 17: CHT interface energy balance --------------------------
+         ! Sum of the imposed interface wall flux over the SOLID faces (q_face
+         ! carries the ">0 heats the domain" convention, i.e. positive = heat
+         ! INTO the solid) against the conduction entering the domain through
+         ! every fixed-temperature (Dirichlet) boundary face.  Both are "into
+         ! the domain", so with no internal storage at the coupled steady state
+         ! they must cancel:  q_base_in + q_iface_in -> 0  (the interface
+         ! removes exactly the heat that the fixed-T base feeds in).  The
+         ! printed resid is that sum; it uses the same discretisation as the
+         ! energy equation (k_eff*A/dw*(T_face - T_cell)).
+         if ( (iter <= 8 .or. mod(iter,25)==0 .or. iter==1 .or. iter==n_couple) ) then
+            block
+               integer  :: fi7, gi7, c07
+               real(dp) :: q_in7, q_base7, dw7, kf7, tf7, qf7
+               real(dp) :: tw_min7, tw_max7, q_min7, q_max7
+               logical  :: neum7
+               q_in7   = 0.0_dp
+               q_base7 = 0.0_dp
+               tw_min7 = 1.0e30_dp
+               tw_max7 = -1.0e30_dp
+               q_min7  = 1.0e30_dp
+               q_max7  = -1.0e30_dp
+               if ( size(ifaces) > 0 .and. allocated(sq) ) then
+                  do fi7 = 1, size(ifaces)
+                     if ( icz(fi7) == IFACE_CZ_SOLID ) then
+                        q_in7 = q_in7 + omega * sq(fi7) &
+                                      * g%area( ifaces(fi7) )
+                        tw_min7 = min( tw_min7, fld%T( m%f(ifaces(fi7))%c0 ) )
+                        tw_max7 = max( tw_max7, fld%T( m%f(ifaces(fi7))%c0 ) )
+                        q_min7  = min( q_min7, sq(fi7) )
+                        q_max7  = max( q_max7, sq(fi7) )
+                     end if
+                  end do
+                  if ( tw_min7 > tw_max7 ) tw_min7 = 0.0_dp
+                  write(*,'(a,i0,a,i0,a,4es12.4)') '[uns rank ', rank, &
+                     '] diag iter ', iter, &
+                     ' Twall min/max, q min/max =', &
+                     tw_min7, tw_max7, q_min7, q_max7
+               end if
+               do fi7 = 1, m%nfaces
+                  gi7 = bcs%fgrp(fi7)
+                  if ( gi7 == 0 ) cycle
+                  c07 = m%f(fi7)%c0
+                  call bc_face_T( bcs, fi7, g%xf(:,fi7), fld%T(c07), &
+                                  tf7, qf7, neum7 )
+                  if ( neum7 ) cycle          ! only fixed-T faces conduct in
+                  dw7 = norm2( g%xf(:,fi7) - g%xc(:,c07) )
+                  if ( dw7 <= 0.0_dp ) cycle
+                  kf7 = fld%porosity(c07) * ctrl%k_cond &
+                      + (1.0_dp - fld%porosity(c07)) * fld%k_s(c07)
+                  q_base7 = q_base7 + kf7 * g%area(fi7) / dw7 &
+                                     * ( tf7 - fld%T(c07) )
+               end do
+               if ( q_in7 /= 0.0_dp .or. q_base7 /= 0.0_dp ) &
+                  write(*,'(a,i0,a,i0,a,3es12.4)') '[uns rank ', rank, &
+                     '] diag iter ', iter, &
+                     ' CHT energy: q_iface_in [W], q_base_in [W], resid =', &
+                     q_in7, q_base7, q_base7 + q_in7
+            end block
          end if
 
          ! No reflection: pass the raw uns cell-centre state back to the

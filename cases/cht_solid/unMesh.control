@@ -1,0 +1,46 @@
+# unMesh.control -- cht_solid validation (phase 17): pure-solid slab side
+# Mesh unstucutred.cas (Pointwise export, units = m), same chain as C_P_test
+#   cell zone : 2 = pure solid slab (2400 hex), x in [0.2,0.8], y in [-0.1,0]
+#   face zones: 4 = interface (y=0, 60 faces)   -> coupling exchange layer
+#               5 = wall      (x=0.2 and x=0.8 sides, 80 faces, adiabatic)
+#               6 = symmetry  (z=0 and z=1, 4800 faces)
+#               7 = wall      (y=-0.1, 60 faces) -> hot base at 400 K (tbc)
+# -------------------------------------------------------------------------
+
+# --- mesh units: CAS already in metres ---
+mesh_scale = 1.0
+
+# --- physical properties (fluid placeholder; solid zone ignores rho/mu) ---
+rho = 1.177
+mu  = 2.452e-3
+
+# --- numerical parameters (SIMPLE) ---
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 200
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+
+# --- initial temperature field (interface T exchange) ---
+init_t = 300.0
+
+# --- cell (volume) zones: <id|name> fluid|porous|solid [k_s= cp_s= rho_s= q_src=] ---
+# phase 17: the whole slab is a STATIONARY solid conduction region.  Explicit
+# type beats the mesh VC tag; porosity becomes 0, no fluid phase, u=v=w=0.
+cell_zone = 2 solid k_s=15.0 cp_s=460.0 rho_s=7800.0 q_src=0.0
+
+# --- boundary conditions ---
+bc = 5 wall
+bc = 6 symmetry
+# former coolant inlet: now a wall; the solid has no through-flow
+bc = 7 wall
+
+# thermal: hot base at y=-0.1 (zone 7) fixed 400 K; interface (zone 4) is
+# driven by the compressible peer via the coupling exchange layer (no tbc);
+# sides (zones 5/6) stay adiabatic
+tbc = 7 1 400.0

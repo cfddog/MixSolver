@@ -121,29 +121,36 @@ contains
    ! struct_extract_iface -- extract the inner-cell primitive state at every
    ! registered interface face (struct side, non-dimensional).
    !
-   ! Output arrays are sized Num_Interface and ordered to match Interface_List.
-   ! The caller converts non-dim -> SI via mod_interface_units.
    !
-   ! Primitive state: rho, u, v, w, T, p  (non-dimensional, OpenCFD-EC units)
-   !
-   ! The exported state is the INTERFACE FACE state, i.e. the arithmetic
-   ! mean of the last interior cell (ic,jc,kc) and the ghost cell
-   ! (ig,jg,kg), mirroring the first-order face reconstruction used by the
-   ! structured flux between those two cells.  The ghost cell holds the
-   ! peer (unstructured) first-cell state.  Exporting the interior cell
-   ! value alone while the peer applies it as a face DIRICHLET value
-   ! introduces a systematic half-cell bias (observed as a ~10% velocity
-   ! deficit frozen in the coupling fixed point).
+   ! Phase 17 (optional q_si): for CHT faces
+   ! (iface_type == IFACE_COMP_FLUID_SOLID) the struct side is an isothermal
+   ! no-slip wall, so the interface T slot degenerates to the peer value and
+   ! heat-flux continuity must be carried by an explicit wall heat flux.
+   ! q_si = struct-side wall heat flux in SI [W/m^2], POSITIVE = heat flowing
+   ! from the fluid INTO the peer solid:
+   !   k_nd = Cp * (B%mu/PrL + B%mu_t/PrT)      (same closure as the energy flux)
+   !   q_nd = k_nd * (T1_nd - T2_nd) / d_nd     with d_nd = |xc(ig)-xc(ic)|
+   !   q_SI = q_nd * rho_ref * u_ref**3         (energy-flux reference scale)
+   ! With the wall ghost fill T2 = 2*T_wall - T1 this equals
+   ! k_SI*(T1_SI - T_wall_SI)/d_wall, i.e. the resolved wall heat flux of the
+   ! structured energy equation.  Non-CHT faces / iface_type == IFACE_UNKNOWN
+   ! (first coupling iteration) yield q_si = 0 (adiabatic cold-start guard).
    !---------------------------------------------------------------------------
-   subroutine struct_extract_iface(rho, u, v, w, T, p, nfaces)
+   subroutine struct_extract_iface(rho, u, v, w, T, p, nfaces, q_si)
       use Global_Var
-      use mod_interface, only: Interface_List, Num_Interface, PEER_STRUCT
+      use mod_interface, only: Interface_List, Num_Interface, PEER_STRUCT, &
+                               IFACE_COMP_FLUID_SOLID
+      use mod_reference_state, only: get_ref_state, reference_state_t
       implicit none
       integer, intent(out) :: nfaces
       real(dp), allocatable, intent(out) :: rho(:), u(:), v(:), w(:), T(:), p(:)
+      real(dp), allocatable, intent(out), optional :: q_si(:)
       integer :: i, ic, jc, kc, ig, jg, kg, blk
       real(PRE_EC) :: d1, uu1, v1, w1, p1, T1
       real(PRE_EC) :: d2, uu2, v2, w2, p2, T2
+      real(PRE_EC) :: k0, dxg, dyg, dzg, dg, qnd
+      real(dp)     :: q_scale
+      type(reference_state_t) :: r
       Type(Block_TYPE), pointer :: B
 
       nfaces = 0
@@ -153,6 +160,9 @@ contains
       if (nfaces == 0) return
 
       allocate(rho(nfaces), u(nfaces), v(nfaces), w(nfaces), T(nfaces), p(nfaces))
+      if ( present(q_si) ) allocate(q_si(nfaces))
+      r = get_ref_state()
+      q_scale = r%rho_ref * r%u_ref**3      ! energy-flux reference scale [W/m^2]
 
       nfaces = 0
       do i = 1, Num_Interface
@@ -188,6 +198,22 @@ contains
          w(nfaces)   = real(0.5d0*(w1+w2),    dp)
          T(nfaces)   = real(0.5d0*(T1+T2),    dp)
          p(nfaces)   = real(0.5d0*(p1+p2),    dp)
+
+         ! phase 17: CHT wall heat flux (SI).  pos = fluid -> solid.
+         if ( present(q_si) ) then
+            q_si(nfaces) = 0.0_dp
+            if ( Interface_List(i)%iface_type == IFACE_COMP_FLUID_SOLID ) then
+               dxg = B%xc(ig,jg,kg) - B%xc(ic,jc,kc)
+               dyg = B%yc(ig,jg,kg) - B%yc(ic,jc,kc)
+               dzg = B%zc(ig,jg,kg) - B%zc(ic,jc,kc)
+               dg  = sqrt( dxg*dxg + dyg*dyg + dzg*dzg )
+               if ( dg > 1.0d-12 ) then
+                  k0  = Cp * ( B%mu(ic,jc,kc)/PrL + B%mu_t(ic,jc,kc)/PrT )
+                  qnd = k0 * (T1 - T2) / dg
+                  q_si(nfaces) = real( qnd, dp ) * q_scale
+               end if
+            end if
+         end if
       end do
    end subroutine struct_extract_iface
 
@@ -230,7 +256,8 @@ contains
    !---------------------------------------------------------------------------
    subroutine struct_set_iface_bc(rho_nd, u_nd, v_nd, w_nd, T_nd, p_nd, nfaces, alpha)
       use Global_Var
-      use mod_interface, only: Interface_List, Num_Interface, PEER_STRUCT
+      use mod_interface, only: Interface_List, Num_Interface, PEER_STRUCT, &
+                               IFACE_COMP_FLUID_SOLID
       implicit none
       integer, intent(in) :: nfaces
       real(dp), intent(in) :: rho_nd(nfaces), u_nd(nfaces), v_nd(nfaces), &
@@ -239,6 +266,7 @@ contains
       integer :: i, ig, jg, kg, ic, jc, kc, blk, cnt
       real(PRE_EC) :: d1, u1, v1, w1, p1, c1, pb, db, ub(3), nvec(3)
       real(PRE_EC) :: d2, u2, v2, w2, p2, E2, a_ramp, p_peer
+      real(PRE_EC) :: T1, Tw_peer, T2
       Type(Block_TYPE), pointer :: B
 
       a_ramp = 1.0d0
@@ -262,6 +290,33 @@ contains
          w1 = B%U(4, ic, jc, kc) / d1
          p1 = (gamma - 1.d0) * (B%U(5, ic, jc, kc) - &
               0.5d0 * d1 * (u1*u1 + v1*v1 + w1*w1))
+
+         ! phase 17 CHT (compressible-fluid <-> pure-solid): the struct side
+         ! sees the solid as an ISOTHERMAL NO-SLIP WALL whose temperature is the
+         ! peer solid surface temperature (T slot, already struct non-dim).
+         ! Ghost fill mirrors wall_bound's isothermal branch (mod_struct_bc.f90):
+         ! zero normal pressure gradient, T2 = 2*T_wall - T1 floored at 0.5*T1,
+         ! velocity mirror.  No characteristic reflection and no back-pressure
+         ! ramp apply here (a pure wall).  Cold-start guard: an unphysical
+         ! T_wall <= 0 degenerates to neutral (adiabatic) extrapolation.
+         if ( Interface_List(i)%iface_type == IFACE_COMP_FLUID_SOLID ) then
+            T1      = gamma * Ma * Ma * p1 / d1
+            Tw_peer = real(T_nd(cnt), PRE_EC)
+            if ( Tw_peer <= 0.0d0 ) Tw_peer = T1
+            p2 = p1
+            T2 = 2.0d0 * Tw_peer - T1
+            if ( T2 < 0.5d0 * T1 ) T2 = 0.5d0 * T1
+            u2 = -u1; v2 = -v1; w2 = -w1
+            d2 = gamma * Ma * Ma * p2 / T2
+            E2 = p2 / (gamma - 1.d0) + 0.5d0 * d2 * (u2*u2 + v2*v2 + w2*w2)
+            B%U(1, ig, jg, kg) = d2
+            B%U(2, ig, jg, kg) = d2 * u2
+            B%U(3, ig, jg, kg) = d2 * v2
+            B%U(4, ig, jg, kg) = d2 * w2
+            B%U(5, ig, jg, kg) = E2
+            cycle
+         end if
+
          c1 = sqrt(gamma * p1 / d1)
 
          ! outward unit normal at the interface: take it from the block's
