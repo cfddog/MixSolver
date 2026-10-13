@@ -32,6 +32,41 @@
 \bottomrule
 \endlastfoot
 2026-10-13 & -- &
+\textbf{非结构分区（MPI）重启动修复：续算第一步即崩 ＋ 静默掉阶}：
+① \textbf{分段续算第一个快照就 SIGSEGV} —— \texttt{read\_field\_dump} 只分配
+它真正读到的数组（$u/p/T$＋时间历史），而 rank 0 的全局工作场 \texttt{fld\_g}
+随后还要被 \texttt{gather\_fields\_to\_root}/\texttt{vtk\_write} 当汇总目标用
+（\texttt{T\_s}、\texttt{h\_sf}、\texttt{a\_sf}），未分配即越界。② \textbf{静默掉阶}
+—— \texttt{write\_field\_dump} 汇总时\emph{没有}打包时间历史、\texttt{ts\_order}
+也没归约，写出的 dump 历史全零、\texttt{ts\_order}=0；而瞬态驱动的第一步又被
+\emph{无条件}强制成一阶隐式 Euler，于是重启后整条轨迹掉到一阶（实测 3 步差
+1.6\%，长时统计被污染）。修法：\texttt{mod\_uns\_driver\_mpi.f90} 在读 dump
+\emph{之前}先用 \texttt{init\_fields} ＋ \texttt{setup\_porous\_fields} 把 rank 0 的
+\texttt{fld\_g} 按完整场预分配（契约写进 \texttt{read\_field\_dump} 的注释）；
+\texttt{mod\_uns\_gather.f90} 打包/汇总 $u^{n-1},u^{n-2},T^{n-1},T^{n-2},
+T_s^{n-1},T_s^{n-2}$ 并对 \texttt{ts\_order} 做 \texttt{MPI\_Allreduce(MAX)}
+（各 rank 同步推进，故 MAX 精确）；四个瞬态循环改用\emph{入口}阶数
+\texttt{ts\_order\_in} 判据（仅 \texttt{it==1 .and. ts\_order\_in<2} 才自举一阶），
+故 \texttt{ts\_order}=2 的 dump 第一步即二阶；旧 dump（历史全零）仍可用 ——
+历史在解新步\emph{之前}从恢复态平移一级，第一步的 Euler 只用到恢复态本身。
+& \texttt{src/unstructured/mod\_uns\_driver\_mpi.f90}（rank 0 全局场预分配）、
+\texttt{mod\_uns\_gather.f90}（历史打包/汇总 ＋ \texttt{ts\_order} 归约）、
+\texttt{mod\_uns\_simple.f90} / \texttt{mod\_uns\_simple\_mpi.f90}（四个瞬态循环的
+\texttt{ts\_order\_in} 门控）、\texttt{mod\_uns\_restart.f90}（分配契约注释）
+& \textbf{重启专项回归}（现场 \texttt{.dbg/retest/restart\_test/}）：
+\texttt{run\_roundtrip.sh}（A：203 步连续；B1：200 步；B2：从 B1 的 dump 再 3 步）
+不再段错误，dump 头 \texttt{ts\_order}=2 且历史真实 —— 重启第 1 步的上一级与
+连续对照\emph{逐位相同}（\texttt{compare\_dumps.py} 输出 $0.000$e$+00$）；
+\texttt{run\_chained.sh}（400 步连续 vs 2$\times$200 步链式）：末态场差
+$1.7$e$-3$（相对 $\sim$1e$-3$）、全场 \texttt{max}$|u|$ 差 $6$e$-5$，
+即重启边界的 $\sim$1\% 一步扰动\emph{不累积}、200 步内衰减一个量级。
+\textbf{物理算例}：Re$=200$ 圆柱 $6000+6000$ 步（$t=30$ 处链式重启，每段
+$4.5$ min、$<10$ min 上限）得 $St=0.1561$、平均 $C_D=1.285$、分离点
+$107.4^\circ/120.2^\circ$、回流长 $1.798D$，与连续 12000 步参考对到 4--5 位
+有效数字；\texttt{natconv} Rayleigh--B\'enard Ra$=10^3$ 复跑 697 外迭代、
+$Nu=0.99604$（与 2026-10-04 报告一致，零回归）。 \\
+
+2026-10-13 & -- &
 \textbf{非结构求解器新增``失败即停''非有限值（NaN/Inf）守卫 ＋ 瞬态控制错配拦截}：
 发散过去是\textbf{静默}的 —— 某个外迭代一旦产生 NaN/Inf，求解器会继续迭代（线性求解器对
 NaN 输入照样给出``收敛''残差），此后每行诊断都变成 NaN，\textbf{第一次}出错的迭代与出问题的

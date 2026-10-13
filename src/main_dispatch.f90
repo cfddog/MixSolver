@@ -583,7 +583,7 @@ contains
       use mod_uns_control, only: ctrl_t
       use mod_uns_bc, only: bc_t
       use mod_uns_fields, only: fields_t
-      use mod_uns_output, only: vtk_write
+      use mod_uns_output, only: vtk_write, ghia_compare, thermal_wall_report
       implicit none
       integer, intent(in) :: comm
       character(len=*), intent(in) :: casfile, ctlfile
@@ -594,7 +594,8 @@ contains
       type(ctrl_t)   :: ctrl
       type(bc_t)     :: bcs
       type(fields_t) :: fld
-      integer :: ier, ier2, j, k
+      integer :: ier, ier2, j, k, kk
+      real(dp) :: umax
       character(len=512) :: outstem, vtufile
       character(len=8)   :: outext
 
@@ -623,6 +624,25 @@ contains
       call MPI_Barrier( comm, ier2 )
 
       if ( rank == 0 ) then
+         ! ---- solution summary and thermal diagnostics ------------------------
+         ! The pre-phase-15 entry point (src/unstructured/main_uns.f90) printed
+         ! this block; it moved here when that file was deleted (commit
+         ! da255a0), and the natural-convection heat-balance / Nusselt report
+         ! (thermal_wall_report, otherwise unreferenced dead code) was lost with
+         ! it.  Restored so the full-mesh path again documents the quantities
+         ! the case READMEs quote.
+         umax = maxval( norm2( fld%u, dim=1 ) )
+         kk   = minloc( norm2( g%xc - 0.5_dp, dim=1 ), dim=1 )
+         write(*,'(a)') ''
+         write(*,'(a)') '--- Solution summary ---'
+         write(*,'(a,es12.5)') '  max |u|         : ', umax
+         write(*,'(a,3(es11.4,1x),a,es12.5)') '  cell nearest (0.5,0.5,0.5): ', &
+            g%xc(:,kk), ' u = ', norm2( fld%u(:,kk) )
+         write(*,'(a,3(es11.4,1x))') '                        u_vec = ', fld%u(:,kk)
+         write(*,'(a,es14.6)') '  max p           : ', maxval( fld%p )
+         write(*,'(a,es14.6)') '  min p           : ', minval( fld%p )
+         if ( ctrl%boussinesq ) call thermal_wall_report( m, g, ctrl, bcs, fld )
+
          ! result file name: <cas-basename>.vtu
          outstem = 'result'
          j = scan( casfile, '/', back=.true. )
@@ -637,6 +657,11 @@ contains
             return
          end if
          write(*,'(a,a)') '[mixnsolver/uns] wrote ', trim(vtufile)
+
+         ! ---- benchmark comparison on the printed centreline ------------------
+         ! Re = rho*U*L/mu with L = 1 (same convention as the MPI path); prints a
+         ! table only for the tabulated Reynolds numbers, otherwise a skip line.
+         call ghia_compare( m, g, fld, ctrl%rho / max( ctrl%mu, tiny(1.0_dp) ), ier )
       end if
    end subroutine run_uns
 

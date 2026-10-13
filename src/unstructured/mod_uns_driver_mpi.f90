@@ -276,6 +276,19 @@ contains
          ! read_field_dump is a collective (rank 0 reads + Bcast), so every rank
          ! takes part; fld_g is then allocated on ALL ranks and each rank seeds
          ! its local fld from it.
+         !
+         ! rank 0's fld_g stays the gather target for every later snapshot and
+         ! for the final result write (gather_fields_to_root + vtk_write), so it
+         ! must carry the FULL fields_t allocation that a cold start gets from
+         ! init_fields.  read_field_dump only allocates the arrays it reads back
+         ! (u/p/T + time history).  Without the pre-allocation below a restarted
+         ! run segfaulted at its first snapshot: gather_fields_to_root writes
+         ! fld_g%T_s and vtk_write evaluates fld_g%h_sf*fld_g%a_sf, both
+         ! unallocated in the partial restart allocation.
+         if ( myrank == 0 ) then
+            call init_fields( m_g, g_g, fld_g )
+            call setup_porous_fields( m_g, ctrl, fld_g )
+         end if
          if ( myrank == 0 ) write(*,'(a,a)') '[uns-mpi] restart from ', trim(ctrl%restart_file)
          call read_field_dump( trim(ctrl%restart_file), m_g%ncells, fld_g, &
                                src_dump, ier )

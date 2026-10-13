@@ -159,6 +159,12 @@ contains
    ! all ranks.  fld_g is allocated on every rank with global size ncells_g.
    ! src_file_out returns the source_mesh header field (for caller sanity
    ! check); it is broadcast to all ranks.
+   !
+   ! CONTRACT: fld_g is only allocated HERE if it is still unallocated, and then
+   ! only with the arrays this dump format v1 stores (u/p/T + time history).
+   ! Callers that later use fld_g as a gather target (gather_fields_to_root ->
+   ! vtk_write) must therefore pass a field that is already fully allocated with
+   ! init_fields + setup_porous_fields, which is what both drivers do.
    !----------------------------------------------------------------------------
    subroutine read_field_dump( fname, ncells_g, fld_g, src_file_out, ier, serial )
       character(len=*),   intent(in)    :: fname

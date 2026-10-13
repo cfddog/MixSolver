@@ -1,6 +1,55 @@
 # 工作日志 (worklog)
 
 
+## 2026-10-13 | 非结构分区（MPI）重启动修复：分段续算第一步即崩 ＋ 静默掉阶
+
+- 需求（用户）：解锁 Re=200 圆柱长算例 —— 单次调试 ≤10 min（本机资源硬规则），
+  因此必须能**分段续算**；但分段到第 2 段第一个快照就 SIGSEGV，且续算轨迹疑似掉阶。
+- **根因（两个独立缺陷）**：
+  ① **崩**：`read_field_dump` 只分配它真正读到的数组（u/p/T ＋ 时间历史），而
+     `mod_uns_driver_mpi.f90` 里 rank 0 的全局工作场 `fld_g` 还要被
+     `gather_fields_to_root` / `vtk_write` 当**汇总目标**（写 T_s/h_sf/a_sf 等），
+     未分配 ⇒ 第一个快照写 VTU 时段错误。
+  ② **静默掉阶**：`write_field_dump` 汇总时**没有**打包时间历史、`ts_order` 也没归约
+     ⇒ dump 里历史块全零、`ts_order=0`（实测 `max|u_old|=0`）；再加上瞬态驱动
+     `it==1` 处**无条件**把 `fld%ts_order` 置 1（本意是冷启动自举），重启后第一步
+     强制一阶 → BDF2 轨迹被拖成一阶（round-trip 实测 3 步差 1.6%）。
+- **实现**：
+  - `mod_uns_driver_mpi.f90`：读 dump **之前**先 `init_fields` ＋ `setup_porous_fields`
+    把 rank 0 的 `fld_g` 按完整场预分配（并把分配契约写进 `read_field_dump` 注释）。
+  - `mod_uns_gather.f90`：打包/汇总 `u_old, u_old_old, T_old, T_old_old, T_s_old,
+    T_s_old_old`（新 `sbuf_h`/`rbuf_h`），并对 `ts_order` 做 `MPI_Allreduce(MAX)`
+    （各 rank 同步推进，MAX 精确）。
+  - `mod_uns_simple.f90`（`piso_run`/`pimple_run`）＋ `mod_uns_simple_mpi.f90`
+    （`piso_run_mpi`/`pimple_run_mpi`）：四处循环入口取 `ts_order_in = fld%ts_order`，
+    门控改为 `it==1 .and. ts_order_in<2` ⇒ `ts_order=2` 的 dump 第一步即二阶；
+    旧 dump（`ts_order=0`）第一步一阶自举、之后自动回到 BDF2（历史在解新步**之前**
+    从恢复态平移一级，故文件里的零历史只被第一步忽略）。
+  - `mod_uns_restart.f90`：注释写明"调用方若把 `fld_g` 当汇总目标必须先完整分配"。
+- **验证（重启专项回归，现场 `.dbg/retest/restart_test/`）**：
+  - `run_roundtrip.sh`（A 203 步连续 / B1 200 步 / B2 从 B1 dump 再 3 步、
+    `n_out_every=1`）：不再段错误；dump 头 `ts_order=2`；重启第 1 步的
+    `u_old/u_old_old` 与连续对照**逐位相同**（`compare_dumps.py` 打印 0.000e+00）。
+  - `run_chained.sh`（400 步连续 vs 2×200 步链式）：末态场差 1.7e-3（相对 ~1e-3）、
+    全场 `max|u|` 差 6e-5 ⇒ 边界那一步 ~1% 的扰动**不累积**、200 步内衰减约一个量级。
+  - **物理算例**：cyl200 段 2（6000 步、4.5 min、np2）跑通：`St=0.1561`、
+    平均 `C_D=1.285`、分离点 107.37°/120.16°、回流长 1.798D，与连续 12000 步参考
+     对到 4–5 位有效数字（60 个快照拼成 t=1→60 单条序列）。
+  - `natconv` Rb Ra=1e3 复跑：697 外迭代、`Nu=0.99604`（= 2026-10-04 报告值），
+    确认 `main_dispatch.f90` 恢复的 `thermal_wall_report`（Nu ＋ 热平衡）输出回来了。
+  - 两个构建日志（`build_mpi2.log` / `build_serial.log`）零 error。
+- **文档**：手册「MPI 分区与重启动」补 dump 内容/续算精度/旧 dump 行为；
+  `docs/93_changelog.tex` 顶部新增本条；`cluster_cases/cylinder_Re200/README.md`
+  新增 §8「分段续算（链式重启）验证」＋ §7 重启条目改写；
+  `cluster_cases/cavity_Re1000/README.md` 重启条目同步。
+- **涉及文件**：`src/unstructured/{mod_uns_driver_mpi,mod_uns_gather,mod_uns_restart,
+  mod_uns_simple,mod_uns_simple_mpi}.f90`、`src/main_dispatch.f90`（恢复
+  `thermal_wall_report` 调用）、`docs/{程序使用手册,93_changelog}.tex`、
+  `cluster_cases/{cylinder_Re200,cavity_Re1000}/README.md`、`memory-bank/*`。
+- **遗留**：dump v1 不存内部面通量 `flux`（动量线性化用），故重启边界一步仍有
+  ~1% 差别（不累积）；若日后要"位级续算"，需把该内部量也纳入 dump。
+
+
 ## 2026-10-13 | 非结构「失败即停」非有限值（NaN/Inf）守卫 ＋ 瞬态控制错配拦截（ier=40/60）
 
 - 需求（用户）：发散时会一直打印 NaN 而不停止，看不出**第一次**出错在哪一步、也看不出是

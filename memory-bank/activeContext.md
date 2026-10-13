@@ -1,5 +1,33 @@
 # 当前上下文 (activeContext)
 
+> **2026-10-13 🆕 非结构分区（MPI）重启动修复：分段续算 SIGSEGV ＋ 静默掉阶（已实现并验证）**：
+> 需求（用户）：Re=200 圆柱长算例必须能**分段续算**（单次调试 ≤10 min 的资源硬规则）。
+> **两个独立缺陷**：① 第二段第一个快照 **SIGSEGV** —— `read_field_dump` 只分配它读到的
+> 数组（u/p/T＋历史），而 rank 0 的全局工作场 `fld_g` 还要被 `gather_fields_to_root` /
+> `vtk_write` 当汇总目标用（`T_s`/`h_sf`/`a_sf`）⇒ 读 dump **之前**用 `init_fields` ＋
+> `setup_porous_fields` 按完整场预分配（契约写进 `read_field_dump` 注释）。
+> ② **静默掉阶** —— `write_field_dump` 汇总时没打包时间历史、`ts_order` 没归约
+> （dump 里 `max|u_old|=0`、`ts_order=0`），且四个瞬态循环在 `it==1` **无条件**把
+> `ts_order` 置 1 ⇒ 重启后整条轨迹掉成一阶（实测 3 步差 1.6%）。修法：
+> `mod_uns_gather.f90` 打包/汇总 6 个历史数组 ＋ `MPI_Allreduce(MAX)` 归约 `ts_order`；
+> 四个循环入口取 `ts_order_in`，门控 `it==1 .and. ts_order_in<2` 才一阶自举 ⇒
+> `ts_order=2` 的 dump 第一步即二阶；旧 dump（历史全零）第一步 Euler 自举、之后自动
+> 回到 BDF2（历史在解新步**之前**从恢复态平移一级，零历史只被第一步忽略）。
+> **验证**：`run_roundtrip.sh` 不再崩、dump `ts_order=2`、重启第 1 步历史**逐位相同**；
+> `run_chained.sh`（400 连续 vs 2×200 链式）末态差 1.7e-3 / `max|u|` 差 6e-5（边界 ~1%
+> 一步扰动**不累积**）；**cyl200 段 2 6000 步 / 4.5 min 跑通**：`St=0.1561`、`C_D=1.285`、
+> 分离点 107.37°/120.16°、回流长 1.798D，与连续 12000 步参考对到 4–5 位有效数字；
+> `natconv` Ra=1e3 复跑 697 迭代、`Nu=0.99604`（`main_dispatch.f90` 恢复
+> `thermal_wall_report` 后 Nu ＋ 热平衡输出回来）。现场 `.dbg/retest/{restart_test,cyl200}/`。
+> **文档**：手册「MPI 分区与重启动」补 dump 内容/续算精度/旧 dump 行为；
+> `docs/93_changelog.tex` 顶部新条；`cluster_cases/cylinder_Re200/README.md` 新增
+> §8「分段续算（链式重启）验证」；`cluster_cases/cavity_Re1000/README.md` 同步。
+> **遗留/下一步候选**：① dump v1 不含内部面通量 `flux`（动量线性化），故重启边界一步
+> 有 ~1% 差别；要"位级续算"需把它也纳入 dump（或改存 HbyA/PPE 源）；② cyl200 后续
+> 段（t>60）与尾迹加密后的 St 收敛（当前 St=0.156 比文献 0.196 低 20%，网格分辨率所致）。
+
+
+
 > **2026-10-13 🆕 非结构「失败即停」非有限值（NaN/Inf）守卫 ＋ 瞬态控制错配拦截（已实现并验证）**：
 > 需求（用户）：「发散时会一直打印 NaN 而不停止，看不出第一次出错在哪一步、哪个单元」。
 > **背景查证**：稳态圆柱（3928 单元）实测 it=500 `du_max`=2.8e71、it=550 全场 NaN 而

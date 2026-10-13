@@ -56,6 +56,9 @@ contains
       integer, allocatable :: recvcounts(:), displs(:)
       real(dp), allocatable :: sbuf_u(:), sbuf_p(:), sbuf_T(:), sbuf_Ts(:)
       real(dp), allocatable :: rbuf_u(:), rbuf_p(:), rbuf_T(:), rbuf_Ts(:)
+      ! time history pack (10 values per owned cell: u_old 3 + u_old_old 3 +
+      ! T_old + T_old_old + T_s_old + T_s_old_old)
+      real(dp), allocatable :: sbuf_h(:), rbuf_h(:)
 
       ier = 0
 
@@ -123,8 +126,56 @@ contains
          end do
       end if
 
+      ! ---- time history: gather the previous levels for restart dumps --------
+      ! write_field_dump stores u_old/u_old_old/T_old/T_old_old/T_s_old/
+      ! T_s_old_old + ts_order, so a chained restart can resume BDF2 with the
+      ! true history.  Those arrays must therefore be gathered as well: before
+      ! 2026-10-13 they were not, so every dump carried the init state's
+      ! ts_order = 0 and a bogus history, i.e. a restarted run silently dropped
+      ! to 1st order on its first step.  The VTU writer ignores them.
+      allocate( sbuf_h(10*nown) )
+      do k = 1, nown
+         sbuf_h(10*k-9:10*k-7) = fld%u_old(:, k)
+         sbuf_h(10*k-6:10*k-4) = fld%u_old_old(:, k)
+         sbuf_h(10*k-3)        = fld%T_old(k)
+         sbuf_h(10*k-2)        = fld%T_old_old(k)
+         sbuf_h(10*k-1)        = fld%T_s_old(k)
+         sbuf_h(10*k)          = fld%T_s_old_old(k)
+      end do
+      if ( myrank == 0 ) then
+         allocate( rbuf_h(10*ntot) )
+      else
+         allocate( rbuf_h(0) )
+      end if
+      call MPI_Gatherv( sbuf_h, 10*nown, MPI_DOUBLE_PRECISION, &
+                        rbuf_h, 10*recvcounts, 10*displs, MPI_DOUBLE_PRECISION, &
+                        0, mpi_comm, ierr )
+      call mpi_check( ierr, 'gather time history' )
+      if ( myrank == 0 ) then
+         do r = 0, nprocs-1
+            k = 10*displs(r)         ! 0-based offset into rbuf
+            do c = 1, size(part)
+               if ( part(c) == r ) then
+                  k = k + 10
+                  fld_g%u_old(:, c)     = rbuf_h(k-9:k-7)
+                  fld_g%u_old_old(:, c) = rbuf_h(k-6:k-4)
+                  fld_g%T_old(c)        = rbuf_h(k-3)
+                  fld_g%T_old_old(c)    = rbuf_h(k-2)
+                  fld_g%T_s_old(c)      = rbuf_h(k-1)
+                  fld_g%T_s_old_old(c)  = rbuf_h(k)
+               end if
+            end do
+         end do
+      end if
+      ! ts_order advances in lockstep on every rank -> MAX is exact
+      k = 0
+      if ( myrank == 0 ) k = fld%ts_order
+      call MPI_Allreduce( MPI_IN_PLACE, k, 1, MPI_INTEGER, MPI_MAX, mpi_comm, ierr )
+      call mpi_check( ierr, 'reduce ts_order' )
+      if ( myrank == 0 ) fld_g%ts_order = k
+
       deallocate( sbuf_u, sbuf_p, sbuf_T, sbuf_Ts, rbuf_u, rbuf_p, rbuf_T, &
-                  rbuf_Ts, recvcounts, displs )
+                  rbuf_Ts, sbuf_h, rbuf_h, recvcounts, displs )
    end subroutine gather_fields_to_root
 
    !----------------------------------------------------------------------------

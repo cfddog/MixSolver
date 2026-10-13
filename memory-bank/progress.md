@@ -1,11 +1,37 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-13（**非结构求解器新增「失败即停」非有限值守卫：
-> 第一个 NaN/Inf 处停在 `ier=60`（退出码 60），串行与 MPI 均给字段/单元/坐标/迭代号，
-> 分区还给 `.cas` 全局单元号；顺带把「瞬态控制落到串行稳态路径」由静默按稳态跑改为
-> 启动即报错 `ier=40`**）
+> 最后更新：2026-10-13（**非结构分区（MPI）重启动修复：分段续算第一段末尾/第二段首个
+> 快照的 SIGSEGV 修好（rank 0 全局场未预分配）；dump 现在带 BDF2 时间历史 ＋ `ts_order`，
+> 续算第一步保持二阶（此前静默掉成一阶，3 步差 1.6%）；Re=200 圆柱 6000+6000 步链式
+> 续算与连续 12000 步对到 4–5 位有效数字，natconv Ra=1e3 复跑零回归**）
 
 ## 已完成
+
+- [x] **非结构分区（MPI）重启动修复 ＋ 链式续算验证（2026-10-13）**：
+  - **两个缺陷**：① 分段续算第二段第一个快照 **SIGSEGV** —— `read_field_dump` 只分配
+    它读到的数组，而 rank 0 的 `fld_g` 还要当 `gather_fields_to_root` / `vtk_write` 的
+    汇总目标（`T_s`/`h_sf`/`a_sf`）⇒ 读 dump **前**先 `init_fields` ＋
+    `setup_porous_fields` 完整预分配（分配契约写进 `read_field_dump` 注释）。
+    ② **静默掉阶** —— dump 汇总时没打包时间历史、`ts_order` 没归约（dump 里历史全零、
+    `ts_order=0`），且瞬态驱动 `it==1` 无条件置一阶 ⇒ BDF2 轨迹被拖成一阶（3 步差 1.6%）。
+  - **修法**：`mod_uns_gather.f90` 打包/汇总 6 个历史数组 ＋ `MPI_Allreduce(MAX)` 归约
+    `ts_order`；四个瞬态循环（`piso_run`/`pimple_run` 及分区版）改用**入口**阶数
+    `ts_order_in` 门控（`it==1 .and. ts_order_in<2` 才一阶自举）⇒ `ts_order=2` 的 dump
+    第一步即二阶；旧 dump 第一步一阶自举、之后自动回到 BDF2。
+  - **验证**：`run_roundtrip.sh`（A 203 / B1 200 / B2 重启+3）不再崩、dump `ts_order=2`、
+    重启第 1 步历史与连续对照**逐位相同**；`run_chained.sh`（400 连续 vs 2×200 链式）
+    末态差 1.7e-3、`max|u|` 差 6e-5（**边界 ~1% 一步扰动不累积**）；
+    **cyl200 段 2：6000 步 / 4.5 min 跑通** —— `St=0.1561`、`C_D=1.285`、分离点
+    107.37°/120.16°、回流长 1.798D，与连续 12000 步参考对到 4–5 位有效数字；
+    `natconv` Ra=1e3 复跑 697 迭代、`Nu=0.99604` 零回归（`thermal_wall_report` 的
+    Nu ＋ 热平衡输出已随 `main_dispatch.f90` 修复恢复）。两棵构建日志零 error。
+  - 涉及文件：`src/unstructured/{mod_uns_driver_mpi,mod_uns_gather,mod_uns_restart,
+    mod_uns_simple,mod_uns_simple_mpi}.f90`、`src/main_dispatch.f90`、
+    `docs/{程序使用手册,93_changelog}.tex`、
+    `cluster_cases/{cylinder_Re200,cavity_Re1000}/README.md`、`memory-bank/*`。
+  - **遗留**：dump v1 不含内部面通量 `flux`（动量线性化用），故重启边界一步有 ~1%
+    差别（不累积）；要"位级续算"需把该内部量纳入 dump。
+
 
 - [x] **非结构「失败即停」非有限值（NaN/Inf）守卫 ＋ 瞬态控制错配拦截（2026-10-13）**：
   - 需求：发散时求解器一直打印 NaN 不停止，看不出首犯迭代与坏单元。

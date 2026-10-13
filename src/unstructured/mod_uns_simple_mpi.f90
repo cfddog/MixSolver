@@ -318,6 +318,7 @@ contains
       real(dp) :: resl, ressum, t_now, umax, cfl_max, dt_dx, gtmp
       integer  :: it, comp, itl, ierr, itl_max, icorr, i, k, c0
       integer  :: n_steps, n_out, ios
+      integer  :: ts_order_in   ! fld%ts_order on entry (2 = restored BDF2 dump)
       real(dp) :: umax_local
       character(len=8)   :: step_ext
       character(len=512) :: vtufile
@@ -597,6 +598,7 @@ contains
       real(dp) :: resl, ressum, t_now, umax, cfl_max, dt_dx, gtmp
       integer  :: it, comp, itl, ierr, itl_max, icorr, iouter, i, k, c0
       integer  :: n_steps, n_out, n_outer, ios
+      integer  :: ts_order_in   ! fld%ts_order on entry (2 = restored BDF2 dump)
       real(dp) :: umax_local
       character(len=8)   :: step_ext
       character(len=512) :: vtufile
@@ -654,6 +656,10 @@ contains
       fld%apc = 1.0_dp
       call compute_gradients( lm%m, lm%g, bcs, fld )
       call flux_rhiechow( lm%m, lm%g, ctrl, bcs, fld )
+      ! Time-scheme order on ENTRY (see the note in piso_run_mpi): a restored
+      ! BDF2 dump carries ts_order=2 and the two previous levels, so the first
+      ! step of a restart must stay 2nd order.
+      ts_order_in = fld%ts_order
 
       t_now = 0.0_dp
 
@@ -666,7 +672,9 @@ contains
          fld%T_old     = fld%T
          fld%T_s_old_old = fld%T_s_old
          fld%T_s_old     = fld%T_s
-         if ( it == 1 .or. ctrl%time_scheme == 1 ) then
+         if ( ctrl%time_scheme == 1 ) then
+            fld%ts_order = 1
+         else if ( it == 1 .and. ts_order_in < 2 ) then
             fld%ts_order = 1
          else
             fld%ts_order = 2

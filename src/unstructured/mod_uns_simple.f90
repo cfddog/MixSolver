@@ -317,6 +317,7 @@ contains
       real(dp) :: resl, ressum, t_now, umax, cfl_max, dt_dx
       integer  :: it, comp, itl, ierr, itl_max, icorr, i, k, c0
       integer  :: n_steps, n_out, ios
+      integer  :: ts_order_in   ! fld%ts_order on entry (2 = restored BDF2 dump)
       character(len=512) :: vtufile
       character(len=8)   :: step_ext
       integer, parameter :: PRINT_EVERY = 1
@@ -377,6 +378,15 @@ contains
       call compute_gradients( m, g, bcs, fld )
       call flux_rhiechow( m, g, ctrl, bcs, fld )
 
+      ! Time-scheme order on ENTRY: 0 for a cold start (no usable history), 2
+      ! when the caller restored a BDF2 restart dump (uns_solver_init reads the
+      ! dumped ts_order via read_field_dump).  A restarted run must stay 2nd
+      ! order on its FIRST step: the dumped u_old/u_old_old are the true states
+      ! at t-dt / t-2dt.  Before 2026-10-13 the gate below forced ts_order=1 on
+      ! it==1 unconditionally, so every restart silently took one 1st-order step
+      ! and the dumped ts_order was ignored.
+      ts_order_in = fld%ts_order
+
       t_now = 0.0_dp
 
       ! ---- time stepping ------------------------------------------------------
@@ -384,17 +394,21 @@ contains
 
          ! 1. advance history + select time scheme ------------------------------
          ! BDF2 needs u^{n} (u_old) and u^{n-1} (u_old_old): shift the history
-         ! back BEFORE overwriting u_old with the current solution. Step 1 has
-         ! no u^{n-1}, so it bootstraps with implicit Euler (ts_order=1); from
-         ! step 2 on (when time_scheme=2) the full BDF2 formula is used.
+         ! back BEFORE overwriting u_old with the current solution. A cold step 1
+         ! has no u^{n-1}, so it bootstraps with implicit Euler (ts_order=1); from
+         ! step 2 on (when time_scheme=2) the full BDF2 formula is used. A
+         ! restored dump (ts_order_in=2) already carries the two previous levels,
+         ! so BDF2 is used right away.
          fld%u_old_old = fld%u_old
          fld%u_old     = fld%u
          fld%T_old_old = fld%T_old
          fld%T_old     = fld%T
          fld%T_s_old_old = fld%T_s_old
          fld%T_s_old     = fld%T_s
-         if ( it == 1 .or. ctrl%time_scheme == 1 ) then
+         if ( ctrl%time_scheme == 1 ) then
             fld%ts_order = 1   ! implicit Euler (bootstrap or user choice)
+         else if ( it == 1 .and. ts_order_in < 2 ) then
+            fld%ts_order = 1   ! cold start: bootstrap with implicit Euler
          else
             fld%ts_order = 2   ! BDF2 (2nd order)
          end if
@@ -568,6 +582,7 @@ contains
       real(dp) :: resl, ressum, t_now, umax, cfl_max, dt_dx
       integer  :: it, comp, itl, ierr, itl_max, icorr, iouter, i, k, c0
       integer  :: n_steps, n_out, n_outer, ios
+      integer  :: ts_order_in   ! fld%ts_order on entry (2 = restored BDF2 dump)
       character(len=512) :: vtufile
       character(len=8)   :: step_ext
       integer, parameter :: PRINT_EVERY = 1
@@ -624,6 +639,9 @@ contains
       call compute_gradients( m, g, bcs, fld )
       call flux_rhiechow( m, g, ctrl, bcs, fld )
 
+      ! Time-scheme order on ENTRY (same reasoning as in piso_run above).
+      ts_order_in = fld%ts_order
+
       t_now = 0.0_dp
 
       do it = 1, n_steps
@@ -637,7 +655,9 @@ contains
          fld%T_old     = fld%T
          fld%T_s_old_old = fld%T_s_old
          fld%T_s_old     = fld%T_s
-         if ( it == 1 .or. ctrl%time_scheme == 1 ) then
+         if ( ctrl%time_scheme == 1 ) then
+            fld%ts_order = 1
+         else if ( it == 1 .and. ts_order_in < 2 ) then
             fld%ts_order = 1
          else
             fld%ts_order = 2
