@@ -1,5 +1,18 @@
 # 当前上下文 (activeContext)
 
+> **2026-10-13 🆕 规则节点：新增本机资源保护规则（Cline 规则，非代码改动）**
+> 用户要求（原话）：「为保护笔记本电脑，一次只能运行不超过 1 个调试算例，运行时间不超过 10 分钟」。
+> 落点：① 新建仓库级 **`.clinerules`**（Cline 入口，此前本仓库**没有** Cline 规则文件，
+> 规则只在 `.trae/rules/project_rules.md`，Cline 读不到），内容 = 指向权威规则文件 +
+> 本机资源保护硬规则；② 在权威文件 `.trae/rules/project_rules.md` 新增同名小节
+> 「本机资源保护（2026-10-13 新增，硬规则）」（与 `.clinerules` 同步维护）；
+> ③ `.gitignore` 增加 `/.dbg/`（调试运行现场，`log*.txt`/`*.part.map`/`.cas` 拷贝
+> 都是运行产物，别误入库）；④ worklog/progress 记账。
+> 规则要点：同一时刻**只跑 1 个**调试算例；单次墙钟 **≤ 10 min**（`timeout 600` 或
+> 后台 + 轮询 + 到点 kill）；超时预期就先缩规模（减网格/`outer_max`/`n_couple`）或分段续跑。
+> 无源码改动、无需编译与回归。
+
+
 > **2026-10-11 🆕 阶段 19：mix.control 声明核数 + 与发作业核数强制校验（已实现并验证）**：
 > 新增两个（可选、成对）键 **`n_struct_ranks` / `n_uns_ranks`**：二者之和 = 总核数，
 > **必须**等于 `MPI_Comm_size(MPI_COMM_WORLD)`，否则 rank 0 打印诊断（声明值 / 和 / 实际核数 /

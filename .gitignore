@@ -50,6 +50,11 @@ grid_BC/**/output_para.out
 cases/**/flux_debug.txt
 checkpoint_*.tar.gz
 
+# 调试运行现场（.dbg/：算子/并行调试用的算例拷贝与日志）
+# 与「本机资源保护」规则配套（见 .trae/rules/project_rules.md）：
+# 调试算例的 log*.txt / *.part.map / .cas/.control 拷贝同属运行产物，一律不入库。
+/.dbg/
+
 # 说明（2026-10-06 瘦身）：上述 212 个文件 / 761.8 MB 曾被跟踪，
 # 现已用 `git filter-branch` 从**全部历史**移除并加此规则挡住
 # （跟踪文件 536 → 324，另 +1 = 本节点新增的 1 个诊断脚本）。

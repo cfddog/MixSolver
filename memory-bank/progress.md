@@ -6,6 +6,17 @@
 
 ## 已完成
 
+- [x] **规则节点：本机资源保护规则（2026-10-13，无代码改动）**：新增仓库级
+  `.clinerules`（Cline 入口，指向权威规则文件 `.trae/rules/project_rules.md` 并内联
+  本条硬规则）；`.trae/rules/project_rules.md` 新增「本机资源保护」小节；
+  `.gitignore` 增加 `/.dbg/`。
+  **规则内容**：同一时刻只运行 1 个调试算例；单次墙钟 ≤ 10 min（`timeout 600`
+  或后台 + 轮询日志 + 到点 kill）；预计超时就先缩规模（网格/`outer_max`/`n_couple`）
+  或分段续跑。目的：保护笔记本电脑（避免长时间满载高温/卡顿/意外关机）。
+  涉及文件：`.clinerules`（新建）、`.trae/rules/project_rules.md`、`.gitignore`、
+  `memory-bank/{activeContext,progress,worklog}.md`。
+
+
 - [x] **阶段 19：mix.control 声明核数 + 与发作业核数强制校验（2026-10-11）**：
   - 新键 `n_struct_ranks` / `n_uns_ranks`（可选、**成对**），和 = 总核数，必须等于
     `MPI_Comm_size(MPI_COMM_WORLD)`；校验在 `MPI_Comm_split` 之前、各 rank 读同一文件完成。

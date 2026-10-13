@@ -1,6 +1,30 @@
 # 工作日志 (worklog)
 
 
+## 2026-10-13 | 规则节点：新增 Cline 规则「本机资源保护」（调试算例 ≤ 1 个并发 / ≤ 10 min）
+
+- 需求（用户）：「为保护笔记本电脑，一次只能运行不超过 1 个调试算例，运行时间不超过 10 分钟」。
+- 背景查证：本仓库此前**没有** `.clinerules`（Cline 读不到任何项目规则；规则只存在于
+  `.trae/rules/project_rules.md`，是 Trae 的位置），同目录的 UCNS3D / OpenCFD-EC-1.16a
+  都有 `.clinerules`。
+- 改动（纯规则/记账，无源码、无需编译）：
+  - **新建 `.clinerules`**（仓库根，Cline 入口）：说明项目规则的**权威版本**是
+    `.trae/rules/project_rules.md`（每任务开始先读它 + memory-bank 五件），并内联本次新增的
+    「本机资源保护」硬规则。
+  - **`.trae/rules/project_rules.md`**：在原「验证/诊断硬规则」与「版本控制约定」之间新增
+    小节「本机资源保护（2026-10-13 新增，硬规则）」——同一时刻只跑 1 个调试算例；
+    单次墙钟 ≤ 10 min（`timeout 600` 或后台 + 轮询 + 到点 kill）；预计超时先缩规模
+    （网格/`outer_max`/`n_couple`）或分段续跑；调试现场放 `.dbg/`。两文件同步维护。
+  - **`.gitignore`**：新增 `/.dbg/`（调试现场含 `.cas`/`.control` 拷贝、`log*.txt`、
+    `*.part.map`，均运行产物）——`git status` 里 `.dbg/` 原为未跟踪，存在误 `git add -A`
+    入库的风险。
+- 验证：`git check-ignore -v .dbg/<file>` 命中 `/.dbg/`；`.clinerules` 与
+  `project_rules.md` 两侧条文一致。
+- 未改动任何源码；未跑算例（本次无验证需求）。
+
+---
+
+
 ## 2026-10-11 | 阶段 19：mix.control 声明核数（n_struct_ranks / n_uns_ranks）+ 与发作业核数强制校验
 
 - 需求（用户）：「可以将所有的作业都在 mix.control 中进行指定核数，结构多少核、非结构多少，
