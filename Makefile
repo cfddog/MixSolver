@@ -111,6 +111,13 @@ MAIN_UNITS_TEST_F := $(wildcard src/coupling/test_units_exchange.f90)
 MAIN_COUPL_TEST_F := $(wildcard src/coupling/test_coupling_exchange.f90)
 # phase-14 interface-closure unit test (common only: mod_iface_law is pure)
 MAIN_IFLAW_TEST_F := $(wildcard src/coupling/test_iface_law.f90)
+# fail-fast non-finite guard unit test (unstructured serial tree;
+# mod_uns_simple::nan_scan / nan_report / nan_guard, ier = NAN_IER = 60)
+MAIN_UNG_F := $(wildcard src/unstructured/test_nan_guard.f90)
+# partitioned counterpart: mod_uns_simple_mpi::nan_guard_mpi, needs >= 2 ranks
+# (the file name also matches the '%_mpi.f90' serial-tree filter, but it is
+#  listed explicitly so BOTH trees exclude it from their library set)
+MAIN_UNGM_F := $(wildcard src/unstructured/test_nan_guard_mpi.f90)
 # self-dispatching zero-argument executable (bin/mixnsolver[_mpi])
 MAIN_DISPATCH_F := $(wildcard src/main_dispatch.f90)
 
@@ -143,9 +150,9 @@ UNS_LIB_S := $(filter-out \
   src/unstructured/mod_uns_partition.f90 \
   src/unstructured/mod_uns_mpi_core.f90,$(UNS_LIB_S))
 
-LIB_SRCS_S := $(call sort_boot,$(filter-out $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F) $(MAIN_DISPATCH_F), \
+LIB_SRCS_S := $(call sort_boot,$(filter-out $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F) $(MAIN_UNG_F) $(MAIN_UNGM_F) $(MAIN_DISPATCH_F), \
                          $(COMMON_F) $(STRUCT_F) $(UNS_LIB_S) $(COUPL_F)))
-LIB_SRCS_M := $(call sort_boot,$(filter-out $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F) $(MAIN_DISPATCH_F), \
+LIB_SRCS_M := $(call sort_boot,$(filter-out $(MAIN_MATCH_F) $(MAIN_UNITS_TEST_F) $(MAIN_COUPL_TEST_F) $(MAIN_IFLAW_TEST_F) $(MAIN_UNG_F) $(MAIN_UNGM_F) $(MAIN_DISPATCH_F), \
                           $(COMMON_F) $(STRUCT_F) $(UNS_F) $(COUPL_F)))
 
 LIB_OBJ_S := $(patsubst src/%.f90,$(S)/%.o,$(LIB_SRCS_S))
@@ -178,6 +185,19 @@ COUPL_TEST_OBJ_M := $(filter-out $(M)/coupling/mod_mix_driver.o,$(filter $(M)/co
 # phase-14 interface-closure unit test: common only (the closures are pure)
 IFLAW_TEST_OBJ_S := $(filter $(S)/common/%.o,$(LIB_OBJ_S)) \
                     $(patsubst src/%.f90,$(S)/%.o,$(MAIN_IFLAW_TEST_F))
+
+# fail-fast non-finite guard unit test: the guard lives in mod_uns_simple, so
+# it links the whole unstructured serial tree (common + unstructured; the
+# grid/mesh/field modules it reads a .cas through).  serial tree, run -np 1:
+# bin/uns_nan_guard_test [mesh.cas]
+UNG_TEST_OBJ_S := $(UNS_OBJ_S) \
+                  $(patsubst src/%.f90,$(S)/%.o,$(MAIN_UNG_F))
+
+# partitioned counterpart: same seed (the MPI tree's unstructured modules add
+# mod_uns_simple_mpi + local_mesh/halo/mpi_core).  Run with mpirun -np 2; the
+# expected exit code is 60 (see the test header).
+UNGM_TEST_OBJ_M := $(UNS_OBJ_M) \
+                   $(patsubst src/%.f90,$(M)/%.o,$(MAIN_UNGM_F))
 
 # -----------------------------------------------------------------------------
 # Build directories
@@ -264,11 +284,23 @@ bin/iface_law_test: $(IFLAW_TEST_OBJ_S) | bin
 	  exit 1; }
 	$(MPIFC) $(FFLAGS_S) -o $@ $(IFLAW_TEST_OBJ_S) $(LDLIBS_S)
 
+bin/uns_nan_guard_test: $(UNG_TEST_OBJ_S) | bin
+	@test -f src/unstructured/test_nan_guard.f90 || { \
+	  echo "ERROR: src/unstructured/test_nan_guard.f90 is missing."; \
+	  exit 1; }
+	$(MPIFC) $(FFLAGS_S) -o $@ $(UNG_TEST_OBJ_S) $(LDLIBS_S)
+
+bin/uns_nan_guard_mpi_test: $(UNGM_TEST_OBJ_M) | bin
+	@test -f src/unstructured/test_nan_guard_mpi.f90 || { \
+	  echo "ERROR: src/unstructured/test_nan_guard_mpi.f90 is missing."; \
+	  exit 1; }
+	$(MPIFC) $(FFLAGS_M) -o $@ $(UNGM_TEST_OBJ_M) $(LDLIBS_M)
+
 # -----------------------------------------------------------------------------
 # Phony targets
 # -----------------------------------------------------------------------------
 .PHONY: all mpi common common_mpi clean help match_test units_test coupling_test \
-        iface_law_test mixnsolver mixnsolver_mpi
+        iface_law_test uns_nan_guard_test uns_nan_guard_mpi_test mixnsolver mixnsolver_mpi
 
 all:        bin/mixnsolver
 mpi:        bin/mixnsolver_mpi
@@ -281,6 +313,8 @@ match_test: bin/match_test
 units_test: bin/units_test
 coupling_test: bin/coupling_test
 iface_law_test: bin/iface_law_test
+uns_nan_guard_test: bin/uns_nan_guard_test
+uns_nan_guard_mpi_test: bin/uns_nan_guard_mpi_test
 
 clean:
 	rm -rf build bin
@@ -293,6 +327,8 @@ help:
 	@echo "  make common[_mpi]      compile common modules only"
 	@echo "  make units_test / coupling_test / match_test / iface_law_test"
 	@echo "                        dev unit/integration test binaries"
+	@echo "  make uns_nan_guard_test   non-finite guard unit test (bin/uns_nan_guard_test)"
+	@echo "  make uns_nan_guard_mpi_test  partitioned guard test (mpirun -np 2, exits 60)"
 	@echo "  make clean             remove build/ and bin/"
 	@echo "Options: DEBUG=1 (debug flags)"
 	@echo "Parallel: use 'make -j'; for the very first build after adding many new"

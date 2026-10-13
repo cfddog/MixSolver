@@ -279,7 +279,11 @@ contains
       type(fields_t), intent(in) :: fld
       integer,        intent(in) :: kk
 
-      if ( .not. allocated(m%czone) ) then
+      ! m%czone is filled by read_cas, but m%cztype only by
+      ! resolve_cell_zones (mod_uns_control); guard both, otherwise a call
+      ! before resolve_cell_zones reads unallocated memory (found 2026-10-13
+      ! through test_nan_guard: nan_report -> is_solid_cell segfaulted).
+      if ( .not. allocated(m%czone) .or. .not. allocated(m%cztype) ) then
          is_solid_cell = .false.
          return
       end if

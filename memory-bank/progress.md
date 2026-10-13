@@ -1,10 +1,34 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-11（**新增 `mix.control` 核数声明键 `n_struct_ranks` / `n_uns_ranks`：
-> 和必须等于发作业核数，不符则打印诊断并终止（退出码 6/7/8）；顺带拦截既有缺陷
-> `mode=coupled` 用 `-np>2` 挂死，耦合固定 1+1=2 核**）
+> 最后更新：2026-10-13（**非结构求解器新增「失败即停」非有限值守卫：
+> 第一个 NaN/Inf 处停在 `ier=60`（退出码 60），串行与 MPI 均给字段/单元/坐标/迭代号，
+> 分区还给 `.cas` 全局单元号；顺带把「瞬态控制落到串行稳态路径」由静默按稳态跑改为
+> 启动即报错 `ier=40`**）
 
 ## 已完成
+
+- [x] **非结构「失败即停」非有限值（NaN/Inf）守卫 ＋ 瞬态控制错配拦截（2026-10-13）**：
+  - 需求：发散时求解器一直打印 NaN 不停止，看不出首犯迭代与坏单元。
+  - **实现**：`mod_uns_simple.f90` 新增 `nan_scan`/`nan_report`/`nan_guard` ＋ 常量
+    `NAN_IER = 60`；纯 IEEE 判据（`ieee_is_finite`，NaN/Inf 分开标注），
+    扫描 `u_x,u_y,u_z,p,T`(+`T_s`)，**单元号优先、场顺序固定** ⇒ 首犯者确定；
+    三驱动（SIMPLE/PISO/PIMPLE）每次场更新后调用。`mod_uns_simple_mpi.f90` 新增
+    `nan_guard_mpi`（只扫自有单元，`MPI_MIN` 定位最小 rank 只让它打印，`cell_l2g`
+    翻成 `.cas` 全局单元号）。诊断前对 `czone/cztype/perm_dir/inertial` 做分配保护
+    （`is_solid_cell` 同步双检查）；报告/中止前 `flush(6)`（重定向时 stdout 块缓冲，
+    `MPI_Abort` 不刷 Fortran unit）。`mod_uns_driver.f90`：稳态整体网格路径收到
+    `transient=true`/`pimple=true` 启动即报错 `ier=40` 并打印修法。
+  - **测试/构建**：新增 `test_nan_guard.f90`（6 组）与 `test_nan_guard_mpi.f90`（3 组），
+    Makefile 新增 `bin/uns_nan_guard_test` / `bin/uns_nan_guard_mpi_test` 两个目标
+    （两个测试主程序从两个库集合中显式排除）。
+  - **验证**：单测串行 6 组 0 失败（退出码 0）／np2 3 组 0 失败（退出码 60 = 通过）；
+    端到端发散算例串行 it=434 停、np2 it=464 停（均打印 field/cell/centre/stage），
+    退出码 60；`porous_plug` Darcy 串行 60 步收敛、np2 分区、`pimple_smoke` 瞬态短跑
+    **均零误报**（退出码 0）；瞬态控制走串行稳态路径 → 退出码 40；`make all mpi -j4`
+    零告警。
+  - 涉及文件：`src/unstructured/{mod_uns_simple,mod_uns_simple_mpi,mod_uns_fields,mod_uns_driver,mod_uns_driver_mpi}.f90`、
+    `src/unstructured/{test_nan_guard,test_nan_guard_mpi}.f90`（新）、`src/main_dispatch.f90`、
+    `Makefile`、`docs/{程序使用手册,93_changelog}.tex`、`memory-bank/*`。
 
 - [x] **规则节点：本机资源保护规则（2026-10-13，无代码改动）**：新增仓库级
   `.clinerules`（Cline 入口，指向权威规则文件 `.trae/rules/project_rules.md` 并内联

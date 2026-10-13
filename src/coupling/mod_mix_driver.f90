@@ -483,6 +483,7 @@ contains
       end if
       if ( ier /= 0 ) then
          write(*,'(a,i0,a,i0)') '[uns rank ', rank, '] init FAILED ier=', ier
+         flush(6)
          call MPI_Abort( MPI_COMM_WORLD, ier, ierr )
          return
       end if
@@ -1030,6 +1031,7 @@ contains
          call uns_solver_step( m, c, g, ctrl, bcs, fld, n_uns_cur, ier )
          if ( ier /= 0 ) then
             write(*,'(a,i0,a,i0)') '[uns rank ', rank, '] step FAILED ier=', ier
+            flush(6)
             call MPI_Abort( MPI_COMM_WORLD, ier, ierr )
             return
          end if

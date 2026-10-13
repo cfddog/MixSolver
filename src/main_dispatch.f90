@@ -601,6 +601,10 @@ contains
       call uns_solver_init( casfile, ctlfile, m, c, g, ctrl, bcs, fld, ier )
       if ( ier /= 0 ) then
          write(*,'(a,i0)') '[mixnsolver/uns] FATAL: init failed ier=', ier
+         if ( ier == 40 ) write(*,'(a)') '  (transient controls on the ' // &
+            'steady-only full-mesh path -- see the report above: use ' // &
+            'bin/mixnsolver_mpi with uns_parallel = always)'
+         flush(6)
          call MPI_Abort( comm, ier, ier2 )
          return
       end if
@@ -608,6 +612,10 @@ contains
       call uns_solver_step( m, c, g, ctrl, bcs, fld, ctrl%outer_max, ier )
       if ( ier /= 0 ) then
          write(*,'(a,i0)') '[mixnsolver/uns] FATAL: solver failed ier=', ier
+         if ( ier == 60 ) write(*,'(a)') '  (non-finite solution value -- ' // &
+            'see the nan-guard report above; the fields printed above are the ' // &
+            'last finite state)'
+         flush(6)
          call MPI_Abort( comm, ier, ier2 )
          return
       end if

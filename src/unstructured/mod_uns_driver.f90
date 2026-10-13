@@ -9,6 +9,12 @@
 !   uns_solver_step(m, c, g, ctrl, bcs, fld, nsteps, ier)   ! SIMPLE N steps
 !   uns_solver_extract_iface(m, g, bcs, fld, faces, rho, u, T, p, ier)
 !
+! Steady SIMPLE only: a control file with `transient = true` or
+! `pimple = true` aborts in uns_solver_init with ier = 40, because PISO /
+! PIMPLE are implemented only in the partitioned MPI driver
+! (mod_uns_driver_mpi).  Before 2026-10-13 such a mix silently ran the steady
+! path and diverged to NaN (cluster_cases/cavity_Re1000, cylinder_Re200).
+!
 ! The standalone main_uns.f90 keeps working unchanged (it is a thin wrapper
 ! around these routines plus the post-run reporting / output).
 !===============================================================================
@@ -92,6 +98,37 @@ contains
 
       call read_control( trim(ctlfile), ctrl, ier )
       if ( ier /= 0 ) return
+
+      ! ---- fail-fast: transient controls need the partitioned MPI driver -----
+      ! This routine (and uns_solver_step below) drives steady SIMPLE
+      ! (mod_uns_simple::simple_run) ONLY.  PISO / PIMPLE exist exclusively in
+      ! the METIS-partitioned MPI driver (mod_uns_driver_mpi ->
+      ! mod_uns_simple_mpi::piso_run_mpi / pimple_run_mpi), which is selected by
+      ! `uns_parallel = always` (or -np > 1) in bin/mixnsolver_mpi.  Before
+      ! 2026-10-13 a transient control file that reached this path silently ran
+      ! STEADY SIMPLE -- cluster_cases/{cavity_Re1000,cylinder_Re200} (dt,
+      ! alpha_p = 1, no outer_max) then diverged to NaN within tens to hundreds
+      ! of iterations and the solver kept going.  The mismatch is now reported
+      ! and the job stops with exit code 40 instead of computing a wrong,
+      ! diverged solution.
+      if ( ctrl%transient .or. ctrl%pimple ) then
+         write(*,'(a)') '[uns] FATAL: transient controls on the steady-only ' // &
+                        'full-mesh path'
+         if ( ctrl%transient ) write(*,'(a)') &
+            '  unMesh.control sets transient = true (PISO / PIMPLE)'
+         if ( ctrl%pimple ) write(*,'(a)') &
+            '  unMesh.control sets pimple = true'
+         write(*,'(a)') '  this path implements steady SIMPLE only; the ' // &
+                        'transient solvers live in the partitioned MPI driver.'
+         write(*,'(a)') '  fix : build bin/mixnsolver_mpi (make mpi) and set ' // &
+                        '`uns_parallel = always` in mix.control -- then ./run.sh'
+         write(*,'(a)') '        (np = 1 works too).  For a steady run set ' // &
+                        'transient = false and give outer_max / outer_tol.'
+         flush(6)     ! stdout is block-buffered under redirection: without
+                      ! this the diagnosis is lost when the driver MPI_Aborts
+         ier = 40
+         return
+      end if
 
       call resolve_cell_zones( m, ctrl, ier )
       if ( ier /= 0 ) return

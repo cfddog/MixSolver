@@ -17,6 +17,11 @@
 !   - PPE pin cell is applied only on rank 0 (one global pin suffices to make
 !     the pure-Neumann problem non-singular).
 !   - Only rank 0 prints iteration history.
+!   - Fail-fast non-finite guard (2026-10-13): nan_guard_mpi runs after every
+!     SIMPLE iteration / transient step.  The LOWEST rank id holding a NaN or
+!     Inf prints the diagnosis (scan + report from mod_uns_simple) and every
+!     rank aborts with ier = NAN_IER = 60, instead of printing NaN rows until
+!     n_time_max is exhausted.
 !===============================================================================
 module mod_uns_simple_mpi
    use mod_precision, only: dp, ip, pi
@@ -39,10 +44,10 @@ module mod_uns_simple_mpi
                             temperature_assembly, solid_temperature_assembly, &
                             flux_rhiechow, make_step_filename, &
                             outflow_mass_sums, outflow_mass_scale, &
-                         pos_of
+                         pos_of, nan_scan, nan_report, NAN_IER
    implicit none
    private
-   public :: simple_run_mpi, piso_run_mpi, pimple_run_mpi
+   public :: simple_run_mpi, piso_run_mpi, pimple_run_mpi, nan_guard_mpi
 
 contains
 
@@ -239,6 +244,16 @@ contains
                              MPI_MAX, mpi_comm, ierr )
          call MPI_Allreduce( MPI_IN_PLACE, dT_max, 1, MPI_DOUBLE_PRECISION, &
                              MPI_MAX, mpi_comm, ierr )
+
+         ! fail-fast: stop at the first non-finite value (before the printout,
+         ! so the history ends with the last finite row -- see nan_guard_mpi)
+         call nan_guard_mpi( lm, fld, 'SIMPLE', it, ier )
+         if ( ier /= 0 ) then
+            if ( myrank == 0 ) write(*,'(a,i0,a)') &
+               '[uns-mpi] SIMPLE aborted at outer iteration ', it, &
+               ' (non-finite solution)'
+            return
+         end if
 
          if ( myrank == 0 ) then
             if ( mod(it,PRINT_EVERY) == 0 .or. it == 1 .or. &
@@ -509,6 +524,15 @@ contains
          call MPI_Allreduce( MPI_IN_PLACE, cfl_max, 1, MPI_DOUBLE_PRECISION, &
                              MPI_MAX, mpi_comm, ierr )
 
+         ! fail-fast: stop at the first non-finite value (see nan_guard_mpi)
+         call nan_guard_mpi( lm, fld, 'PISO', it, ier, t_now )
+         if ( ier /= 0 ) then
+            if ( myrank == 0 ) write(*,'(a,i0,a)') &
+               '[uns-mpi] PISO aborted at time step ', it, &
+               ' (non-finite solution)'
+            return
+         end if
+
          if ( myrank == 0 ) then
             if ( mod(it-1,PRINT_EVERY) == 0 .or. it == 1 .or. it == n_steps ) then
                gtmp = ressum / 3.0_dp
@@ -772,6 +796,15 @@ contains
          call MPI_Allreduce( MPI_IN_PLACE, cfl_max, 1, MPI_DOUBLE_PRECISION, &
                              MPI_MAX, mpi_comm, ierr )
 
+         ! fail-fast: stop at the first non-finite value (see nan_guard_mpi)
+         call nan_guard_mpi( lm, fld, 'PIMPLE', it, ier, t_now )
+         if ( ier /= 0 ) then
+            if ( myrank == 0 ) write(*,'(a,i0,a)') &
+               '[uns-mpi] PIMPLE aborted at time step ', it, &
+               ' (non-finite solution)'
+            return
+         end if
+
          if ( myrank == 0 ) then
             if ( mod(it-1,PRINT_EVERY) == 0 .or. it == 1 .or. it == n_steps ) then
                gtmp = ressum / ( 3.0_dp * n_outer )
@@ -966,5 +999,66 @@ contains
       call halo_exchange_vector( hi, fld%gt, ierr )
       call mpi_check( ierr, 'ex gt post' )
    end subroutine exchange_gradients
+
+   !----------------------------------------------------------------------------
+   ! nan_guard_mpi -- collective fail-fast check (see mod_uns_simple::nan_scan).
+   !
+   ! Every rank scans its OWNED cells (1..lm%nowned) for NaN/Inf; MPI_MIN on the
+   ! id of the first offending rank lets exactly that rank print the diagnosis
+   ! (a partitioned run can leave some subdomains finite).  ier = 0 when the
+   ! solution is finite everywhere, NAN_IER (60) otherwise -- the caller must
+   ! return immediately (the driver turns ier into the launcher exit code).
+   !----------------------------------------------------------------------------
+   subroutine nan_guard_mpi( lm, fld, stage, it, ier, t_val )
+      type(local_mesh_t), intent(in)    :: lm
+      type(fields_t),     intent(in)    :: fld
+      character(len=*),   intent(in)    :: stage
+      integer,            intent(in)    :: it
+      integer,            intent(out)   :: ier
+      real(dp), optional, intent(in)    :: t_val
+
+      character(len=32) :: bfld
+      character(len=8)  :: bkind
+      character(len=48) :: tag
+      real(dp) :: bval
+      integer  :: bcell, ifin, ierr2, bad_rank, first_bad, glb
+
+      call nan_scan( lm%m, fld, lm%nowned, bfld, bcell, bval, bkind, ifin )
+
+      ! lowest rank id that holds a non-finite value (nprocs = "no rank")
+      if ( ifin /= 0 ) then
+         bad_rank = myrank
+      else
+         bad_rank = nprocs
+      end if
+      call MPI_Allreduce( MPI_IN_PLACE, bad_rank, 1, MPI_INTEGER, MPI_MIN, &
+                          mpi_comm, ierr2 )
+      call mpi_check( ierr2, 'nan guard' )
+      first_bad = bad_rank
+
+      if ( first_bad >= nprocs ) then
+         ier = 0                      ! finite on every rank
+         return
+      end if
+
+      ! only the first offending rank reports (it is guaranteed to hold a NaN);
+      ! translate its local cell id into the global (.cas) numbering so the
+      ! offender can be located in the original mesh
+      if ( myrank == first_bad ) then
+         glb = 0
+         if ( allocated( lm%cell_l2g ) ) then
+            if ( bcell >= 1 .and. bcell <= size(lm%cell_l2g) ) glb = lm%cell_l2g(bcell)
+         end if
+         write(tag,'(a,i0)') 'mpi rank ', myrank
+         if ( present(t_val) ) then
+            call nan_report( lm%m, lm%g, fld, bfld, bcell, bval, bkind, stage, &
+                             it, trim(tag), t_val, glb )
+         else
+            call nan_report( lm%m, lm%g, fld, bfld, bcell, bval, bkind, stage, &
+                             it, trim(tag), glb_cell = glb )
+         end if
+      end if
+      ier = NAN_IER
+   end subroutine nan_guard_mpi
 
 end module mod_uns_simple_mpi

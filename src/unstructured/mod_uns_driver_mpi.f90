@@ -50,6 +50,7 @@ module mod_uns_driver_mpi
    use mod_uns_local_mesh, only: local_mesh_t, extract_local_mesh
    use mod_uns_halo, only: halo_info_t, halo_setup
    use mod_uns_simple_mpi, only: simple_run_mpi, piso_run_mpi, pimple_run_mpi
+   use mod_uns_simple, only: NAN_IER
    use mod_uns_gather, only: write_snapshot_mpi
    use mod_uns_restart, only: read_field_dump, scatter_global_to_local, &
                               load_or_partition, write_field_dump
@@ -314,6 +315,14 @@ contains
       end if
       if ( ier /= 0 ) then
          if ( myrank == 0 ) write(*,'(a,i0)') '[uns-mpi] FATAL: solver failed, ier=', ier
+         if ( ier == NAN_IER ) then
+            if ( myrank == 0 ) write(*,'(a)') &
+               '[uns-mpi] non-finite solution value -- see the nan-guard ' // &
+               'report above (field / cell / iteration); the run is stopped here.'
+            flush(6)
+            call MPI_Abort( comm, NAN_IER, ios ); return
+         end if
+         flush(6)
          call MPI_Abort( comm, 21, ios ); return
       end if
 

@@ -38,9 +38,23 @@
 !                     outflow face fluxes rescaled globally every iteration
 !                     (outflow_mass_rescale) so total outflow = total inflow,
 !                     keeping the pure-Neumann PPE consistent (pinned cell 1)
+!
+! Fail-fast non-finite guard (2026-10-13):
+!   Divergence used to be SILENT.  Once one iteration produced a NaN/Inf the
+!   solver kept iterating (each linear solve happily returns NaN residuals) and
+!   every printed diagnostic turned into NaN, hiding both the first bad
+!   iteration and the cell that caused it (measured: steady cavity it=500
+!   du_max=2.8e71 -> it=550 everything NaN, solver still running).
+!   Every driver now calls nan_guard (serial) / nan_guard_mpi (partitioned)
+!   right after the fields have been updated, so the run STOPS at the first
+!   non-finite value (ier = NAN_IER = 60 -> launcher exit code 60) and prints
+!   the field, the owner cell, its centre coordinates and the iteration /
+!   time step where it started.  Only scanning (no physics) -- O(ncells) per
+!   iteration, negligible next to the linear solves.
 !===============================================================================
 module mod_uns_simple
    use mod_precision, only: dp, ip, pi
+   use, intrinsic :: ieee_arithmetic, only: ieee_is_finite, ieee_is_nan
    use mod_uns_mesh
    use mod_uns_connectivity
    use mod_uns_geometry
@@ -56,6 +70,15 @@ module mod_uns_simple
              temperature_assembly, solid_temperature_assembly, &
              flux_rhiechow, make_step_filename, pos_of, &
              outflow_mass_sums, outflow_mass_scale, outflow_mass_rescale
+   ! fail-fast non-finite guard (see the module header): NAN_IER is the ier /
+   ! MPI_Abort exit code returned by every driver when a NaN/Inf is detected
+   public :: nan_scan, nan_report, nan_guard, NAN_IER
+
+   ! exit code for `non-finite solution value' (60; the abort codes used by the
+   ! unstructured drivers are 20-23 SIMPLE / 30-36 PISO / 40-46 PIMPLE, plus 40
+   ! for transient-controls-on-the-steady-path in mod_uns_driver -- a different
+   ! code path -- so 60 is free)
+   integer, parameter :: NAN_IER = 60
 
 contains
 
@@ -197,6 +220,16 @@ contains
                ier = 23; return
             end if
             itl_max = max( itl_max, itl )
+         end if
+
+         ! 5d. fail-fast: stop at the first non-finite value ---------------------
+         ! (before the diagnostics, so the iteration history ends with the last
+         !  FINITE row instead of printing NaN rows forever -- see the header)
+         call nan_guard( m, g, fld, m%ncells, 'SIMPLE', it, ier )
+         if ( ier /= 0 ) then
+            write(*,'(a,i0,a)') '[uns] SIMPLE aborted at outer iteration ', it, &
+                                ' (non-finite solution)'
+            return
          end if
 
          ! 6. convergence measures -------------------------------------------------------
@@ -442,6 +475,14 @@ contains
          ! 5. advance time -------------------------------------------------------
          t_now = t_now + ctrl%dt
 
+         ! 5b. fail-fast: stop at the first non-finite value ---------------------
+         call nan_guard( m, g, fld, m%ncells, 'PISO', it, ier, t_now )
+         if ( ier /= 0 ) then
+            write(*,'(a,i0,a)') '[uns] PISO aborted at time step ', it, &
+                                ' (non-finite solution)'
+            return
+         end if
+
          ! ---- diagnostics: max mass imbalance, |du|/dt, CFL, max|u| ----------
          imbalc = 0.0_dp
          do i = 1, m%nfaces
@@ -679,6 +720,14 @@ contains
 
          ! 5. advance time
          t_now = t_now + ctrl%dt
+
+         ! 5b. fail-fast: stop at the first non-finite value ---------------------
+         call nan_guard( m, g, fld, m%ncells, 'PIMPLE', it, ier, t_now )
+         if ( ier /= 0 ) then
+            write(*,'(a,i0,a)') '[uns] PIMPLE aborted at time step ', it, &
+                                ' (non-finite solution)'
+            return
+         end if
 
          ! diagnostics
          imbalc = 0.0_dp
@@ -2288,5 +2337,169 @@ contains
       psi_T = max( 0.0_dp, min( 1.0_dp, psi_T ) )
 
    end subroutine temperature_limiter
+
+   !----------------------------------------------------------------------------
+   ! nan_scan -- find the first non-finite (NaN / Inf) solution value.
+   !
+   ! Scans the OWNED cells 1..nown of the field set (u_x, u_y, u_z, p, T and,
+   ! when allocated, T_s) and returns the first offender plus a 0/1 status:
+   !   ifin = 0 -> every scanned value is finite
+   !   ifin = 1 -> bad_field / bad_cell / bad_val / bad_kind describe the first
+   !               non-finite value found on this rank.  Cells are visited in
+   !               index order and the fields in the order above, so the report
+   !               is deterministic and independent of the rank layout.
+   ! Cost: one ieee_is_finite test per value, no allocation, no MPI.
+   !----------------------------------------------------------------------------
+   subroutine nan_scan( m, fld, nown, bad_field, bad_cell, bad_val, bad_kind, &
+                        ifin )
+      type(mesh_t),     intent(in)  :: m
+      type(fields_t),   intent(in)  :: fld
+      integer,          intent(in)  :: nown
+      character(len=*), intent(out) :: bad_field
+      integer,          intent(out) :: bad_cell
+      real(dp),         intent(out) :: bad_val
+      character(len=*), intent(out) :: bad_kind
+      integer,          intent(out) :: ifin
+
+      integer :: ic, nmax
+
+      bad_field = '(none)'
+      bad_cell  = 0
+      bad_val   = 0.0_dp
+      bad_kind  = '(none)'
+      ifin      = 0
+      if ( nown < 1 ) return
+      nmax = min( nown, m%ncells )        ! never walk past the local arrays
+
+      do ic = 1, nmax
+         call chk( 'u_x', fld%u(1,ic), ic ); if ( ifin /= 0 ) return
+         call chk( 'u_y', fld%u(2,ic), ic ); if ( ifin /= 0 ) return
+         call chk( 'u_z', fld%u(3,ic), ic ); if ( ifin /= 0 ) return
+         call chk( 'p',   fld%p(ic),   ic ); if ( ifin /= 0 ) return
+         call chk( 'T',   fld%T(ic),   ic ); if ( ifin /= 0 ) return
+         if ( allocated( fld%T_s ) ) then
+            call chk( 'T_s', fld%T_s(ic), ic ); if ( ifin /= 0 ) return
+         end if
+      end do
+      return
+
+   contains
+      ! record `fname` at cell `cell` as the first offender when v is NaN / Inf
+      subroutine chk( fname, v, cell )
+         character(len=*), intent(in) :: fname
+         real(dp),         intent(in) :: v
+         integer,          intent(in) :: cell
+
+         if ( ieee_is_finite(v) ) return
+         ifin      = 1
+         bad_field = fname
+         bad_cell  = cell
+         bad_val   = v
+         if ( ieee_is_nan(v) ) then
+            bad_kind = 'NaN'
+         else
+            bad_kind = 'Inf'
+         end if
+      end subroutine chk
+   end subroutine nan_scan
+
+   !----------------------------------------------------------------------------
+   ! nan_report -- print the non-finite diagnosis.  `tag` identifies the driver
+   ! (and rank on the partitioned path), `stage` the solver stage, `it` the
+   ! outer-iteration index (SIMPLE) or time-step index (PISO / PIMPLE) and the
+   ! optional `t_val` the time level.  On the partitioned path the optional
+   ! `glb_cell` adds the global (.cas) cell id next to the rank-local one.
+   !----------------------------------------------------------------------------
+   subroutine nan_report( m, g, fld, bad_field, bad_cell, bad_val, bad_kind, &
+                          stage, it, tag, t_val, glb_cell )
+      type(mesh_t),     intent(in) :: m
+      type(geom_t),     intent(in) :: g
+      type(fields_t),   intent(in) :: fld
+      character(len=*), intent(in) :: bad_field
+      integer,          intent(in) :: bad_cell
+      real(dp),         intent(in) :: bad_val
+      character(len=*), intent(in) :: bad_kind
+      character(len=*), intent(in) :: stage
+      integer,          intent(in) :: it
+      character(len=*), intent(in) :: tag
+      real(dp), optional, intent(in) :: t_val
+      integer,  optional, intent(in) :: glb_cell
+
+      character(len=16) :: klass
+      character(len=80) :: ctxt
+      integer :: kc
+
+      kc = max( 1, min( bad_cell, m%ncells ) )
+      ! a diagnostic must never crash the run: every accessor is guarded
+      klass = 'fluid'
+      if ( is_solid_cell( m, fld, kc ) ) then
+         klass = 'solid'
+      else if ( allocated( fld%perm_dir ) .and. allocated( fld%inertial ) ) then
+         if ( is_porous_cell( fld, kc ) ) klass = 'porous'
+      end if
+
+      ! serial runs own the whole mesh ("local" is unambiguous); a partitioned
+      ! run adds the global cell id so the offender can be found in the .cas
+      ctxt = ', local owner index'
+      if ( present(glb_cell) ) then
+         if ( glb_cell > 0 ) write(ctxt,'(a,i0,a)') &
+            ', rank-local owner index; global cell ', glb_cell, ' of the .cas'
+      end if
+
+      write(*,'(a,a,a)') '[uns:', trim(tag), &
+                         '] FATAL: non-finite solution value -- aborting'
+      write(*,'(a,a,a,es14.6,a,a,a)') '   field  : ', trim(bad_field), ' = ', &
+                                      bad_val, '  (', trim(bad_kind), ')'
+      write(*,'(a,i0,a,a,a,a)') '   cell   : ', bad_cell, '  (', trim(klass), &
+                                trim(ctxt), ')'
+      write(*,'(a,es14.6,a,es14.6,a,es14.6,a)') '   centre : x=', &
+         g%xc(1,kc), '  y=', g%xc(2,kc), '  z=', g%xc(3,kc)
+      if ( present(t_val) ) then
+         write(*,'(a,a,a,i0,a,es12.4)') '   stage  : ', trim(stage), &
+                                        '  step=', it, '  t=', t_val
+      else
+         write(*,'(a,a,a,i0)') '   stage  : ', trim(stage), '  iteration=', it
+      end if
+      write(*,'(a)') '   hint   : check dt / alpha_u / alpha_p / lin_tol, the ' // &
+                     'mesh and the BCs; the run is stopped here because every'
+      write(*,'(a)') '            later iteration would print NaN.'
+      ! stdout is block-buffered under redirection: flush, or the diagnosis is
+      ! lost when the driver aborts (MPI_Abort does not flush Fortran units)
+      flush(6)
+   end subroutine nan_report
+
+   !----------------------------------------------------------------------------
+   ! nan_guard -- serial convenience wrapper: scan, report, return NAN_IER.
+   ! ier = 0 when every value is finite.
+   !----------------------------------------------------------------------------
+   subroutine nan_guard( m, g, fld, nown, stage, it, ier, t_val )
+      type(mesh_t),     intent(in)  :: m
+      type(geom_t),     intent(in)  :: g
+      type(fields_t),   intent(in)  :: fld
+      integer,          intent(in)  :: nown
+      character(len=*), intent(in)  :: stage
+      integer,          intent(in)  :: it
+      integer,          intent(out) :: ier
+      real(dp), optional, intent(in) :: t_val
+
+      character(len=32) :: bfld
+      character(len=8)  :: bkind
+      real(dp) :: bval
+      integer  :: bcell, ifin
+
+      call nan_scan( m, fld, nown, bfld, bcell, bval, bkind, ifin )
+      if ( ifin == 0 ) then
+         ier = 0
+         return
+      end if
+      if ( present(t_val) ) then
+         call nan_report( m, g, fld, bfld, bcell, bval, bkind, stage, it, &
+                          'serial', t_val )
+      else
+         call nan_report( m, g, fld, bfld, bcell, bval, bkind, stage, it, &
+                          'serial' )
+      end if
+      ier = NAN_IER
+   end subroutine nan_guard
 
 end module mod_uns_simple

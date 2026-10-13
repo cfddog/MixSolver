@@ -1,5 +1,42 @@
 # 当前上下文 (activeContext)
 
+> **2026-10-13 🆕 非结构「失败即停」非有限值（NaN/Inf）守卫 ＋ 瞬态控制错配拦截（已实现并验证）**：
+> 需求（用户）：「发散时会一直打印 NaN 而不停止，看不出第一次出错在哪一步、哪个单元」。
+> **背景查证**：稳态圆柱（3928 单元）实测 it=500 `du_max`=2.8e71、it=550 全场 NaN 而
+> 求解器仍在迭代（线性求解器对 NaN 输入照样返回"收敛"残差），首犯迭代与坏单元都被掩盖；
+> 另有静默错配：瞬态控制文件（`cluster_cases/{cavity_Re1000,cylinder_Re200}`）落到串行
+> "整体网格"稳态路径（`bin/mixnsolver` 的 mode=uns 非分区分支，只实现 `simple_run`）时
+> 旧代码**按稳态跑**，几十~几百步后发散。
+> **实现**：① `mod_uns_simple.f90` 新增 `nan_scan` / `nan_report` / `nan_guard` ＋ 常量
+> **`NAN_IER = 60`**（SIMPLE 20-23 / PISO 30-36 / PIMPLE 40-46 已占用，60 空闲）——
+> 扫描自有单元的 `u_x,u_y,u_z,p,T`（+ 已分配时的 `T_s`），判据纯 IEEE `ieee_is_finite`
+> （NaN 与 Inf 分开标注，**无物理判据 ⇒ 不误杀**），单元号优先、场顺序固定 ⇒ 首犯者确定
+> 且与 rank 划分无关；`simple_run`/`piso_run`/`pimple_run` 每次场更新后调用。
+> ② `mod_uns_simple_mpi.f90` 新增 `nan_guard_mpi`：只扫自有单元（halo 不算，由单测锁定
+> 该语义），`MPI_Allreduce(MPI_MIN)` 取**最小 rank 号**只让该 rank 打印，并用
+> `lm%cell_l2g` 翻成**原 `.cas` 全局单元号**（`nan_report` 的新可选参 `glb_cell`）。
+> ③ 诊断加固：分类前检查 `m%czone`/`m%cztype`、`fld%perm_dir`/`fld%inertial` 是否分配
+> （此前坏在最早初始化阶段会崩在诊断里，由新单测发现）；`mod_uns_fields::is_solid_cell`
+> 同步双检查。④ 报告/中止前 `flush(6)`：stdout 重定向到文件是块缓冲，而 `MPI_Abort`
+> 不刷 Fortran unit，不 flush 会把诊断丢光。⑤ `mod_uns_driver.f90`：稳态整体网格路径收到
+> `transient=true`（或 `pimple=true`）**启动即报错 `ier=40`**＋打印修法；
+> `main_dispatch.f90`/`mod_uns_driver_mpi.f90` 增 ier=40/60 释义行。
+> ⑥ `Makefile` 增两个测试目标（`uns_nan_guard_test` / `uns_nan_guard_mpi_test`）＋两个测试
+> 主程序从两个库集合中显式排除。
+> **验证**：单测串行 6 组 0 失败（退出码 0）、分区 np2 3 组 0 失败（**退出码 60 才是通过**，
+> 测试故意 `MPI_Abort`）；端到端发散算例：串行 it=434 停（`u_x`=NaN、cell 1、中心
+> (-0.422,0.323,2.5)）、np2 it=464 停并打印 `global cell 1 of the .cas`，**均退出码 60**；
+> 零误报：`cases/porous_plug` Darcy 串行 60 步收敛（`mass-imbal`=8.4e-19，退出码 0）、
+> np2 分区正常收尾、`pimple_smoke` 瞬态短跑退出码 0；错配拦截：瞬态控制走串行稳态路径
+> → `FATAL: transient controls on the steady-only full-mesh path`、退出码 **40**；
+> `make all mpi -j4` 零告警。现场在 `.dbg/`（已 gitignore，单算例串行跑＋`timeout` 限时）。
+> **文档**：`docs/程序使用手册.tex` 新增「失败即停：非有限值（NaN/Inf）守卫」小节（判据/
+> 首犯者/报告字段/退出码 60/代价/ier=40 ＋ 自检命令）＋可执行清单、make 目标表、验证表、
+> FAQ 第 11 条；`docs/93_changelog.tex` 顶部新增 2026-10-13 条。
+> **下一步候选**：① 把 `part.map`/`VTU` 的无量纲与量纲约定写进手册（沿用旧清单）；
+> ② 若需要，把守卫抽成 `nan_failfast` 开关（默认开），供极端算例临时关掉代价。
+
+
 > **2026-10-13 🆕 规则节点：新增本机资源保护规则（Cline 规则，非代码改动）**
 > 用户要求（原话）：「为保护笔记本电脑，一次只能运行不超过 1 个调试算例，运行时间不超过 10 分钟」。
 > 落点：① 新建仓库级 **`.clinerules`**（Cline 入口，此前本仓库**没有** Cline 规则文件，

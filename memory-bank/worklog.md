@@ -1,6 +1,84 @@
 # 工作日志 (worklog)
 
 
+## 2026-10-13 | 非结构「失败即停」非有限值（NaN/Inf）守卫 ＋ 瞬态控制错配拦截（ier=40/60）
+
+- 需求（用户）：发散时会一直打印 NaN 而不停止，看不出**第一次**出错在哪一步、也看不出是
+  哪个单元；要求加 fail-fast 守卫（串行＋MPI），并做成可验证的单元测试。
+- **背景查证（为什么必须改）**：稳态圆柱（3928 单元）实测 `it=500` 时
+  `du_max=2.8e71`、`it=550` 全场 NaN，而求解器**仍在迭代**（线性求解器对 NaN 输入照样
+  返回"收敛"残差）⇒ 首犯迭代与坏单元都被 NaN 行掩盖。另有静默错配：
+  `cluster_cases/{cavity_Re1000,cylinder_Re200}` 的控制文件是瞬态
+  （`dt`/`alpha_p=1`/无 `outer_max`），一旦落到串行"整体网格"稳态路径
+  （`bin/mixnsolver` 的 `mode=uns` 非分区分支，只实现 `simple_run`）旧代码会**按稳态
+  静默跑**，几十~几百步后发散。
+- **实现**：
+  - `mod_uns_simple.f90`：新增 `nan_scan` / `nan_report` / `nan_guard` ＋ 常量
+    **`NAN_IER = 60`**（SIMPLE 20-23 / PISO 30-36 / PIMPLE 40-46；
+    40 另用于稳态路径上的瞬态控制错配——不同代码路径，60 空闲）。扫描
+    `u_x,u_y,u_z,p,T`（+ 已分配时的 `T_s`），判据纯 IEEE `ieee_is_finite`
+    （NaN 与 Inf 分别标注，**无物理判据 ⇒ 不会误杀**）；**单元号优先、场顺序固定**
+    ⇒ 首犯者确定且与 rank 划分无关。`simple_run`/`piso_run`/`pimple_run` 在每次
+    场更新后调用。
+  - `mod_uns_simple_mpi.f90`：新增 `nan_guard_mpi`——只扫**自有**单元
+    （`1..lm%nowned`，halo 不算，由单测锁定该语义），`MPI_Allreduce(MPI_MIN)` 取
+    **最小 rank 号**，只让该 rank 打印；用 `lm%cell_l2g` 把本地单元号翻成
+    **原 `.cas` 全局单元号**（`nan_report` 新增可选参 `glb_cell`）。集合操作 ⇒
+    所有 rank 同进退，不会留下挂死的 rank。
+  - 诊断加固：分类前检查 `m%czone`/`m%cztype` 与 `fld%perm_dir`/`fld%inertial`
+    是否分配（此前坏在最早初始化阶段会**崩在诊断里**，由新单测暴露）；
+    `mod_uns_fields::is_solid_cell` 同步改为双检查。
+  - 报告/中止路径 `flush(6)`：stdout 重定向到文件时是块缓冲，而 `MPI_Abort`
+    **不刷 Fortran unit**，不 flush 会把诊断丢光。
+  - `mod_uns_driver.f90`：稳态整体网格路径收到 `transient = true`（或
+    `pimple = true`）**启动即报错 `ier=40`** 并打印修法（`bin/mixnsolver_mpi` ＋
+    `mix.control` 的 `uns_parallel = always`，或关掉 `transient`）；
+    `main_dispatch.f90` / `mod_uns_driver_mpi.f90` 增 ier=40/60 的 FATAL 释义行。
+  - `Makefile`：新增 `MAIN_UNG_F`/`MAIN_UNGM_F`（两个测试主程序从两个库集合中显式
+    排除）、`UNG_TEST_OBJ_S`/`UNGM_TEST_OBJ_M`、目标 `bin/uns_nan_guard_test` /
+    `bin/uns_nan_guard_mpi_test`，`.PHONY` 与 `make help` 同步。
+  - 新测试：`src/unstructured/test_nan_guard.f90`（6 组）与
+    `test_nan_guard_mpi.f90`（3 组；**不自己调 `MPI_Init`**，靠 `mpi_bootstrap`）。
+- **验证（现场在 `.dbg/`，按资源规则单算例串行跑、全部 `timeout` 限时）**：
+  - 单测：`./bin/uns_nan_guard_test cases/porous_plug/plug.cas` → `6 test groups,
+    0 failures` / `ALL NaN-GUARD CHECKS PASSED`，退出码 **0**；
+    `mpirun --oversubscribe -np 2 ./bin/uns_nan_guard_mpi_test ...` →
+    `3 groups on 2 ranks, 0 failures`，退出码 **60**（测试故意 `MPI_Abort`，
+    **60 才是通过**）。
+  - 端到端（发散算例，串行，`outer_max` 200→3000）：`it=434` 停在第一个非有限值
+    ——`u_x=NaN`、`cell 1`、中心 `(-0.422,0.323,2.5)`、`stage SIMPLE iteration=434`，
+    `ier=60`，退出码 **60**；此后不再出现 it=450/500 那种 NaN 行（耗时约 17 s）。
+  - 端到端（同一算例分区 np2）：`[uns:mpi rank 0]` 报告 ＋ `global cell 1 of the
+    .cas`，`iteration=464`，退出码 **60**。
+  - **零误报**：`cases/porous_plug` Darcy 算例（`outer_max` 缩到 300）串行 60 步
+    收敛（`mass-imbal`=8.4e-19）退出码 0；同算例 np2 分区正常收尾、退出码 0；
+    `.dbg/pimple_smoke`（瞬态 PIMPLE np2 短跑）退出码 0。
+  - 错配拦截：把 `cluster_cases/cylinder_Re40` 的瞬态控制文件走串行稳态路径 →
+    `[uns] FATAL: transient controls on the steady-only full-mesh path` ＋
+    `ier=40`、退出码 **40**。
+  - 构建：`make all mpi -j4` 零告警；两个测试目标可 `make` 复现。
+  - **当前二进制复跑自检**（`.dbg/` 现场原样重跑，逐个串行、`timeout` 限时）：单测串行
+    退出码 **0**（`6 test groups, 0 failures`）、单测分区 np2 退出码 **60**
+    （`3 groups on 2 ranks, 0 failures`）；`healthy_serial` 退出码 **0**（60 步收敛、
+    写出 `unMesh.vtu`）、`healthy_mpi`（np2）退出码 **0**、`t40_trans_serial`
+    退出码 **40**。日志留档：`.dbg/t60_nan_serial/log_guard2.txt`（it=434 停）、
+    `.dbg/t60_nan_mpi/log.txt`（it=464 停 ＋ `global cell 1 of the .cas`）、
+    `.dbg/t40_trans_serial/log_t40.txt`、`.dbg/healthy_serial/log.txt`。
+- **未纳入本提交**（工作区既有、与本节点无关的待处理项，避免混提交）：
+  ① 两个既有删除 `OpenCFD-EC-1.16a.zip`、`bc3d.inp`（自 2026-10-11 起挂起）；
+  ② 上一节点遗留的 `cluster_cases/{README.md,pack.sh}` 改动 ＋ 未跟踪的
+  `cluster_cases/{cavity_Re1000,cylinder_Re200}/`、`grid_BC/cylinder.neu`
+  （「新增两个瞬态集群现场」应另开提交）；③ 根目录 `log.txt`（运行产物，不入库）。
+  **提示**：②里两个现场的 README 仍写「串行 `bin/mixnsolver` 会静默忽略
+  `transient = true`」——本节点之后该行为已变为**启动即报错 `ier=40`**，那个节点
+  提交时需同步这句（本节点不动他人未提交文件）。
+- **文档**：`docs/程序使用手册.tex` 新增小节「失败即停：非有限值（NaN/Inf）守卫」
+  （判据 / 首犯者定义 / 报告字段 / 退出码 60 / 代价 / `ier=40` 拦截 ＋ 自检命令），
+  并在「可执行程序清单」「make 目标」表、「验证与回归 · 测试程序」表与 FAQ 新增第
+  11 条同步；`docs/93_changelog.tex` 顶部新增 2026-10-13 条；`xelatex` 重编译通过。
+
+---
+
 ## 2026-10-13 | 规则节点：新增 Cline 规则「本机资源保护」（调试算例 ≤ 1 个并发 / ≤ 10 min）
 
 - 需求（用户）：「为保护笔记本电脑，一次只能运行不超过 1 个调试算例，运行时间不超过 10 分钟」。

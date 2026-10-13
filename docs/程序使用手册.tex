@@ -80,6 +80,8 @@ MixNSSolver 是一个\textbf{弱耦合}（weakly-coupled）多物理场求解器
 \texttt{bin/coupling\_test} & \texttt{make coupling\_test} & 交换协议 MPI 端到端测试：\texttt{mpirun -np 2 bin/coupling\_test} \\
 \texttt{bin/match\_test} & \texttt{make match\_test} & 界面匹配/类型分派测试：\texttt{cd grid\_BC \&\& mpirun -np 1 ../bin/match\_test} \\
 \texttt{bin/iface\_law\_test} & \texttt{make iface\_law\_test} & 界面律（Beavers--Joseph 等）测试（无参数） \\
+\texttt{bin/uns\_nan\_guard\_test} & \texttt{make uns\_nan\_guard\_test} & 非有限值守卫单元测试（6 组，串行树）：\texttt{./bin/uns\_nan\_guard\_test cases/porous\_plug/plug.cas}，全绿退出码 \textbf{0} \\
+\texttt{bin/uns\_nan\_guard\_mpi\_test} & \texttt{make uns\_nan\_guard\_mpi\_test} & 分区守卫测试（$\ge$2 rank，内部故意 \texttt{MPI\_Abort}）：\texttt{mpirun -np 2 ./bin/uns\_nan\_guard\_mpi\_test cases/porous\_plug/plug.cas}，\textbf{期望退出码 60} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -153,6 +155,7 @@ $a_{ref}$、$p_{ref}$、$p_{scale}$。\textbf{混用两份参考状态是耦合�
 \texttt{make mpi} & MPI 树可执行 \texttt{bin/mixnsolver\_mpi}（\texttt{-DHAVE\_MPI}，链接 METIS） \\
 \texttt{make common} / \texttt{common\_mpi} & 仅公共层 \\
 \texttt{make units\_test} / \texttt{coupling\_test} / \texttt{match\_test} / \texttt{iface\_law\_test} & 四个测试程序 \\
+\texttt{make uns\_nan\_guard\_test} / \texttt{uns\_nan\_guard\_mpi\_test} & 非有限值守卫单元测试（串行 / 分区；后者用 \texttt{mpirun -np 2} 跑，\textbf{退出码 60 才算通过}） \\
 \texttt{make clean} & 清理 \texttt{build/} 与 \texttt{bin/} \\
 \texttt{make help} & 列出全部目标与选项 \\
 \texttt{DEBUG=1} & 追加到任意目标后，改用 \texttt{-O0 -g -fcheck=all -fbacktrace} 调试编译 \\
@@ -693,6 +696,61 @@ MPI 版本在 rank 0 上用串行 METIS 分区，映射缓存为 \texttt{<mesh>.
 \texttt{restart = true} ＋ \texttt{restart\_file} 从 dump 文件续算；
 \texttt{dump\_file} 指定结束时写出的 dump（用于链式重启）。
 
+\subsection{失败即停：非有限值（NaN/Inf）守卫}\label{sec:nanguard}
+
+发散过去是\textbf{静默}的：某个外迭代一旦出现 NaN/Inf，求解器会继续迭代（线性求解器对
+NaN 输入照样返回``收敛''的残差），此后每一行诊断都变成 NaN，既掩盖\textbf{第一次}出错的
+迭代，也掩盖了\emph{哪一个单元}出问题（实测：稳态圆柱 \texttt{it}=500 时
+\texttt{du\_max}=2.8e71，\texttt{it}=550 全场 NaN 而求解器仍在跑）。现在每个驱动在更新完场
+之后立即调用守卫，\textbf{在第一个非有限值处停止}：
+
+\begin{itemize}\itemsep2pt
+  \item \textbf{扫描范围}：只查\textbf{本 rank 自有}单元（串行即全部单元）的
+        $u_x,u_y,u_z,p,T$，分配了固体温度时加查 $T_s$。判据是 IEEE 的
+        \texttt{ieee\_is\_finite}（\texttt{NaN} 与 \texttt{Inf} 都算不合格，报告里分别
+        标注为 \texttt{NaN}/\texttt{Inf}），\textbf{不含任何物理判据}，因此不会误杀。
+  \item \textbf{首犯者定义}：单元按序号递增、场内按
+        $u_x\to u_y\to u_z\to p\to T\to T_s$ 的顺序扫描，所以``第一个坏值''与 rank 划分
+        无关、可复现。分区运行用一次 \texttt{MPI\_Allreduce(MPI\_MIN)} 取\textbf{最小
+        rank 号}，只让该 rank 打印诊断，并把本地单元号翻译成\textbf{原 \texttt{.cas}
+        的全局单元号}（同一 NaN 出现在多个 rank 时也不会打印多份）。
+  \item \textbf{报告内容}：\texttt{field}（字段名、数值、\texttt{NaN}/\texttt{Inf}）、
+        \texttt{cell}（单元号、\texttt{fluid}/\texttt{porous}/\texttt{solid} 类别；分区时
+        附 \texttt{rank-local} 与 \texttt{global cell}）、\texttt{centre}（单元中心坐标）、
+        \texttt{stage}（\texttt{SIMPLE}/\texttt{PISO}/\texttt{PIMPLE} ＋ 迭代号；瞬态另带
+        时间步与 $t$）以及一行排查建议。诊断自身对
+        \texttt{m\%czone}/\texttt{m\%cztype}/\texttt{fld\%perm\_dir} 等可分配量做了保护：
+        即使坏在最早期的初始化阶段也只打印、不会崩在诊断里。
+  \item \textbf{退出码 60}：串行 \texttt{simple\_run}/\texttt{piso\_run}/\texttt{pimple\_run}
+        与分区三驱动都在此处返回 \texttt{ier=60}（常量 \texttt{NAN\_IER}），分发器打印
+        \texttt{FATAL: solver failed ier=60} 后 \texttt{MPI\_Abort}，
+        \texttt{mpirun}/shell 的退出码即 \textbf{60}（SIMPLE 迭代失败用 \texttt{20--23}、
+        PISO \texttt{30--36}、PIMPLE \texttt{40--46}，\texttt{40} 另用于下条的瞬态控制
+        错配，故守卫取 60）。
+        分区守卫是集合操作：所有 rank 同进退，不会留下挂死的 rank。
+  \item \textbf{代价}：每外迭代一次 $O(N_{\rm cell})$ 的有限性检查，相对同一步的线性求解
+        可以忽略（3928 单元算例整段无可测差别）。
+  \item \textbf{顺带拦截}：整体网格路径（\texttt{bin/mixnsolver} 且 \texttt{mode=uns} 的
+        非分区分支）只实现\textbf{稳态} SIMPLE。若 \texttt{unMesh.control} 里写了
+        \texttt{transient = true}（PISO/PIMPLE），现在\textbf{启动即报错}
+        （\texttt{ier=40}，退出码 40）并给出修法：改用
+        \texttt{bin/mixnsolver\_mpi} ＋ \texttt{mix.control} 里的
+        \texttt{uns\_parallel = always}，或把 \texttt{transient} 关掉走稳态。
+        旧行为是\emph{静默}按稳态跑（忽略 \texttt{dt} 却给出``看起来正常''的结果）。
+\end{itemize}
+
+自检（不需要算例，各几秒到几十秒；分区测试故意中止，\textbf{退出码 60 才是通过}）：
+
+\begin{quote}\ttfamily\small
+make uns\_nan\_guard\_test \quad\# 或 make uns\_nan\_guard\_mpi\_test\\
+./bin/uns\_nan\_guard\_test cases/porous\_plug/plug.cas \quad\# 6 组 0 失败，exit 0\\
+mpirun -np 2 ./bin/uns\_nan\_guard\_mpi\_test cases/porous\_plug/plug.cas \quad\# 期望 exit 60\\
+git log --oneline -1 \quad\# 记不清版本时先确认二进制是当前源码编的
+\end{quote}
+
+判据见 \S\ref{sec:regress}；本节的端到端现场（发散算例串行 \texttt{it}=434 停、np2
+\texttt{it}=464 停、健康算例零误报）记录在 \texttt{memory-bank/worklog.md} 2026-10-13 条。
+
 \subsection{使用注意事项（都有实际踩坑记录）}
 
 \begin{itemize}\itemsep2pt
@@ -828,6 +886,8 @@ kPa 量级的压力跳变上（早期方案的实测症状）。改成分区（�
 \texttt{bin/units\_test} & 结构/无量纲 $\leftrightarrow$ SI 换算往返可逆；常量场插值精确；面平均守恒 \\
 \texttt{mpirun -np 2 bin/coupling\_test} & 跨组交换协议端到端：常量场、斜坡场的值/次序、两侧面数为 0 时不死锁 \\
 \texttt{cd grid\_BC \&\& mpirun -np 1 ../bin/match\_test} & 界面匹配 250/250 命中、类型分派全为 \texttt{comp-fluid<->lowspeed-fluid}、\texttt{unclassified=0}、全流体算例不得判为 porous \\
+\texttt{./bin/uns\_nan\_guard\_test cases/porous\_plug/plug.cas} & 6 组全绿（干净场不报错；NaN/Inf 各自被识别且标注正确；首犯者 $=$ 最低单元号；$T_s$ 参与扫描；守卫无状态）；退出码 \textbf{0} \\
+\texttt{mpirun -np 2 ./bin/uns\_nan\_guard\_mpi\_test cases/porous\_plug/plug.cas} & 3 组全绿（干净场不报错；halo 单元里的 NaN 不触发中止；最后一个 rank 的 NaN 让\textbf{所有} rank 都得到 \texttt{NAN\_IER}）；\textbf{期望退出码 60} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -911,6 +971,15 @@ M6-wing 回归脚本因此只用文件比较判定成败，不看退出码。
 
 \noindent\textbf{10. 网格看起来``小了一千倍''（雷诺数、压差都不对）。}
 网格以 mm 导出时漏了 \texttt{mesh\_scale = 1.0e-3}。
+
+\noindent\textbf{11. 日志里全是 \texttt{NaN}，但作业还在跑（或退出码是 60）。}
+现在这就是\textbf{故意的失败即停}（\S\ref{sec:nanguard}，\texttt{ier=60}）：报告里
+\texttt{field}/\texttt{cell}/\texttt{stage} 三行就是``第一次变成非有限值的量、单元
+（分区时另给 \texttt{.cas} 全局单元号，配 \texttt{centre} 坐标）与迭代号''，
+按此定位后调 \texttt{dt}/\texttt{alpha\_u}/\texttt{alpha\_p}/\texttt{lin\_tol}、
+网格与边界条件。若退出码是 \texttt{40}，则不是发散，而是在串行稳态路径上开了
+\texttt{transient = true}——按提示改用 \texttt{mixnsolver\_mpi} ＋
+\texttt{uns\_parallel = always}。
 
 \section{更新记录}\label{sec:changelog}
 
