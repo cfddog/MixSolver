@@ -1,0 +1,72 @@
+# =========================================================================
+# CLUSTER SCENE: 2D laminar cylinder, Re = 200 -- UNSTEADY (PIMPLE)
+# -------------------------------------------------------------------------
+# Mesh: unMesh.cas  (byte-identical to cluster_cases/cylinder_Re40/unMesh.cas)
+#   cylinder along the z axis, radius R = 0.5 (D = 1), span z in [0,5] with
+#   ONE cell in z -> strictly 2D, forces are per unit span
+#   far-field circle at r = 10 (20 D from the axis)
+#   zones: 2 = fluid cells, 3 = interior faces, 4 = symmetry (z = 0 / z = 5),
+#          5 = far-field circle (r = 10), 6 = wall (cylinder surface r = 0.5)
+#
+# Free stream U_inf = (1,0,0); Re = rho*U*D/mu = 1*1*1/0.005 = 200.
+# Re = 200 is far above the 2D wake-stability limit (~Re 47): the flow is a
+# PERIODIC von Karman street (Strouhal St = f*D/U ~ 0.20, mean CD ~ 1.35).
+# A steady solver cannot represent a limit cycle -> TRANSIENT PIMPLE.
+#
+# ---------------------------------------------------------------- IMPORTANT
+# The far field is `velocity-inlet 1 0 0`, NOT `pressure-far-field`:
+#   * the transient (PIMPLE) momentum/pressure coupling is UNSTABLE when the
+#     far-field patch carries BOTH a Dirichlet velocity AND a Dirichlet
+#     pressure.  `pressure-far-field` does exactly that (see bc_face_vel /
+#     bc_face_p in src/unstructured/mod_uns_bc.f90), and from a cold start it
+#     amplifies by ~2x PER STEP independently of dt (measured |u|max:
+#     1.6 -> 4.3 -> 8.7 -> 14 at dt=5e-3 AND at dt=1e-2 -> 7e1 after 10 steps).
+#     The steady SIMPLE path tolerates the over-constraint (that is why
+#     cluster_cases/cylinder_Re40 runs on `pressure-far-field`), the transient
+#     path does not.
+#   * `velocity-inlet` pins only the velocity; the pressure gauge stays free
+#     (the PPE pins cell 1) and the transient run is stable (CFL ~ 0.07).
+#     On a CLOSED circle the uniform free stream has zero NET mass flux
+#     (integral of U.n over a closed surface = U . (closed-surface normal sum)
+#     = 0), so nothing accumulates and r = 10 is a legitimate exterior BC.
+#     NOTE: velocity-inlet applies to the WHOLE far-field zone, so its
+#     downstream half is a fixed-value patch too, which constrains the wake at
+#     r = 10.  The shedding nevertheless develops and saturates (onset around
+#     t ~ 10-15, amplitude saturated by t ~ 40); README section 4 quotes the
+#     measured Strouhal number, the transverse-velocity amplitude and their
+#     uncertainty on this (coarse, 3928-cell) mesh.
+# ---------------------------------------------------------------- IMPORTANT
+#
+# Output: PIMPLE writes one snapshot every n_out_every steps as
+#     unMesh.vtu_step<NNNN>.vtu      (zero-padded to 4 digits)
+# and the final field as unMesh.vtu; run.sh moves both into out/.
+# =========================================================================
+
+# --- physical properties ----------------------------------------------------
+rho = 1.0
+mu  = 0.005            # Re = rho*U*D/mu = 1*1*1/0.005 = 200
+
+# --- transient PIMPLE -------------------------------------------------------
+transient    = true
+pimple       = true
+time_scheme  = 2       # BDF2 (2nd order); step 1 falls back to implicit Euler
+dt           = 0.005   # CFL ~ 0.07 on this mesh (well inside the shedding cycle)
+n_time_max   = 12000   # t_end = 60 (shedding onset ~t=10, saturates ~t=40)
+n_outer_iter = 2       # PIMPLE outer sweeps per time step
+n_correct    = 2       # PISO pressure-correction sweeps per outer sweep
+n_out_every  = 200     # one VTU snapshot every 200 steps (dt_snap = 1.0,
+                       # ~6.4 samples per shedding period; ~4.1 MB each)
+
+# --- linear algebra / discretisation ----------------------------------------
+alpha_u = 0.7          # momentum under-relaxation (PIMPLE)
+alpha_p = 1.0          # pressure correction is NOT relaxed (PISO-like)
+lin_tol   = 1.0e-8
+lin_max   = 300
+conv_blend   = 1.0     # limited 2nd-order upwind (sharpest wake for this mesh)
+nonorth_corr = 0.0     # orthogonal diffusion only (near-orthogonal mesh)
+ppe_precond  = ic0
+
+# --- boundary conditions ----------------------------------------------------
+bc = 6 wall                        # no-slip cylinder surface
+bc = 4 symmetry                    # z = 0 / z = 5 planes (2D)
+bc = 5 velocity-inlet 1.0 0.0 0.0  # uniform free stream at r = 10 (see NOTE)

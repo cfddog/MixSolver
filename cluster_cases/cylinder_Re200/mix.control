@@ -1,0 +1,21 @@
+# MixNSSolver self-dispatching mode file (required, zero-argument binary).
+#   mode = uns      -> unstructured incompressible solver (this scene)
+#   mode = coupled  -> struct + uns weak coupling
+#   mode = struct   -> structured compressible solver
+# The unstructured mode reads unMesh.cas + unMesh.control from the cwd and
+# writes the result named after the .cas basename (unMesh.vtu), plus one
+# unMesh.vtu_step<NNNNNNN>.vtu per transient snapshot.
+mode = uns
+
+# PIMPLE is implemented only in the MPI driver (mod_uns_driver_mpi ->
+# pimple_run_mpi); the serial driver (mod_uns_driver, built into
+# bin/mixnsolver) always runs steady SIMPLE and would silently ignore
+# transient=true.  Force the METIS-partitioned parallel path so that even a
+# single-rank launch (./run.sh 1) runs the transient PIMPLE solver.
+uns_parallel = always
+
+# Optional authoritative rank split: sum = n_struct_ranks + n_uns_ranks must
+# equal the launched rank count (-np / --ntasks).  Uncomment BOTH (never just
+# one) to have the launch checked; run.sh also defaults its np to this sum.
+# n_struct_ranks = 0
+# n_uns_ranks    = 4

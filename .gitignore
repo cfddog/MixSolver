@@ -49,6 +49,9 @@ cases/**/output_para.out
 grid_BC/**/output_para.out
 cases/**/flux_debug.txt
 checkpoint_*.tar.gz
+# 仓库根下的 shell 重定向产物（如 log.txt 仅含 'exit=1'），与 .dbg/ 中的
+# 调试日志同类，按约定不入库。
+/log*.txt
 
 # 调试运行现场（.dbg/：算子/并行调试用的算例拷贝与日志）
 # 与「本机资源保护」规则配套（见 .trae/rules/project_rules.md）：

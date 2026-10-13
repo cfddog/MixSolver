@@ -1,0 +1,47 @@
+# =========================================================================
+# CLUSTER SCENE: 2D lid-driven cavity, Re = 1000 -- steady SIMPLE check
+# -------------------------------------------------------------------------
+# Mesh: unMesh.cas
+#   byte-identical to cases/natconv/cavity80.cas -- the unit square [0,1]^2
+#   graded structured-style mesh, 80 x 80 x 1 = 6400 cells, ONE cell in z
+#   (strictly 2D).  Zones: 4 = symmetry (the z = 0 / z = 1 planes, i.e. the
+#   front/back 2D faces); 5 = wall (the four x/y walls).
+#
+# Physics
+#   rho = 1, mu = 0.001, L = 1, U_lid = (1,0,0)  ->  Re = rho*U*L/mu = 1000.
+#   The lid is the y = 1 wall only: the `lid` line below is a PLANE FILTER on
+#   zone 5 (dir 2 = y, coord 1.0), so the top wall moves and the other three
+#   zone-5 walls stay no-slip.  The lid is switched on impulsively at t = 0.
+#
+#   This local run uses steady SIMPLE and is capped at 10 outer iterations to
+#   verify the Re=1000 controls and the SIMPLE execution path.
+#
+# Output: one snapshot every n_out_every steps as
+#     unMesh.vtu_step<NNNN>.vtu      (zero-padded to 4 digits)
+# plus the final field unMesh.vtu; run.sh moves both into out/ and the solver
+# appends the Ghia comparison to the log.
+# =========================================================================
+
+# --- physical properties ----------------------------------------------------
+rho = 1.0
+mu  = 0.001            # Re = rho*U_lid*L/mu = 1*1*1/0.001 = 1000
+
+# --- steady SIMPLE ----------------------------------------------------------
+transient  = false
+pimple     = false
+outer_max  = 10        # requested 10-iteration parameter check
+outer_tol  = 0.0       # disable early exit; convergence tests use strict '<'
+
+# --- linear algebra / discretisation ----------------------------------------
+alpha_u = 0.7          # momentum under-relaxation (SIMPLE)
+alpha_p = 0.3          # pressure under-relaxation (SIMPLE)
+lin_tol   = 1.0e-8
+lin_max   = 300
+conv_blend   = 1.0     # limited 2nd-order upwind
+nonorth_corr = 0.0     # orthogonal diffusion only (the mesh is near-orthogonal)
+ppe_precond  = ic0
+
+# --- boundary conditions ----------------------------------------------------
+bc  = 5 wall                       # the four walls (lid filter selects the top)
+bc  = 4 symmetry                   # z = 0 / z = 1 faces (strictly 2D)
+lid = 5 2 1.0 1.0 0.0 0.0          # zone 5, plane dir 2 (y), at y = 1, u = (1,0,0)
