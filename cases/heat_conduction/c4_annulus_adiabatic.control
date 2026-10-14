@@ -1,0 +1,32 @@
+# c4 -- 2D 圆环稳态纯导热，内壁定温 + 外壁绝热（均匀温度解析解）
+#
+# 网格 c4 = c3_annulus.cas（Nr=20 x Nt=72，RI=0.01 RO=0.03 m）。
+# 边界：r=RI（zone 5）定温 400 K，r=RO（zone 6）**绝热**（壁面不给 tbc），
+#       z=0/LZ（zone 4）绝热（symmetry）。
+# 解析解：无内热源 + 除 r=RI 外全绝热 -> T(r) = 400 K。
+#
+# 与 c2 配对：c2 检验 1D 绝热壁，c4 检验**曲面（圆柱面）绝热壁**上
+# 零热流条件是否施加正确（曲面上的面法向不是坐标轴方向）。
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+alpha_u = 1.0
+alpha_p = 0.3
+outer_max = 3000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-12
+lin_max   = 1000
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 390.0
+
+cell_zone = 2 solid k_s=15.0 cp_s=460.0 rho_s=7800.0 q_src=0.0
+
+bc = 4 symmetry
+bc = 5 wall
+bc = 6 wall
+
+tbc = 5 1 400.0
+# zone 6 不给 tbc -> 绝热（零温度梯度）

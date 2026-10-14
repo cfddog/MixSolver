@@ -31,6 +31,38 @@
 \endhead
 \bottomrule
 \endlastfoot
+2026-10-14 & -- &
+\textbf{新增 \texttt{cases/heat\_conduction} 纯导热解析解验证算例族（5 ＋ 1 个）}：
+把阶段 16 的固体导热路径（\texttt{CZ\_SOLID} ＋ \texttt{k\_s} ＋ 按体区施加的体积热源
+\texttt{q\_src} ＋ 定温/绝热边界）放到可闭式求解的构型上做\emph{定量}回归 ——
+1D 两端定温（线性解）、1D 一处定温＋其余绝热（均匀解）、圆环内/外壁定温（对数解）、
+圆环一处定温＋外壁绝热（均匀解）、1D 中段局部体热源（分段抛物线解）；另加圆环径向
+加密版（现场生成网格）做网格收敛性。网格由本目录 \texttt{gen\_1d.py} /
+\texttt{gen\_annulus.py} 生成（与仓库内 \texttt{.cas} 逐字节一致），运行现场全部落在
+\texttt{.dbg/heat\_conduction/}（串行 ＋ \texttt{timeout 600}，遵守本机资源保护硬规则）。
+对拍脚本 \texttt{check\_heat\_conduction.py} 直接读 VTU 的
+\texttt{temperature\_solid}（附 VTU 结构自校验：块切分/胞心 id/逐胞复制一致性），
+判定 \texttt{max}$|T-T_{an}|$ 并把每条残留误差的\emph{来源}写进报告。
+顺带修 \texttt{gen\_1d.py} 的 \texttt{-{}-src} 体区切片缺陷：Fluent 体区记录只能描述
+\emph{单段连续} id 区间，只有 \texttt{NY=1} 时``x 分片''才等于连续段 —— 旧版在
+\texttt{NY=2} 下把热源区错落到 $j=0$ 行 $x\in[0.06,0.1)$、热源漏出区间（最大误差
+$26.6$ K），现在 \texttt{-{}-src} 强制 \texttt{-{}-ny 1} 并直接拒绝其它组合；
+\texttt{check\_heat\_conduction.py} 另加\textbf{体区落点回归守卫}（坏资产必须报错，
+见 \texttt{-{}-selftest}）。
+& \texttt{cases/heat\_conduction/*}（新：\texttt{gen\_1d.py}、\texttt{gen\_annulus.py}、
+5 个 \texttt{*.control}、\texttt{mix.control}、\texttt{run\_all.sh}、
+\texttt{check\_heat\_conduction.py}、\texttt{README.md}，\texttt{*.cas} 网格随库）；
+\textbf{无解算器源码改动}
+& \texttt{bash cases/heat\_conduction/run\_all.sh}（c1--c5 串行，每例 $<$2 s）＋
+\texttt{python3 check\_heat\_conduction.py -{}-refine -{}-tables} $\to$
+\textbf{全部 PASS}：c1/c2/c4 误差 $0.000$e$+00$ K（线性/常值场格心格式精确）；
+c3 $3.912$e$-1$ K（$0.196\%$，内壁半格心壁面距离 1 阶所致）；c5 $5.208$e$-2$ K
+（$0.026\%$，与``拐点''截断闭式值 $q h^2/(8k)=0.0520833$ K 对到 8 位有效数字，
+源区外仅 $3.3$e$-7$ K；同一离散系统的独立 numpy 直接求解与求解器差 $\sim$3e$-7$ K）；
+径向加密 $N_r\,20\to40$：$3.912$e$-1 \to 2.291$e$-1$ K（\textbf{收敛比 1.71}，
+介于 1--2 阶，符合壁面距离 1 阶 ＋ 环内扩散 2 阶的分析）；退出码 0。
+守卫自测 \texttt{-{}-selftest}：正确资产通过、人工构造的历史缺陷资产按预期报错，
+退出码 0。 \\
 2026-10-13 & -- &
 \textbf{非结构分区（MPI）重启动修复：续算第一步即崩 ＋ 静默掉阶}：
 ① \textbf{分段续算第一个快照就 SIGSEGV} —— \texttt{read\_field\_dump} 只分配

@@ -1,0 +1,47 @@
+# c5 -- 1D 稳态纯导热 + 局部体积内热源（三段解析解）
+#
+# 网格 c5_1d_src.cas：40x1x1 直棒（--src 要求 NY=1，见 gen_1d.py 头说明），
+#       x in [0, 0.1] m，沿 x 切成 3 个固体体区（id 段连续）：
+#       zone 2 : x <  0.03 m           （无热源，胞 1..12）
+#       zone 8 : 0.03 <= x < 0.07 m    （热源区 q_src = 1e6 W/m^3，胞 13..28）
+#       zone 9 : x >= 0.07 m           （无热源，胞 29..40）
+# 生成：python3 gen_1d.py c5_1d_src.cas 40 --src --ny 1
+# 边界：x=0（zone 6）定温 300 K，x=L（zone 7）定温 500 K，侧面绝热。
+#
+# 解析解（k = 15 W/(m*K)，q = 1e6 W/m^3，a=0.03 m，b=0.07 m，L=0.1 m）：
+#   通量连续性 + 两端定温给出
+#     T(x) = 3333.333 x     + 300            , 0 <= x <  a
+#     T(x) = -33333.33 x^2 + 5333.333 x + 270, a <= x <  b
+#     T(x) = 666.6667 x     + 433.3333       , b <= x <= L
+#   结点：T(a)=400 K，T(b)=480 K，T(0.02)=366.667 K，T(0.09)=493.333 K。
+#   能量平衡：q*s = 1e6*0.04 = 4.0e4 W/m^2 = -k T'(b) - (-k T'(a))
+#             = 10000 + 50000 = 5.0e4 - 1.0e4 = 4.0e4 W/m^2  ✓
+#
+# 该算例检验：① 多体区 .cas 读取；② 按体区 id 施加体积热源 q_src；
+#             ③ 分段线性/抛物线解（含斜率突变）能否被复现。
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+alpha_u = 1.0
+alpha_p = 0.3
+outer_max = 2000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-12
+lin_max   = 1000
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 400.0
+
+cell_zone = 2 solid k_s=15.0 cp_s=460.0 rho_s=7800.0 q_src=0.0
+cell_zone = 8 solid k_s=15.0 cp_s=460.0 rho_s=7800.0 q_src=1.0e6
+cell_zone = 9 solid k_s=15.0 cp_s=460.0 rho_s=7800.0 q_src=0.0
+
+bc = 4 wall
+bc = 5 wall
+bc = 6 wall
+bc = 7 pressure-outlet 0.0
+
+tbc = 6 1 300.0
+tbc = 7 1 500.0

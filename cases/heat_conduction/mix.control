@@ -1,0 +1,11 @@
+# mix.control -- cases/heat_conduction 纯导热验证套件（只用无结构求解器）
+#
+# 运行方式：把本文件与某个算例的 <case>.control 分别拷贝成工作目录下的
+# mix.control / unMesh.control，把 <case>.cas 拷成 unMesh.cas 后运行
+# bin/mixnsolver（详见 cases/heat_conduction/run_all.sh）。
+mode          = uns
+
+rho_ref = 1.177
+T_ref   = 300.0
+L_ref   = 0.1
+u_ref   = 0.1

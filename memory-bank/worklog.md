@@ -1,6 +1,57 @@
 # 工作日志 (worklog)
 
 
+## 2026-10-14 | 纯导热解析解验证算例族（cases/heat_conduction，5＋1 个算例）
+
+- 需求（承接阶段 16）：固体导热 / `CZ_SOLID` 路径此前只有 `cases/solid_conduction/` 的
+  **定性**冒烟（线性剖面"看起来对"），没有可判定的定量基线。新建 `cases/heat_conduction`：
+  5 个可闭式求解的**纯固体**构型 ＋ 1 个径向加密版，全部对拍解析解。
+- 算例与结果（`bin/mixnsolver` 串行，每例 <2 s、1 次外迭代即 CONVERGED）：
+  - `c1` 1D 两端定温 300/500 K → 线性解：最大误差 **0.000e+00 K**（80 胞，40×2×1）；
+  - `c2` 1D 一处定温 400 K ＋ 其余绝热 → 均匀解：**0.000e+00 K**；
+  - `c3` 圆环内/外壁定温 300/500 K → 对数解：**3.912e-01 K**（0.196 %，1440 胞）；
+  - `c4` 圆环一处定温 400 K ＋ 外壁绝热 → 均匀解：**0.000e+00 K**；
+  - `c5` 1D 中段 `q=1e6 W/m^3`（体区 zone 8）→ 分段抛物线解：**5.208e-02 K**（0.026 %）；
+  - `c3f`（Nr 20→40，2880 胞）：**3.912e-01 → 2.291e-01 K，收敛比 1.71**。
+- 每条残留误差都有闭式解释（写进 README 与报告，**不是"把容差调到能过"**）：
+  ① `c3` 内/外壁 Dirichlet 用"半格心"距离，圆柱几何下对 `T∝ln r` 只有 1 阶（径向差分
+  2 阶 ⇒ 收敛比介于 1~2，实测 1.71）；② `c5` 源区边界正好落在网格面上、解析解在
+  `x=0.03/0.07` 处二阶导跳变（"拐点"），格心格式截断闭式值 = `q·h²/(8k) = 0.0520833 K`
+  —— 实测源区内偏差均值 `+0.05208325 K`（8 位有效数字吻合），源区外仅 `3.3e-07 K`；
+  另用**同一离散系统的独立 numpy 直接求解**交叉验证：与求解器差 `~3e-7 K`。
+- **缺陷修复（真实 bug，命中项目硬规则「多 cell zone 网格的 cell-id 排序」）**：
+  `gen_1d.py` 的 `--src` 体区切片 —— Fluent 体区记录 `(12 (id first last …))` 只能描述
+  **单段连续** id 区间，而胞号 `1+i+j*NX` 是 i（x）最慢；旧版在默认 `NY=2` 下按 x 分数
+  算 id 段边界，zone 8 实际落到 j=0 行 `x∈[0.06,0.1)`，`q_src` 漏出热源区（最大误差
+  26.6 K）。现在 `--src` **强制 `--ny 1`**（否则报错退出），补了参数解析与守卫；重生成
+  `c1_1d.cas`（40×2×1）与 `c5_1d_src.cas`（40×1×1，3 个体区 2/8/9 为连续 id 段）。
+- `check_heat_conduction.py`（对拍脚本）：ASCII VTU 读取 —— 用 `offsets` 切块、去掉
+  legacy VTK 的"顶点数"前导 token 还原单元节点号，并**自校验**块长度、胞心 id = 块最大
+  节点号、tet→cell 块状有序、CellData 逐胞复制一致；取 `temperature_solid` 对拍，
+  `--tables`/`-v`/`--refine`；**回归守卫**：`heat_source_solid>0` 的胞必须恰好是胞心落在
+  `(0.03,0.07)` 的 16 个 x 面，`--selftest` 用人工构造的坏资产（q_src 挪到 `x∈[0.06,0.1)`）
+  验证守卫**确实会报错**（对应规则「验证脚本必须自带回归守卫」）。
+- 复现：`bash cases/heat_conduction/run_all.sh [c1..c5|c3f]`（严格串行、`timeout 600`、
+  现场 `.dbg/heat_conduction/<case>/`，遵守本机资源保护）；
+  `python3 cases/heat_conduction/check_heat_conduction.py --refine --tables` → **全部 PASS**
+  （退出码 0）；`--selftest` → 退出码 0。网格**位级可复现**：三条生成命令的产物与入库
+  `.cas` `cmp` 完全一致。
+- 控制文件统一收紧到 `outer_tol=1e-6 / lin_tol=1e-12 / lin_max=1000`（收紧后仍是 1 次
+  外迭代收敛、误差 0）。
+- 涉及文件：`cases/heat_conduction/{gen_1d.py, gen_annulus.py, c1_1d.cas, c3_annulus.cas,
+  c5_1d_src.cas, mix.control, c1_1d_fixedT.control, c2_1d_adiabatic.control,
+  c3_annulus_fixedT.control, c4_annulus_adiabatic.control, c5_1d_source.control,
+  run_all.sh, check_heat_conduction.py, README.md}`、`docs/{程序使用手册,93_changelog}.tex`、
+  `memory-bank/*`。
+- 手册：算例集表（`tab:cases`）新增 `heat\_conduction` 行；`93_changelog.tex` 顶部新增本条。
+  本次**无解算器源码改动**（无新控制参数），故 `control.ec.template` 与附录 A 参数表不变。
+- 遗留：① 纯固体胞里 `T_lte` 被钉成**上一轮**的 `T_s`（第 1 次外迭代即满足收敛判据），
+  报告已注明"物理量请看 `temperature_solid`"；② 纯固体全壁面无压参考 ⇒ `lin-res=NaN`
+  （阶段 16 已知，不参与导热迭代）；③ 瞬态导热（BDF2 时间精度）与固-固/固-流 CHT 界面
+  未纳入本族（仍由 CHT 算例覆盖）。
+
+
+
 ## 2026-10-13 | 非结构分区（MPI）重启动修复：分段续算第一步即崩 ＋ 静默掉阶
 
 - 需求（用户）：解锁 Re=200 圆柱长算例 —— 单次调试 ≤10 min（本机资源硬规则），

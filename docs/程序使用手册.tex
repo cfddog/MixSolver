@@ -888,6 +888,12 @@ kPa 量级的压力跳变上（早期方案的实测症状）。改成分区（�
  \texttt{bj\_a0/a1/a2}：系数 0/1/2） \\
 \texttt{calibration} & 多孔参数 $\alpha$/$K$ 的数值标定实验设计 \\
 \texttt{lnte1d\_cgns} & LTNE 1D 的另一路网格（CGNS 导出）交叉验证 \\
+\texttt{heat\_conduction} & 纯导热解析解回归族（5 算例 ＋ 1 加密版）：1D 两端定温（线性）、
+ 1D 一处定温＋其余绝热（均匀）、圆环内/外壁定温（对数）、圆环一处定温＋外壁绝热（均匀）、
+ 1D 局部体热源 \texttt{q\_src}（分段抛物线）。\texttt{check\_heat\_conduction.py}
+ 读 \texttt{temperature\_solid} 对拍，并带体区落点\textbf{回归守卫}
+ （\texttt{-{}-selftest}）；残留误差均可闭式解释（圆环半格心壁面距离 1 阶、
+ 热源``拐点''截断 $q h^2/8k$） \\
 \texttt{couple\_channel} & \textbf{可压缩$\leftrightarrow$低速}跨组界面（np2）：布局、量纲匹配、
  缺陷与修法、结果、复现命令 \\
 \texttt{couple\_porous} & \textbf{可压缩$\leftrightarrow$多孔}跨组界面（np2）：cell-id

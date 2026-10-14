@@ -1,0 +1,35 @@
+# c1 -- 1D 稳态纯导热，两端定壁温（线性解析解）
+#
+# 网格 c1_1d.cas：40x2x1 直棒，x in [0, 0.1] m，全部胞为 CZ_SOLID=3。
+# 边界：x=0（zone 6）定温 300 K，x=L（zone 7）定温 500 K，
+#       y=0/LY（zone 5）与 z=0/LZ（zone 4）绝热。
+# 解析解（稳态、无内热源、与 k_s 无关）：
+#       T(x) = 300 + 200 * x/L          -> T(0.05) = 400 K
+#
+# 注：纯导热是线性问题，alpha_u = 1.0（满更新）即等价于直接求解该线性
+#     系统，外迭代只需几步即可收敛；无粘性/压力耦合发散风险（固体胞速度
+#     被大源项钉死为 0）。详见 README.md。
+mesh_scale = 1.0
+rho = 1.177
+mu  = 1.846e-5
+alpha_u = 1.0
+alpha_p = 0.3
+outer_max = 2000
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-12
+lin_max   = 1000
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+inlet_ramp = 1
+init_t = 400.0
+
+cell_zone = 2 solid k_s=15.0 cp_s=460.0 rho_s=7800.0 q_src=0.0
+
+bc = 4 wall
+bc = 5 wall
+bc = 6 wall
+bc = 7 pressure-outlet 0.0
+
+tbc = 6 1 300.0
+tbc = 7 1 500.0
