@@ -1,6 +1,36 @@
 # 工作日志 (worklog)
 
 
+## 2026-10-15 | 记账更正：上个提交误并入工作区既有改动 ＋ 移除误入库的样例编译产物
+
+- 事故：`git add -A` 前没有核对 `git status --short` 的全量输出（该输出被终端吞掉），把当时
+  工作区里**与本次登记无关的既有脏改动**一并提交进了 `068a574`（docs 节点）：
+  - `external/sample_code/unMesh/{main.f90,makefile,mod_vtu.f90}`（参考样例源码，本应单独提交）；
+  - `external/sample_code/unMesh/test_vtu`（**样例 `make` 出的 ELF 可执行文件 —— 违反
+    「运行产物不入库」硬规则**）；
+  - `grid_BC/cylinder.neu`（16451 行 NEU 输入件，属应跟踪的输入资产）；
+  - `cluster_cases/{README.md,pack.sh,cavity_Re1000/unMesh.control}`（瞬态现场
+    cylinder_Re200/cavity_Re1000 的文档与脚本）；
+  - **删除** `OpenCFD-EC-1.16a.zip`（9.6 MB，磁盘上早已不存在）与空文件 `bc3d.inp`。
+  该提交已 push 到 `origin/main`（远端 18c2282→068a574），**项目规则禁止改写已共享历史**
+  ⇒ 只能向前更正，不做 `--amend` / `--force`。
+- 更正（本节点）：`git rm --cached external/sample_code/unMesh/test_vtu`（**只出索引，
+  磁盘文件保留**，需要时在该目录 `make` 重建）＋ `.gitignore` 增加
+  `external/sample_code/**/test_vtu`（无扩展名的可执行文件不被 `*.o`/`*.mod` 覆盖）。
+- 内容复核：被并入的内容里，样例源码 / `cylinder.neu` / 集群现场文档都是**应当跟踪的
+  输入件与脚本**（`.gitignore` 注释里也是这么约定的），两个删除中 `bc3d.inp` 是 0 字节
+  占位文件、zip 在磁盘上早已删除（历史里仍在，需要时
+  `git checkout 63af789 -- OpenCFD-EC-1.16a.zip` 找回）。即：**除编译产物外没有内容违规，
+  问题是"不属于该节点的改动被塞进同一个提交"**（违反「一个节点 = 一个提交」）。
+- 教训（已写入 progress.md 顶部与本节）：提交前**必须**先看清 `git status` 全量输出再
+  `git add -A`；终端捕获不可靠时用 `git status --porcelain > /tmp/s.txt` 落盘再读文件。
+- 验证：本节点只动索引 / `.gitignore` / memory-bank 文档，**无源码与算例改动 ⇒ 未跑
+  算例与回归**；`bin/`、`build/` 未受影响。
+- 涉及文件：`.gitignore`、`external/sample_code/unMesh/test_vtu`（仅索引）、
+  `memory-bank/{progress,activeContext,worklog}.md`。
+
+---
+
 ## 2026-10-15 | 登记（未实现）：VTU 混合单元类型输出待办 ＋ `docs/plan.md` 阶段 17
 
 - 用户决策：**保留现状「全四面体 fan」为默认**，新增**控制变量**切换到**原生单元类型**

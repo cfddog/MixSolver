@@ -1,5 +1,11 @@
 # 当前上下文 (activeContext)
 
+> ⚠ **记账更正（2026-10-15，同节点）**：`git add -A` 时未核对 `git status` 全量输出，把工作区
+> 既有脏改动并进了 `068a574`（样例源码/`grid_BC/cylinder.neu`/集群现场文档，以及**样例编译
+> 产物 `test_vtu`** 与删除 zip/空文件）；远端已 push、禁止改写历史 ⇒ 向前更正：
+> `git rm --cached external/sample_code/unMesh/test_vtu`（磁盘保留）＋ `.gitignore` 补规则。
+> 详见 worklog 同节点与 progress.md 顶部说明。
+
 > **2026-10-15 🆕 登记（未实现）：VTU 混合单元类型输出 —— 保留「全四面体」为默认，新增控制变量切换**：
 > 用户决策：现状「全四面体 fan」**保留为默认**（老算例与位级回归不变），新增开关切到
 > **原生单元类型**输出（按网格真实类型 1:1 写 tet/hex/wedge/pyramid，**不插胞心点、

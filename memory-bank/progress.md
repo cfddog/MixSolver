@@ -1,5 +1,16 @@
 # 进度总览 (progress)
 
+> **2026-10-15 记账更正（同节点）**：上一个提交 `068a574`（本次 docs 登记节点）因未核对
+> `git status --short` 全量输出就 `git add -A`，把工作区**既有脏改动**一并并入 —— 样例源码
+> `external/sample_code/unMesh/{main.f90,makefile,mod_vtu.f90}`、输入件
+> `grid_BC/cylinder.neu`、集群现场 `cluster_cases/{README.md,pack.sh,cavity_Re1000/unMesh.control}`，
+> 以及**样例编译产物 `external/sample_code/unMesh/test_vtu`（违反「运行产物不入库」硬规则）**
+> 与删除 `OpenCFD-EC-1.16a.zip`（磁盘上早已不存在）/ 空文件 `bc3d.inp`。
+> 远端已 push、禁止改写历史 ⇒ 向前更正：`git rm --cached` 掉 `test_vtu`（磁盘文件保留）
+> ＋ `.gitignore` 补 `external/sample_code/**/test_vtu`。详见 worklog 同节点条目；
+> **教训：提交前必须先看清 `git status` 全量输出（终端吞输出时改用
+> `git status --porcelain > /tmp/s.txt` 再读文件）**。
+
 > 最后更新：2026-10-15（**VTU 输出新增 appended raw binary（`out_format = vtu_binary`）**：
 > 修好移植时留下的 binary 写出缺陷（对 unformatted 流单元误用格式化 WRITE，一开即崩），
 > 把 ascii/binary 接成可切换布局并透传到全部 5 个写点；`tools/validate_vtu.py` 支持

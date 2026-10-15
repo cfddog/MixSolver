@@ -11,6 +11,10 @@ bin/
 *.o
 *.mod
 
+# 样例包（external/sample_code/**）在目录内就地 make 出的可执行文件：
+# 无扩展名，上面的 *.o / *.mod 挡不住；产物由各自 makefile 重建，不入库。
+external/sample_code/**/test_vtu
+
 # Python 缓存（工具脚本 cases/**/**.py）
 __pycache__/
 *.pyc
