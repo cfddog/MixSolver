@@ -1,5 +1,25 @@
 # 当前上下文 (activeContext)
 
+> **2026-10-15 🆕 登记（未实现）：VTU 混合单元类型输出 —— 保留「全四面体」为默认，新增控制变量切换**：
+> 用户决策：现状「全四面体 fan」**保留为默认**（老算例与位级回归不变），新增开关切到
+> **原生单元类型**输出（按网格真实类型 1:1 写 tet/hex/wedge/pyramid，**不插胞心点、
+> 不四面体化**）。本节点**只记账、不改任何源码**；细则写入 `docs/plan.md` 阶段 17 ＋
+> `memory-bank/progress.md` §待办同名条目。
+> 调研结论：① 写出器层**已就绪** —— `mod_vtu_writer.f90:65-72` 已 public 8 个 VTK 类型码，
+> 混合单元 ASCII/appended-raw 都实测通过（`.dbg/vtu_mixed_test.f90` ＋ `.dbg/chk_mixed.py`，
+> hex/wedge/tet/pyramid/quad/tri 6 类 PASS）；② 瓶颈只在**调用层**
+> `mod_uns_output.f90:117-152`（面 fan ＋ 胞心，`cell_type` 写死 `VTK_TETRA`）；
+> ③ `mesh_t%ctype(:)`（`mod_uns_mesh.f90:43`）已由 `mod_uns_cas_reader.f90:310-406`
+> 读入却**全仓无消费者**；④ 仓库输入件实测码：`4`=hex（共 44 处 zone 记录）、`6`=wedge
+> （cylinder 3928 ＋ LNTE1D 12160 个 payload 全 6）、`0`=混合 zone、`7`=polyhedron；
+> **`2`=tet / `5`=pyramid / `1`=tri / `3`=quad 无样品，待用户确认**后才固化映射表；
+> ⑤ 算法风险：`.cas` 只给面拓扑，VTK 规范节点序要重建，且现状 fan 的「c0 面序朝内」
+> 假设不处处成立（`--vtk` 一直报非正体积四面体）⇒ native 路须做外法向定向 ＋ 有符号
+> 体积校验；`7`=polyhedron 无 VTK 支持（VTK 9 丢弃 legacy face stream）⇒ 回落 fan ＋ 告警；
+> ⑥ 连带改造：`validate_vtu.py --vtk` 按类型分派 ＋ 11 个不看 `<offsets>` 的算例脚本。
+> 拟定控制变量：`out_cells = tet_fan | native`（默认 `tet_fan`）＋ `out_native_cells(ctrl)`，
+> 与 `out_format`（数据布局）正交，4 种组合都要能跑。
+
 > **2026-10-15 🆕 VTU 输出支持 appended raw binary（`out_format = vtu_binary`）＋ binary 写出缺陷修复 ＋ 守卫双布局**：
 > 需求（用户）：`external/sample_code/unMesh/mod_vtu.f90` 里 ascii/binary 两种形式
 > 「是否都实现了、怎么切换」，以 `cluster_cases/cavity_Re1000` 为例。**取证结论**：
@@ -1186,6 +1206,10 @@
 - A. **阶段 4（推荐）**：交界面几何匹配（结构化 generic:8 vs 非结构 CAS interface zone）。
 - B. 阶段 5：数据交换与量纲统一。
 - （pressure-far-field 零解已修复；可选后续：收紧 1e-5 残差平台，需改进入流面压力处理。）
+- C. **阶段 17（2026-10-15 登记，待用户确认 Fluent 码后启动）**：VTU **原生混合单元类型
+  输出**（`out_cells = tet_fan | native`，默认保持现状全四面体）。细则见 `docs/plan.md`
+  阶段 17；实现顺序：映射表 → 面拓扑重建 VTK 规范节点序 → native 分支（保留 fan 回退）
+  → `validate_vtu.py --vtk` 按类型判体积 → 11 个隐含等长单元的算例脚本 → 文档/基线。
 
 等待用户选择，未获确认前不改动代码。
 
@@ -1200,3 +1224,7 @@
 
 ## 待确认问题
 - 无阻塞项。远期：mix.control 字段清单、多孔阻力模型形式。
+- **Fluent 元素类型码 `2`(tet?) / `5`(pyramid?) / `1`(tri) / `3`(quad) 的语义需用户确认**
+  （2026-10-15，阶段 17 用）：仓库输入件只含 `0` 混合 zone / `4` hex / `6` wedge /
+  `7` polyhedron，这四个已实测；其余按 Fluent 约定（TRI=1, TET=2, QUAD=3, HEX=4, PYR=5,
+  WEDGE=6, POLY=7）推断，**确认后**才在 `Fluent → VTK` 映射表里写死。

@@ -55,3 +55,4 @@ lid = 5 2 1.0 1.0 0.0 0.0          # zone 5, plane dir 2 (y), at y = 1, u = (1,0
 # NB for vtu_binary: only ~7 significant digits are kept, and check_cavity.py
 #    reads ASCII text only -- validate/recompute with tools/validate_vtu.py or
 #    a VTK reader (the Ghia L2 stays 2.897e-2, ASCII vs binary differ by ~3e-8).
+out_format = vtu_binary

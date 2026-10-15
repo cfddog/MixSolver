@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =========================================================================
-# Pack the three cluster scenes for transfer to a cluster login node.
+# Pack the cluster scenes for transfer to a cluster login node.
 #
 #   ./pack.sh [out.tar.gz] [--with-repo]
 #     out.tar.gz   default: cluster_cases_<YYYYmmdd>.tar.gz
 #     --with-repo  also write <out>_repo.tar.gz: a WHITELIST of the source
 #                  tree (Makefile, src/, lib/, docs/ + the scenes) so the
 #                  cluster needs only a Fortran toolchain -- no git clone and
-#                  no 1.3 GB cases/ checkout. ~14 MB.
+#                  no 1.2 GB cases/ checkout. Measured ~4.0 MB / 126 entries.
 #
 # The build reads nothing outside src/ and lib/metis/libmetis.a (see Makefile
 # rules 'src/%.f90' and METIS_LIB), so the whitelist is sufficient to produce

@@ -1,12 +1,21 @@
-# cluster_cases —— 三个可直接上集群的「干净现场」
+# cluster_cases —— 五个可直接上集群的「干净现场」
 
-本目录把三类物理整理成**自包含、零参数、可整体搬走**的算例现场：
+本目录把五类物理整理成**自包含、零参数、可整体搬走**的算例现场：
 
-| 现场 | 物理 | 规模 |
-|---|---|---|
-| `channel_lowspeed/` | 平面 Poiseuille 槽道，Re_H = 100（低速） | 30000 单元 |
-| `cylinder_Re40/` | 二维圆柱绕流稳态尾迹，Re = 40 | 3928 单元 |
-| `bj_porous/` | Beavers-Joseph 流体/多孔界面，α = 0 / 1 / 2 | 4000 单元 |
+| 现场 | 物理 | 求解路径 | 规模 |
+|---|---|---|---|
+| `channel_lowspeed/` | 平面 Poiseuille 槽道，Re_H = 100（低速） | 稳态 SIMPLE | 30000 单元 |
+| `cylinder_Re40/` | 二维圆柱绕流稳态尾迹，Re = 40 | 稳态 SIMPLE | 3928 单元 |
+| `bj_porous/` | Beavers-Joseph 流体/多孔界面，α = 0 / 1 / 2 | 稳态 SIMPLE | 4000 单元 |
+| `cylinder_Re200/` | 二维圆柱绕流**非稳态**卡门涡街，Re = 200 | **瞬态 PIMPLE** | 3928 单元 |
+| `cavity_Re1000/` | 二维顶盖驱动方腔，Re = 1000 | **瞬态 PIMPLE** | 6400 单元 |
+
+后两个现场走的是**瞬态 PIMPLE** 路径，而该路径**只存在于 MPI 驱动里**
+（`mod_uns_driver_mpi -> pimple_run_mpi`）：串行 `bin/mixnsolver` 只会跑稳态 SIMPLE 并
+**静默忽略** `transient = true`。因此它们在自己的 `mix.control` 里写了
+`uns_parallel = always`，`run.sh` 也**总是**调 `bin/mixnsolver_mpi`（即使 `np = 1`）。
+踩过的坑见第 6 节第 8–9 条，数字见第 5 节，细节（边界条件、判据、代价）在各现场自己的
+`README.md`。
 
 每个现场只放**输入件**（网格 + control + 运行/校验脚本），不放运行产物：产物一律落到
 各自的 `out/` 与 `logs/`（`*.vtu`、`*.log` 已在 `.gitignore` 里屏蔽）。
@@ -17,7 +26,9 @@ cluster_cases/
 ├── pack.sh            打包脚本（tar.gz；--with-repo 可连带源码树）
 ├── channel_lowspeed/  低速槽道     → README.md, run.sh, plot_channel.py, variants/
 ├── cylinder_Re40/     圆柱 Re=40   → README.md, run.sh, check_cylinder.py, reference_cylinder_cp.dat
-└── bj_porous/         BJ 界面      → README.md, run.sh, plot_bj.py, gen_bj.py, variants/
+├── bj_porous/         BJ 界面      → README.md, run.sh, plot_bj.py, gen_bj.py, variants/
+├── cylinder_Re200/    圆柱 Re=200  → README.md, run.sh, check_cylinder_unsteady.py（瞬态）
+└── cavity_Re1000/     方腔 Re=1000 → README.md, run.sh, check_cavity.py（瞬态）
 ```
 
 ---
@@ -72,7 +83,7 @@ make mpi -j1    # → bin/mixnsolver_mpi   （mpif90 + -DHAVE_MPI）
   链接它。
 * `DEBUG=1 make all` → `-O0 -g -fcheck=all -fbacktrace`；`make clean` 清掉 `build/` 与 `bin/`。
 * 构建产物 `bin/` 与 `build/` 不进 git，集群上必须自己编一次（或让 `pack.sh --with-repo`
-  把源码一起带过去：它只打包 `Makefile src lib docs cluster_cases`，约 3.4 MB，
+  把源码一起带过去：它只打包 `Makefile src lib docs cluster_cases`，实测 4.0 MB / 126 项，
   而仓库里的 `cases/` 有 1.2 GB —— 别整个 `scp -r`）。
 
 ---
@@ -99,7 +110,7 @@ export GFORTRAN_UNBUFFERED_ALL=y
 libgfortran 自己管理 I/O 缓冲，重定向到文件后**要攒满 4 KB 才落盘**，所以刚启动的几分钟
 `logs/*.log` 是空的（用 `stdbuf -oL` 也**没用**，它管不到 Fortran 自己的缓冲）。
 加这一行以后 `tail -f logs/*.log` 才能实时看到 `it=` 行。现场里第 1 次排查「算例好像卡住了」
-的教训就是这一条（见第 5 节）。
+的教训就是这一条（见第 6 节第 3 条）。
 
 **np > 1 的两种走法**（`mix.control` 里可选键 `uns_parallel`，默认 `auto`）：
 
@@ -146,13 +157,15 @@ n_uns_ranks    = 2        # 非结构侧核数（0+2 = 2 ⇒ 必须 mpirun -np 2
 
 ---
 
-## 4. 三个现场速查
+## 4. 五个现场速查
 
-| 现场 | 输入件 | 单核耗时 / 终态 | 产物 | 校验脚本 |
+| 现场 | 输入件 | 耗时 / 终态（本机实测） | 产物 | 校验脚本 |
 |---|---|---|---|---|
 | `channel_lowspeed` | `unMesh.cas`(7.9 MB) + `unMesh.control` + `variants/pressure_outlet.control` | ~4 min；**CONVERGED @ 773** | `logs/channel_lowspeed_np1.log`，`out/channel_lowspeed_np1.vtu`（**~50 MB** ASCII） | `plot_channel.py` |
 | `cylinder_Re40` | `unMesh.cas` + `unMesh.control` + `reference_cylinder_cp.dat` | ~4 min；**不打 CONVERGED**（设计如此，8001 步上限收尾） | `logs/cylinder_Re40_np1.log`，`out/cylinder_Re40_np1.vtu`（4.2 MB） | `check_cylinder.py` |
 | `bj_porous` | `unMesh.cas` + `unMesh.control` + `variants/bj_a{0,1,2}.control` | 每个 α ~2 min；**三个 α 都 CONVERGED**（~800 步） | `logs/bj_a*_np1.log`，`out/bj_a{0,1,2}_np1.vtu` | `plot_bj.py` |
+| `cylinder_Re200` | `unMesh.cas` + `unMesh.control`（**瞬态 PIMPLE**） | 本机 np=2 **24.6 min**（12000 步，0.125 s/步；dt=0.005，t=60） | `logs/*.log`；末态 `out/*.vtu` + 60 个快照（**~250 MB**） | `check_cylinder_unsteady.py` |
+| `cavity_Re1000` | `unMesh.cas`(1.6 MB) + `unMesh.control`（**瞬态 PIMPLE**） | 本机 np=4 **18.2 min**（6000 步，0.182 s/步；dt=0.01，t=60） | `logs/*.log`（尾部有 Ghia 表）；末态 `out/*.vtu` + 6 个快照（**~77 MB**） | `check_cavity.py` |
 
 ---
 
@@ -170,10 +183,18 @@ n_uns_ranks    = 2        # 非结构侧核数（0+2 = 2 ⇒ 必须 mpirun -np 2
 | bj | α = 0 界面速度剖面 RMS | **0.22%** | 两层 ODE 解析解 | — |
 | bj | α = 1 | **0.94%**（uF1 = 1.1768e-2 vs 1.2117e-2） | 归档 1.09%（uF1 1.173e-2） | < 0.3% |
 | bj | α = 2 | **1.20%** | — | — |
+| cylinder_Re200 | 尾迹主频（全精度快照 FFT） | **St = 0.156**（场量 max\|u\| 独立给出 0.157） | 0.196（Re = 200） | −20%（网格仅 80 个周向单元） |
+| cylinder_Re200 | t = 60 瞬时 C_D = F_x/(½ρU²A_ref) | **1.285**（F_x = 3.2064，A_ref = 4.9923） | 平均 ~1.34 | −4% |
+| cylinder_Re200 | 起振 / 饱和 | 对称基流 t = 5–10（max\|u\| ≡ 1.40000）→ t ≈ 10 起振 → t ≈ 40 饱和 | — | — |
+| cavity_Re1000 | 竖中心线 u_x 相对 L2 | **3.01e-2**（t = 60 瞬态）vs **2.89e-2**（同网格稳态 SIMPLE） | Ghia 1982 表 I | 残差 4% |
+| cavity_Re1000 | 网格收敛（稳态路径） | 40×40 **9.12e-2** → 80×80 **2.89e-2** | — | 加密一倍降 3.2 倍 |
 
-**三个现场在 HEAD 上都通过**（cluster channel 的 it=1 行与 2025-10-05 归档日志逐位相同；
-圆柱所有积分量与归档基线一致；BJ 三个 α 都能跑到显式 CONVERGED）。详细数字与图在各现场
-自己的 `README.md` 里。
+**五个现场在 HEAD 上都通过**（cluster channel 的 it=1 行与 2025-10-05 归档日志逐位相同；
+圆柱 Re=40 所有积分量与归档基线一致；BJ 三个 α 都能跑到显式 CONVERGED；两个**瞬态**现场
+各自给出可判读的物理量：Re=200 的涡街频率 + C_D，Re=1000 的 Ghia L2）。
+瞬态现场的**局限**（圆柱的 St 比文献低 20%，来自网格分辨率；方腔 3e-2 的 L2 由网格而非
+时间推进决定）在各自 `README.md` 里写清楚了 —— 当作**路径/流程**的验证是可靠的，
+当作定量结果前先看那些局限。详细数字与图在各现场自己的 `README.md` 里。
 
 ---
 
@@ -189,7 +210,7 @@ n_uns_ranks    = 2        # 非结构侧核数（0+2 = 2 ⇒ 必须 mpirun -np 2
    被动场恒等于 0（`dT_max = 0.000E+00`），速度解逐位不变。
 3. **看不到进度不等于卡住：libgfortran 有自己的缓冲。** 重定向到文件后 gfortran 要攒够
    4 KB 才落盘，`logs/*.log` 会几分钟是空的，**`stdbuf -oL` 管不到它**。正确开关是
-   `export GFORTRAN_UNBUFFERED_ALL=y`（三个 `run.sh` 里都加了，并写了注释）。
+   `export GFORTRAN_UNBUFFERED_ALL=y`（五个 `run.sh` 里都加了，并写了注释）。
    当初「channel 好像卡住了」其实是这一条。
 4. **判据不总是日志里的 `CONVERGED` 行。** `cylinder_Re40` 的尾迹 `du_max` 有个 ~2e-4 的
    平台，永远压不到 1e-6，所以它**按设计跑满 8001 步收尾**（旧基线也这样）。判断它的收敛性
@@ -202,6 +223,31 @@ n_uns_ranks    = 2        # 非结构侧核数（0+2 = 2 ⇒ 必须 mpirun -np 2
    会 `mv` 改名，否则下一个现场会覆盖它。
 7. **裸 `make` 是空操作**（默认目标是目录规则 `build/ser/mod`），必须 `make all`；而且
    `make all` 也要 `mpif90`（structured/coupling/main_dispatch 无条件调 MPI）。见第 2 节。
+8. **瞬态 PIMPLE 只存在于 MPI 驱动里，串行二进制会静默忽略。** `bin/mixnsolver` 读到
+   `transient = true` 不报错、不警告，直接按稳态跑完——你会以为在跑涡街，其实拿到的是
+   一个定常解。所以两个瞬态现场的 `mix.control` 写了 `uns_parallel = always`，`run.sh`
+   **固定**调 `bin/mixnsolver_mpi`（np = 1 也走 MPI 路径）。判据也不同：**瞬态没有
+   `CONVERGED` 行**，看 `du/dt` 平台 / St / L2（见各现场 README）。
+9. **同一张网格上「稳态能用的 BC」，瞬态可能每步放大 2 倍。** `pressure-far-field` 同时给
+   远场 Dirichlet 速度**和**压力；稳态 SIMPLE 容忍这个过约束（`cylinder_Re40` 就这么跑），
+   冷启动的 PIMPLE 不接受：实测 max\|u\| 按 1.6 → 4.3 → 8.7 → 14 增长，`dt = 5e-3` 与
+   `dt = 1e-2` **完全一样**（所以不是步长问题）。换成 `velocity-inlet 1 0 0` 就稳
+   （CFL ~ 0.07）。**两个现场之间别照抄边界条件**。
+10. **日志里的速度只有 3 位有效数字，不能拿来做频谱。** `max|u| = 1.44E+00` 这种量化
+    会把圆柱的 St 从 0.157 歪成 0.144（假象）。频率类信息必须从**全精度快照**
+    （`*.step<NNNN>.vtu`）拿，而且频率分辨率由**时间窗长度**决定：加密快照只减小峰值
+    偏置、不提高分辨率，见第 11 条。
+11. **快照是 ASCII VTU，比想象的占地方**：圆柱 4.1 MB/个、方腔 11 MB/个。圆柱默认
+    `n_out_every = 200` → 60 个 = 250 MB；方腔 `1000` → 6 个 = 77 MB。`out/` 在集群上
+    可能被清或超配额，先算一下再提交。
+12. **日志尾部那两个块是「专用诊断」，换个物理就是噪声。** `ghia_compare` 是**方腔**
+    专用（竖中心线 u_x），圆柱算例只会打印 `Ghia reference: no table for this Re, skipped.`；
+    反过来 `--- Separation and wake ---` / `Cp distribution` 是**圆柱**专用，方腔日志里
+    会打印 `Top separation: not detected`、并拿 Re = 40 的圆柱文献值来比 —— **忽略**。
+    两个瞬态现场真正的末态判据分别是 `check_cylinder_unsteady.py` 与 `check_cavity.py`。
+13. **两处「看不见的」口径要记住**：`max|u|` 是**单元中心值**（方腔报 0.9116 而不是 1.0，
+    因为 1.0 是**面**上的盖速）；`Reference area` 是求解器按形心算出的 4.9923 而不是
+    名义 5.0（差 0.15%，自己复算 C_D 会差同样的比例）。
 
 ---
 
@@ -209,8 +255,8 @@ n_uns_ranks    = 2        # 非结构侧核数（0+2 = 2 ⇒ 必须 mpirun -np 2
 
 ```bash
 cd cluster_cases
-./pack.sh                       # → cluster_cases_<日期>.tar.gz        (~1.7 MB, 32 项)
-./pack.sh --with-repo           # 另外 → cluster_cases_<日期>_repo.tar.gz (~3.4 MB)
+./pack.sh                       # → cluster_cases_<日期>.tar.gz        (实测 2.2 MB, 46 项)
+./pack.sh --with-repo           # 另外 → cluster_cases_<日期>_repo.tar.gz (实测 4.0 MB, 126 项)
 ./pack.sh /tmp/scenes.tar.gz    # 指定输出路径（--with-repo 可同时给）
 ```
 

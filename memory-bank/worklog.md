@@ -1,6 +1,46 @@
 # 工作日志 (worklog)
 
 
+## 2026-10-15 | 登记（未实现）：VTU 混合单元类型输出待办 ＋ `docs/plan.md` 阶段 17
+
+- 用户决策：**保留现状「全四面体 fan」为默认**，新增**控制变量**切换到**原生单元类型**
+  输出（按网格真实类型 1:1 写 tet/hex/wedge/pyramid，不插胞心点、不四面体化）。
+  本节点**不改任何源码**，只把任务与方案写入 `docs/plan.md` 阶段 17、
+  `memory-bank/progress.md` §待办、`activeContext.md`（顶部块 ＋ 下一步候选 ＋ 待确认问题）。
+- 本次取证（读代码 ＋ 读输入件，未编译未求解）：
+  ① 写出器层已就绪：`src/common/mod_vtu_writer.f90:65-72` public 8 个 VTK 类型码，
+     `vtu_write` 已是「累计 `<offsets>` ＋ 逐单元 `<types>`」，ASCII/appended-raw 都
+     实测支持混合类型（`.dbg/vtu_mixed_test.f90` ＋ `.dbg/chk_mixed.py`：hex/wedge/tet/
+     pyramid/quad/tri 6 类 PASS，5.9 KB/4.5 KB）。
+  ② 瓶颈只在调用层：`src/unstructured/mod_uns_output.f90:117-152` 逐单元「面 fan ＋ 胞心」
+     四面体化、`cell_type` 写死 `VTK_TETRA`、胞心作为额外点追加；一个 hex → 12 子 tet、
+     wedge → 8、pyramid → 6。
+  ③ `mesh_t%ctype(:)`（`mod_uns_mesh.f90:43`，per-cell Fluent element type）由
+     `mod_uns_cas_reader.f90:310-406` 的 `sec_cells` 读入（含 `ctype=0` 混合 zone 的逐单元
+     payload 与 `7`=polyhedron 分支），但**全仓无消费者**（`grep m%ctype` 只在 reader 内）。
+  ④ 输入件实测 Fluent 码：`4`=hex（`natconv/cavity*.cas`、`porous_graetz/graetz.cas`、
+     `heat_conduction/c{1,5}`，共 44 处 `(12 (2 1 <n> 1 4)`）；`6`=wedge
+     （`cylinder_cas/cylinder.cas` payload 3928 个、`ltne/LNTE1D.cas` 12160 个，逐单元全 6）；
+     `0`=混合 zone；`7`=polyhedron。**`2`/`5`/`1`/`3` 无样品 ⇒ 待用户确认**。
+  ⑤ 算法风险（唯一）：`.cas` 只给面拓扑，VTK 规范节点序须重建；现状 fan 的「c0 面序朝内」
+     假设不处处成立（`validate_vtu.py --vtk` 长期报非正体积四面体：方腔 38400/76800、
+     heat_conduction c1 404/960、c3 8496、c5 162）⇒ native 路必须外法向定向 ＋ 有符号体积
+     校验；`7`=polyhedron 无 VTK 支持（VTK 9 丢弃 legacy face stream）⇒ 单单元回落 fan。
+  ⑥ 连带改造：`tools/validate_vtu.py:461-484` 的 `--vtk` 分支按类型分派；11 个读
+     `<connectivity>` 却不看 `<offsets>`、隐含 4 节点等长单元的算例脚本（清单见 plan 阶段 17
+     第 6 条）。
+- 拟定接口：`out_cells = tet_fan | native`（默认 `tet_fan`）＋ `pure logical
+  out_native_cells(ctrl)`（与 `out_is_binary` 同构），与 `out_format`（数据布局）正交。
+- 验证：**本节点无代码改动 ⇒ 未跑算例、未跑回归**（符合 `.trae/rules/project_rules.md`
+  的本机资源保护与「验证通过才提交」约定：本次只动文档）。
+- 手册：不是功能变更，`docs/程序使用手册.tex` / `docs/91_appendix_params.tex` /
+  `93_changelog.tex` 本次**不新增条目**（实现阶段 17 时按规则补：`out_cells` 参数行、
+  输出章说明、changelog 条）。
+- 涉及文件：`docs/plan.md`、`memory-bank/{progress,activeContext,worklog}.md`。
+- 下一步：① 用户确认 Fluent 码 `2/5/1/3` 语义；② 按 plan 阶段 17 第 1–8 条顺序实现。
+
+---
+
 ## 2026-10-15 | VTU 输出新增 appended raw binary（`out_format = vtu_binary`）＋ 修 binary 写出崩溃缺陷 ＋ 守卫双布局
 
 - 需求（用户）：`external/sample_code/unMesh/mod_vtu.f90` 提供 ascii 与 binary 两种写法，

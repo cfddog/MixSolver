@@ -720,6 +720,41 @@
 
 ## 待办
 
+### VTU 混合单元类型输出（2026-10-15 登记，用户「写入待办，后续解决」）
+
+- [ ] **需求（用户决策）**：VTU 导出**新增可选的原生单元类型输出** —— 按网格真实类型
+  1:1 写出 tet/hex/wedge/pyramid（VTK 规范 `<types>`/`<offsets>`，**不插胞心点、
+  不四面体化**）；**现状「全四面体 fan」保留为默认**（老算例与位级回归不变），
+  两者用**控制变量**切换。细则（任务清单/风险/验收/脚本清单）见 `docs/plan.md` 阶段 17，
+  本条目只登记要点与本次取证。
+- [ ] **控制变量（拟定）**：`out_cells = tet_fan | native`（默认 `tet_fan`）＋
+  `pure logical out_native_cells(ctrl)`（与 `out_is_binary` 同构），透传到 5 个写出点；
+  与 `out_format`（`vtu | vtu_ascii | vtu_binary`，**数据布局**）正交，4 种组合都要能跑。
+- **本次取证（未改任何源码）**：
+  - 写出器**已支持**混合单元：`src/common/mod_vtu_writer.f90:65-72` 已 public 8 个 VTK
+    类型码；现场 `.dbg/vtu_mixed_test.f90` ＋ `.dbg/chk_mixed.py` 对 6 类单元
+    （hex/wedge/tet/pyramid/quad/tri）实测 PASS，ASCII 与 appended-raw 两种布局都通过。
+  - 瓶颈只在**调用层**：`src/unstructured/mod_uns_output.f90:117-152` 逐单元「面 fan ＋
+    胞心」四面体化、`cell_type` 写死 `VTK_TETRA`（一个 hex → 12 子 tet、wedge → 8）。
+  - 网格侧信息**已有但无消费者**：`mesh_t%ctype(:)`（`mod_uns_mesh.f90:43`，per-cell
+    Fluent element type），由 `mod_uns_cas_reader.f90:310-406` 读入（含 `ctype=0`
+    混合 zone 的逐单元 payload 与 `7`=polyhedron 的 face-count 分支）。
+  - **Fluent 码实测**（仓库输入件）：`4` = hex（`natconv/cavity*.cas`、
+    `porous_graetz/graetz.cas`、`heat_conduction/c{1,5}`，共 44 处 `(12 (2 1 <n> 1 4)`）、
+    `6` = wedge（`cylinder_cas/cylinder.cas` 3928 个 payload、`ltne/LNTE1D.cas` 12160 个
+    payload，逐单元全为 6）、`0` = 混合 zone、`7` = polyhedron。
+    **`2` = tet / `5` = pyramid / `1` = tri / `3` = quad 仓库里没有样品，需用户确认后
+    才写死映射表**（按 Fluent 约定应为 TRI=1, TET=2, QUAD=3, HEX=4, PYR=5, WEDGE=6,
+    POLY=7）。
+- [ ] **主要风险**：`.cas` 只给面拓扑，VTK 规范节点序必须重建 —— 现状 fan 的「c0 面序
+  朝内」假设**不处处成立**（`validate_vtu.py --vtk` 一直报非正体积四面体，记录值
+  方腔 38400/76800、heat_conduction c1 404/960、c3 8496、c5 162）⇒ native 路必须做
+  外法向定向 ＋ 有符号体积校验；`7`=polyhedron 无 VTK 支持（VTK 9 丢弃 legacy face
+  stream）⇒ 该单元回落 fan ＋ 告警。
+- [ ] **连带改造**：`tools/validate_vtu.py:461-484` 的 `--vtk` 分支改为按类型分派
+  （现在假定全 TETRA）；11 个读 `<connectivity>` 却不看 `<offsets>`、隐含 4 节点等长单元
+  的算例脚本需改（清单见 `docs/plan.md` 阶段 17 第 6 条）。
+
 ### 输入格式：CGNS（2026-10-10 登记，用户「写入待办，不作为编译通过必须项」；2026-10-10 补充编译决策规则）
 
 - [ ] **编译时决策规则（用户硬性要求）**：后续编译过程中，**若系统已安装且 CGNS 库能工作（链接/头文件探测通过），则采用 CGNS 路径**；**若系统未安装 CGNS 或探测失败，则自动回退采用 `*.cas` 或 `*.neu`（阶段12）文件**，编译照常通过、不报错。CGNS 不是编译通过的必须项。

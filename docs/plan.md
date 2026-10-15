@@ -606,6 +606,91 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
 2. [待办] **修正可压缩（结构）侧 SST 湍流模型**（`Iflag_turbulence_model=3`，见阶段 13
    第 1 条）。细则（首查嫌疑、最小复现、验收）见同一 §待办条目 ②。
 
+### 阶段 17：VTU 混合单元类型输出（2026-10-15 登记，用户「写入待办，后续解决」）
+
+**目标**：VTU 导出**可选**按网格真实单元类型 **1:1 原生写出**（tet/hex/wedge/pyramid
+用 VTK 规范编码，不再插胞心点、不再四面体化）；**现状「全四面体 fan」保留为默认**
+（产物位级不变），两者由控制变量切换。
+
+**为什么保留全四面体**：它是刻意设计 —— 避开 `VTK_POLYHEDRON`（其 legacy face-stream
+被 VTK 9 / ParaView 静默丢弃，数据集看起来是空的），`VTK_TETRA` 通用性最好
+（见 `src/unstructured/mod_uns_output.f90:1-16`）。代价：单元数/点数与网格非 1:1、
+文件大 4–12×（一个 hex → 12 个子 tet、wedge → 8 个；方腔 6400 hex → 76800 子 tet），
+后处理看到的是子四面体而非原单元。
+
+**本次取证（未改任何源码）**：
+- 写出器层**已就绪**：`src/common/mod_vtu_writer.f90:65-72` 已 public 8 个 VTK 类型码；
+  `vtu_write` 用累计 `<offsets>` ＋ 逐单元 `<types>`，ASCII 与 appended-raw 两种布局
+  都已实测支持混合类型（现场 `.dbg/vtu_mixed_test.f90` ＋ `.dbg/chk_mixed.py`，
+  hex/wedge/tet/pyramid/quad/tri 6 类全部 PASS）。
+- 瓶颈只在**调用层**：`src/unstructured/mod_uns_output.f90:117-152` 对每个单元做
+  「面 fan ＋ 胞心」四面体化，`cell_type` 写死 `VTK_TETRA`，胞心作为额外点追加。
+- 网格侧信息**已有但无消费者**：`mesh_t%ctype(:)`（`src/unstructured/mod_uns_mesh.f90:43`，
+  per-cell Fluent element type）由 `mod_uns_cas_reader.f90:310-406` 的 `sec_cells`
+  读入（含 `ctype=0` 混合 zone 的逐单元 payload 与 `7`=polyhedron 的 face-count 分支）。
+
+**任务**：
+
+1. [待办] **控制变量**：`out_cells = tet_fan | native`（**默认 `tet_fan`** = 现有路径，
+   位级不变）＋ `pure logical out_native_cells(ctrl)`（与现有 `out_is_binary(ctrl)` 同构），
+   透传到与 `binary=` 同一组的全部 5 个写出点（串行快照、MPI 快照、MPI 末态、耦合
+   `unMesh_coupled.vtu`、串行末态）。与 `out_format`（`vtu | vtu_ascii | vtu_binary`，
+   **数据布局**）正交：4 种组合都要能跑。
+2. [待办] **Fluent 元素类型 → VTK 单元类型映射表**（建议放 `mod_vtu_writer` 或新的
+   `src/common/mod_cell_types.f90`，含节点数校验）：
+   - **已实测确认**（仓库输入件）：`4` = hex（`cases/natconv/cavity*.cas`、
+     `porous_graetz/graetz.cas`、`heat_conduction/c{1,5}`，共 44 处
+     `(12 (2 1 <n> 1 4)` 记录）、`6` = wedge（`cases/cylinder_cas/cylinder.cas`
+     3928 个 payload、`cases/ltne/LNTE1D.cas` 12160 个 payload，逐单元全为 6）、
+     `0` = 混合 zone（单元码在 payload 里）、`7` = polyhedron（reader 已有分支）。
+   - **待用户确认**：`2` = tetrahedral？`5` = pyramidal？`1` = triangular / `3` =
+     quadrilateral（2D）？（按 Fluent 元素类型约定应为 TRI=1, TET=2, QUAD=3, HEX=4,
+     PYR=5, WEDGE=6, POLY=7；仓库输入件里没有这些码 ⇒ 确认后才写死。）
+   - VTK 码：tet=10、hex=12、wedge=13、pyramid=14、tri=5、quad=9。
+   - `7` = polyhedron **不支持**（`VTK_POLYHEDRON`=42 的 legacy 编码在现代 ParaView 里
+     失效，写出器也未实现）⇒ 该单元**回落现有 fan**（同文件混写没问题，`offsets`/`types`
+     本来就是逐单元的）＋ 一次性告警。
+3. [待办] **VTK 规范节点序重建（唯一算法风险点）**：`.cas` 只给面拓扑
+   （`mesh_t%f(:)%nodes` ＋ `c0/c1`），hex/wedge/pyramid 在 VTK 里的规范节点序与 Fluent
+   的面序不同，必须由单元的**面拓扑 ＋ 几何**重建并做**朝向校验**。注意现状 fan 的
+   「`.cas` 面序对 c0 朝内」假设**并不处处成立**：`tools/validate_vtu.py --vtk` 一直在报
+   非正体积四面体（记录值：方腔 38400/76800、heat_conduction c1 404/960、c3 8496、
+   c5 162）—— native 路不能沿用该假设，否则写出的 hex/wedge 在 ParaView/Tecplot 里会
+   翻面或错乱。建议步骤：① 用胞心 `g%xc` 与面心定出每个面的**外法向**（据此把面节点排成
+   外右旋序）；② 由各面按类型拼出规范序；③ **有符号体积 > 0** 校验，失败即报错返回
+   `ier`（不静默写坏文件）。验收 oracle：`external/sample_code/unMesh/main.f90:138-171`
+   的混合样例（`offset=[8,14,18,23]`、`types=[12,13,10,14]`）＋ 现场 `.dbg/` 组脚本。
+4. [待办] **调用层新增 native 分支**：把 `mod_uns_output.f90` 的 fan 段改为
+   `if (native) ... else 现有 fan ... end if`：native 段 `npts = m%nnodes`（不追加胞心）、
+   `cell_conn/cell_off/cell_type` 按真实单元写、`CellData` **每单元一份**（不再按子 tet
+   复制）；默认段代码**一行不动**（保证 heat_conduction/m6wing 位级回归）。
+5. [待办] **守卫改造**：`tools/validate_vtu.py:461-484` 的 `--vtk` 分支现在假定全
+   `VTK_TETRA`（非 TETRA 即报错、只按 4 点算体积）⇒ 改为**按类型分派**节点数与体积公式
+   （tet/hex/wedge/pyramid/quad/tri），并把混合类型夹具加进 `--selftest`。
+6. [待办] **算例读取脚本**（读 `<connectivity>` 但不看 `<offsets>`、隐含 4 节点等长单元的
+   脚本，切 native 后会解析错位）：`cases/channel/plot_channel.py`、
+   `cases/couple_channel/compare_iface.py`、`cases/couple_porous/compare_iface.py`、
+   `cases/couple_porous/uns_full/check_bed_gradient.py`、
+   `cases/couple_porous/uns_full/plane_profile.py`、`cases/ltne/plot_ltne.py`、
+   `cases/natconv/plot_fields.py`、`cluster_cases/cavity_Re1000/check_cavity.py`、
+   `cluster_cases/channel_lowspeed/plot_channel.py`、
+   `cluster_cases/cylinder_Re40/check_cylinder.py`、
+   `cluster_cases/cylinder_Re200/check_cylinder_unsteady.py`
+   （全仓 29 个解析 `connectivity` 的脚本里，其余已用 `offsets` 通用解析）。
+7. [待办] **验证**：① 同一算例（`cluster_cases/cavity_Re1000`，串行、`timeout 600`）
+   分别以默认与 `out_cells = native` 各跑一次，用 VTK 读取器对拍
+   `pressure/velocity/temperature`（逐单元常数场，应 1e-12 内一致）并记录文件尺寸；
+   ② `make vtu_guard` ＋ `python3 tools/validate_vtu.py --selftest`；
+   ③ 默认路径位级回归（`regress/m6wing/run_regression.sh` ＋ `cases/heat_conduction`
+   重跑）**必须与现基线逐位一致**；④ 至少一个 wedge 网格（`cases/cylinder_cas`）与一个
+   hex 网格（`cases/natconv`）跑通 native；⑤ Σ(单元体积) == 域体积。
+8. [待办] **文档**：手册输出章（两种单元布局的取舍、文件尺寸、`polyhedron` 回退说明）、
+   附录 A 参数表（`out_cells` 行）、`docs/control.ec.template`、`93_changelog.tex`；
+   默认不写 `out_cells` ⇒ 老算例零改动。
+
+**结论/取舍**：native 让 VTU 与网格 1:1、文件显著变小、后处理更直观；代价是必须做对
+节点序重建，「polyhedron 网格只能用 fan」这一限制保留。
+
 ---
 
 ## 关键注意事项
@@ -662,3 +747,4 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
 | P3 | 阶段14: 湍流模型（uns 新增 SST/k-ε；struct SST 修复） | 视算例 | 阶段3, 阶段13 |
 | P3 | 阶段15: 唯一可执行入口 `bin/mixnsolver` 收敛 + `mix.control` 的 `mode` 键（已完成，见 progress.md） | 已完成 | — |
 | P3 | 阶段16: 固体传热求解 + 固体-流体（低速）/固体-多孔界面（CHT 共轭传热，CZ_SOLID=3） | 2-3天 | 阶段3, 阶段9 |
+| P3 | 阶段17: VTU 混合单元类型输出（`out_cells = tet_fan | native` 切换原生 tet/hex/wedge/pyramid；默认保持全四面体、位级不变） | 2-3天 | 阶段3 |
