@@ -35,9 +35,19 @@
 !   point_data / cell_data : val(:,:) has shape (n, ncomp); the components of
 !     one point/cell are stored contiguously, points/cells back to back.
 !
-! Both an inline ASCII file (default, full double precision) and an appended
-! binary file (Float32 payload) can be written; the ASCII path is the one used
-! by the solver.
+! Two output layouts are supported and BOTH are exercised by the solver:
+!   * inline ASCII (DEFAULT, full double precision) -- selected by
+!     `out_format = vtu` or `out_format = vtu_ascii`;
+!   * appended raw binary (Float32 payload, 4-byte UInt32 block headers),
+!     selected by `out_format = vtu_binary`; measured on cavity_Re1000
+!     (19522 points / 76800 tets): 13.70 MB ASCII -> 3.38 MB binary (~4x
+!     smaller) at the cost of ~7 significant digits.  The block `offset`
+!     attributes count from the first byte after the '_' of <AppendedData>
+!     and point AT the 4-byte length header, which is what the VTK reader
+!     expects and what the appended-raw sample writes.
+! Verified: an appended-raw file written by this module loads in the VTK
+! reader (same code as ParaView) with identical connectivity/types and data
+! equal to the ASCII twin within Float32 round-off.
 !===============================================================================
 module mod_vtu_writer
    use mod_precision, only: dp, sp, i8
@@ -75,6 +85,10 @@ contains
 
    !============================================================================
    ! Main entry point.
+   !   binary = .false. (default) writes the inline ASCII layout; binary =
+   !     .true. writes the appended raw binary layout (Float32 payload).
+   !     Callers should pass the flag decided by the control file
+   !     (`out_format`, see mod_uns_control: out_is_binary).
    !   ier = 0 on success; ier /= 0 (plus an English message on stdout) when an
    !   argument is inconsistent or the file cannot be opened, so that callers
    !   can propagate the failure through their own ier.
@@ -261,8 +275,11 @@ contains
    end subroutine write_ascii
 
    !============================================================================
-   ! Appended raw binary output (Float32 payload).  Not used by the solver but
-   ! kept from the reference sample so the module stays a drop-in writer.
+   ! Appended raw binary output (Float32 payload, UInt32 block headers).
+   ! Selected by `out_format = vtu_binary` through the optional `binary`
+   ! argument of vtu_write.  Every line of the XML envelope is written WITHOUT
+   ! a format specifier because the unit is an unformatted stream (see the
+   ! <Piece> note below).
    !============================================================================
    subroutine write_binary( fname, coords, conn, offset, cell_type, &
                             point_data, cell_data, ier )
@@ -281,7 +298,8 @@ contains
       integer(i4), allocatable :: conn32(:), offs32(:)
       integer(i1), allocatable :: typs8(:)
 
-      character(len=64) :: str, strc
+      character(len=64)  :: str, strc
+      character(len=128) :: piece_str           ! <Piece ...> header line
 
       npts   = size(coords, 2)
       nconn  = size(conn)
@@ -333,8 +351,15 @@ contains
       write(u) '<VTKFile type="UnstructuredGrid" version="1.0" ' // &
                'byte_order="LittleEndian" header_type="UInt32">' // char(10)
       write(u) '  <UnstructuredGrid>' // char(10)
-      write(u,'(a,i0,a,i0,a)') '    <Piece NumberOfPoints="', npts, &
-                               '" NumberOfCells="', ncells, '">' // char(10)
+      ! NB: this unit is an unformatted stream, so every line must be written
+      ! WITHOUT a format specifier -- a formatted write here aborts at run time
+      ! ("Format present for UNFORMATTED data transfer").  The <Piece> line is
+      ! therefore built by an internal write into piece_str first (the reference
+      ! sample does the same with its local `line` variable).  piece_str is 128
+      ! characters wide so meshes with up to 12-digit point/cell counts fit.
+      write(piece_str,'(a,i0,a,i0,a)') '    <Piece NumberOfPoints="', npts, &
+                                       '" NumberOfCells="', ncells, '">'
+      write(u) trim(piece_str) // char(10)
 
       write(u) '      <Points>' // char(10)
       write(str,'(i0)') off_pts

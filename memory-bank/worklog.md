@@ -1,6 +1,68 @@
 # 工作日志 (worklog)
 
 
+## 2026-10-15 | VTU 输出新增 appended raw binary（`out_format = vtu_binary`）＋ 修 binary 写出崩溃缺陷 ＋ 守卫双布局
+
+- 需求（用户）：`external/sample_code/unMesh/mod_vtu.f90` 提供 ascii 与 binary 两种写法，
+  「目前是否都实现、怎么切换」，以 `cluster_cases/cavity_Re1000`（Re=1000 方腔）为例。
+- **取证（与用户前提不符）**：ASCII ✅ 是唯一在用路径；binary **代码被移植进来了，但求解器
+  从不调用它，而且一开就崩** —— `mod_vtu_writer.f90:336` 把样例的
+  `write(line,'(a,i0,a,i0,a)') …` + `write(u) trim(line)//char(10)` 写成了对
+  `form="unformatted", access="stream"` 单元的**格式化 WRITE**，运行期
+  `Fortran runtime error: Format present for UNFORMATTED data transfer` 直接 abort
+  （`.dbg/vtu_bin_test.f90`，5 点/2 四面体最小算例复现，ier 都来不及返回）。同时
+  `out_format` 只放行 `vtu`，`vtk_write` / `write_snapshot_mpi` 的 5 个调用点都没传
+  `binary=` ⇒ 用户可见层面**没有任何开关**。
+- 修复 ①：`mod_vtu_writer.f90` 的 binary 段改成内部写 `piece_str`（len=128，12 位点/单元数
+  也不会截断）＋ 无格式写；ASCII 段的同名写保持不变（那是 formatted 单元）。
+- 实现 ②③：`mod_uns_control.f90` 的 `out_format` 接受
+  `vtu | vtu_ascii | vtu_binary`（默认 `vtu` = inline ASCII/Float64，老算例零改动），
+  并新增 `pure logical out_is_binary(ctrl)`；`vtk_write` 增可选 `binary` 哑元并透传给
+  `vtu_write`；透传覆盖**串行 PISO/PIMPLE 快照、MPI 快照（`mod_uns_gather::
+  write_snapshot_mpi` 新增可选 `binary`）、MPI 末态（`mod_uns_driver_mpi`）、耦合
+  `unMesh_coupled.vtu`（`mod_mix_driver`）、串行末态（`main_dispatch`）** 全部 5 处；
+  `wrote VTU file` 日志会注明实际布局。
+- 实现 ④：`tools/validate_vtu.py` 支持 `<AppendedData>`（raw 与 base64）：XML 头 / 原始负载 /
+  XML 尾按 VTK 与 meshio 的切法分离，再按每个 DataArray 的 `offset` 顺序解析块，
+  强制 `offset` == 累计字节位置（含 4 B UInt32 块头）、块长与 `type` 元素尺寸整除、
+  不越界、负载末尾只允许空白；同一套 offsets/types/节点号/数据长度/legacy 前导 token
+  检查对 binary 照常生效。`--selftest` 扩到 **10 个夹具**（新增 raw 规范、raw→base64、
+  raw legacy token、raw offset 错、raw 负载截断）。
+- 验证（串行 ＋ `timeout`，现场 `.dbg/`，遵守资源规则）：
+  ① `make -j2 mpi` 与 `make -j2 all`（串行树）均 **0 错误**；
+  ② `python3 tools/validate_vtu.py --selftest` → **0**；`.dbg/t_ascii.vtu` 与
+  `.dbg/t_binary.vtu` 都是 **0 errors / 0 warnings**（后者 `--vtk` 复查 2 个 TETRA 正常）；
+  ③ **方腔 Re=1000 端到端对照**（`.dbg/cavity_{ascii,bin}/`，同一 `unMesh.control` 分别
+  默认与 `out_format = vtu_binary`，`mpirun -np 1`、`timeout 600`，两次 **rc=0**）：
+  日志 `max |u| = 9.11512E-01`、`relative L2 error (centerline u_x) = 2.89706E-02`
+  两者**完全一致**；末态 13.70 MB → **3.38 MB（~4×）**；VTK 读取器（ParaView 同源）对拍
+  `pressure` 相对差 2.7e-08、`velocity` 3.3e-08、`temperature` 逐位相同、首末单元
+  connectivity 相同；
+  ④ ASCII 路径零回归：`bash cases/heat_conduction/run_all.sh c1` ＋
+  `check_heat_conduction.py` → 全部 PASS，c1 8.809e-09 / c2 3.707e-08 / c3 3.912e-01 /
+  c4 6.138e-09 K **与入库基线逐位一致**；
+  ⑤ 结构侧位级回归（规则要求）`timeout 600 bash regress/m6wing/run_regression.sh` → **PASS**：
+  8 个产物全 IDENTICAL、`flow3d.dat` md5 `dc134a2d196422043ecad7c86ac8f898` 不变。
+- **遗留（改动前既有，另行跟踪，勿与本节点混淆）**：`validate_vtu.py --vtk` 报
+  **非正体积四面体** —— 方腔 38400/76800、heat_conduction c1 404/960、c3 8496、c5 162；
+  `.dbg/c1_spec_final.vtu`、`.dbg/heat_conduction/*` 等**本次改动前**的产物同样命中，
+  说明是 `mod_uns_output.f90` 四面体 fan 的朝向问题（每个单元 12 个子 tet 里恰有 4 个
+  绕向与胞心不兼容），与 ascii/binary 切换无关；`make vtu_guard` 只跑 `--selftest`，
+  故不阻塞本节点。**次要坑**：meshio 5.3.5 读不了这类 raw 文件（把 raw 重新 base64 再解，
+  块长 mod 3 混合时错位报 `Incorrect padding`；样例文件恰好躲过）—— 仓库无脚本依赖 meshio。
+- 涉及文件：`src/common/mod_vtu_writer.f90`、`src/unstructured/mod_uns_output.f90`、
+  `src/unstructured/mod_uns_control.f90`、`src/unstructured/mod_uns_simple.f90`、
+  `src/unstructured/mod_uns_simple_mpi.f90`、`src/unstructured/mod_uns_gather.f90`、
+  `src/unstructured/mod_uns_driver_mpi.f90`、`src/coupling/mod_mix_driver.f90`、
+  `src/main_dispatch.f90`、`tools/validate_vtu.py`、
+  `cluster_cases/cavity_Re1000/{unMesh.control,README.md}`、`docs/93_changelog.tex`、
+  `docs/91_appendix_params.tex`、`docs/程序使用手册.tex`、memory-bank 三件套。
+- 手册：`docs/93_changelog.tex` 顶部新增本条（含控制参数取值与验证数值）；
+  `docs/91_appendix_params.tex` 的 `out_format` 行改写为三值说明；
+  `docs/程序使用手册.tex` 依赖节改写为"两种布局都符合 VTK 规范"。
+
+---
+
 ## 2026-10-15 | 修 `.vtu` 导出不符合 VTK 规范（Tecplot 360 网格错乱）＋ 18 个读取脚本改双格式兼容
 
 - 问题（用户报）：`unMesh.vtu` 在 Tecplot 360 里网格错乱/打不开，ParaView 看着正常。根因两处叠加：

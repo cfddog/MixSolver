@@ -166,7 +166,7 @@
 \texttt{conv\_blend}  & 0.0   & 0 一阶迎风；1 限幅二阶迎风（延迟修正）；中间值为混合 \\
 \texttt{nonorth\_corr} & 1.0  & 非正交扩散修正：0 仅正交，1 全修正（延迟、滞后） \\
 \texttt{ppe\_precond} & ic0   & 压力 Poisson 方程 CG 预处理：\texttt{jacobi} 或 \texttt{ic0}（不完全 Cholesky） \\
-\texttt{out\_format}  & vtu   & 结果格式：仅 \texttt{vtu}（VTK XML）；别名 \texttt{out\_fmt}；其它值报错（Tecplot \texttt{.plt} 写出及其 TecIO 依赖已移除） \\
+\texttt{out\_format}  & vtu   & 结果布局：\texttt{vtu}$\,|\,$\texttt{vtu\_ascii}（inline ASCII，Float64，默认）或 \texttt{vtu\_binary}（appended raw binary，Float32，$\sim$4$\times$ 小，$\sim$7 位有效数字）；别名 \texttt{out\_fmt}；其它值报错（Tecplot \texttt{.plt} 写出及其 TecIO 依赖已移除） \\
 \texttt{transient}    & false & false = 稳态 SIMPLE；true = 瞬态 PISO/PIMPLE \\
 \texttt{time\_scheme} & 1     & 1 隐式 Euler；2 BDF2（首步用 Euler 启动） \\
 \texttt{dt}           & 0.0   & 时间步长（\texttt{transient=true} 时必须 $>0$） \\

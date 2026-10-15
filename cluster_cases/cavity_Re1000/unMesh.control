@@ -29,7 +29,7 @@ mu  = 0.001            # Re = rho*U_lid*L/mu = 1*1*1/0.001 = 1000
 # --- steady SIMPLE ----------------------------------------------------------
 transient  = false
 pimple     = false
-outer_max  = 10        # requested 10-iteration parameter check
+outer_max  = 1000        # requested 10-iteration parameter check
 outer_tol  = 0.0       # disable early exit; convergence tests use strict '<'
 
 # --- linear algebra / discretisation ----------------------------------------
@@ -45,3 +45,13 @@ ppe_precond  = ic0
 bc  = 5 wall                       # the four walls (lid filter selects the top)
 bc  = 4 symmetry                   # z = 0 / z = 1 faces (strictly 2D)
 lid = 5 2 1.0 1.0 0.0 0.0          # zone 5, plane dir 2 (y), at y = 1, u = (1,0,0)
+
+# --- output layout (optional; default = inline ASCII VTU) -------------------
+# Both layouts are spec-conformant .vtu files (ParaView and Tecplot 360 open
+# both); the layout is echoed on every "wrote VTU file" log line.
+# out_format = vtu          # default: inline ASCII, Float64 (~13.7 MB/snapshot)
+# out_format = vtu_ascii    # same as vtu, spelled out
+# out_format = vtu_binary   # appended raw binary, Float32 (~3.4 MB/snapshot)
+# NB for vtu_binary: only ~7 significant digits are kept, and check_cavity.py
+#    reads ASCII text only -- validate/recompute with tools/validate_vtu.py or
+#    a VTK reader (the Ghia L2 stays 2.897e-2, ASCII vs binary differ by ~3e-8).

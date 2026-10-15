@@ -26,7 +26,7 @@ module mod_uns_control
              BC_MASSINLET, &
              BC_OUTFLOW, BC_INTERFACE, &
              bc_type_name, resolve_cell_zones, cell_zone_t, &
-             CZ_AUTO, CZ_FLUID, CZ_POROUS, CZ_SOLID
+             CZ_AUTO, CZ_FLUID, CZ_POROUS, CZ_SOLID, out_is_binary
 
    integer, parameter :: BC_NONE     = 0
    integer, parameter :: BC_WALL     = 1
@@ -160,10 +160,16 @@ module mod_uns_control
                                         ! (deferred, lagged; interior faces)
       character(len=16) :: ppe_precond = 'ic0'  ! PPE CG preconditioner:
                                         ! 'jacobi' or 'ic0' (incomplete Cholesky)
-      character(len=16) :: out_format = 'vtu'  ! result file format; only 'vtu'
-                                        ! (VTK XML) is supported.  The Tecplot
-                                        ! .plt writer and its TecIO/libtecio
-                                        ! dependency were removed (phase 17)
+      character(len=16) :: out_format = 'vtu'  ! result file layout (VTK XML):
+                                        !   'vtu' | 'vtu_ascii' = inline ASCII,
+                                        !     full double precision (default)
+                                        !   'vtu_binary'        = appended raw
+                                        !     binary, Float32 payload (~4x
+                                        !     smaller file, ~7 significant
+                                        !     digits); use out_is_binary()
+                                        ! The Tecplot .plt writer and its
+                                        ! TecIO/libtecio dependency were
+                                        ! removed (phase 17)
       ! --- transient PISO parameters (phase 8) ---
       ! transient = .false. selects steady SIMPLE (simple_run); when .true.,
       ! main dispatches to piso_run and the momentum assembly adds an implicit
@@ -352,11 +358,18 @@ contains
             ctrl%ppe_precond = trim(adjustl( lowercase(val) ))
          case ( 'out_format', 'out_fmt' )
             ctrl%out_format = trim(adjustl( lowercase(val) ))
-            if ( ctrl%out_format /= 'vtu' ) then
-               write(*,'(a)') 'ERROR: out_format must be vtu (the Tecplot ' &
-                              // '.plt output was removed): ' // trim(val)
+            ! Three layouts are accepted (see ctrl_t%out_format / out_is_binary):
+            !   vtu | vtu_ascii -> inline ASCII, Float64 (default)
+            !   vtu_binary      -> appended raw binary, Float32
+            select case ( trim(ctrl%out_format) )
+            case ( 'vtu', 'vtu_ascii', 'vtu_binary' )
+               ! accepted
+            case default
+               write(*,'(a)') 'ERROR: out_format must be one of ' // &
+                              'vtu | vtu_ascii | vtu_binary (the Tecplot ' // &
+                              '.plt output was removed): ' // trim(val)
                ier = 2; exit
-            end if
+            end select
 
          ! --- transient PISO keywords (phase 8) ---
          case ( 'transient' )
@@ -1300,5 +1313,18 @@ contains
       case default;          name = 'none'
       end select
    end function bc_type_name
+
+   !----------------------------------------------------------------------------
+   ! True when the VTU result writer must emit the appended raw binary layout
+   ! (`out_format = vtu_binary`).  'vtu' and 'vtu_ascii' select the inline
+   ! ASCII layout, which is the default and what every cases/**/*.py reader in
+   ! this repository expects (they locate the data blocks with strict
+   ! r'<CellData>(.*?)</CellData>' style regular expressions on ASCII text).
+   !----------------------------------------------------------------------------
+   pure logical function out_is_binary( ctrl )
+      type(ctrl_t), intent(in) :: ctrl
+
+      out_is_binary = ( trim(ctrl%out_format) == 'vtu_binary' )
+   end function out_is_binary
 
 end module mod_uns_control

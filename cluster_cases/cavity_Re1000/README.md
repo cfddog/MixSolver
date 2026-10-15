@@ -154,3 +154,46 @@ python3 check_cavity.py out/cavity_Re1000_np4.vtu
   的定量验证见 `cluster_cases/cylinder_Re200/README.md` 第 8 节。
 * 核数声明与守卫（`n_struct_ranks` + `n_uns_ranks`，退出码 6/7/8）见
   `cluster_cases/README.md` 第 3 节；本现场的 `mix.control` 已打开 `uns_parallel = always`。
+## 8. ASCII / binary 输出切换（`out_format`）
+
+`unMesh.control` 默认**不写** `out_format`，即 **inline ASCII**（Float64）。需要小文件时
+加一行即可（控制文件末尾已附注释示例）：
+
+```
+out_format = vtu_binary      # appended raw binary（Float32）
+```
+
+| `out_format` | 数据布局 | 精度 | 本算例末态快照 |
+|---|---|---|---|
+| `vtu`（默认）/ `vtu_ascii` | inline ASCII | Float64（全部有效位） | **13.70 MB** |
+| `vtu_binary` | appended raw ＋ UInt32 块头 | Float32（~7 位有效数字） | **3.38 MB**（~1/4） |
+
+两者都是**符合 VTK 规范**的 `.vtu`（`connectivity` 为纯节点号、`offsets` 累加、
+`types` 每单元一个），ParaView 与 Tecplot 360 都能打开；求解器每条
+`wrote VTU file` 日志会注明实际布局（binary 会多打 `(appended raw binary, Float32)`）。
+
+同一 control 分别跑一次（np = 1、10 次 SIMPLE 外迭代）的实测对照：
+
+| 量 | ASCII | binary |
+|---|---|---|
+| 日志 `max \|u\|` | 9.11512E-01 | 9.11512E-01 |
+| 日志 `relative L2 error (centerline u_x)` | 2.89706E-02 | 2.89706E-02 |
+| VTK 读取器对拍 `pressure`（相对差） | — | 2.7e-08 |
+| `velocity`（相对差） | — | 3.3e-08 |
+| `temperature` | — | **逐位相同** |
+| 首/末单元 connectivity | `[81,6642,6643,13122]` / `[6479,13121,6560,19521]` | 同上 |
+
+**注意**
+
+* `check_cavity.py` 用严正则读 **ASCII 文本**，读不了 binary（仓库内 20 多个
+  `cases/**/*.py` 同理）。切 binary 后改用
+  `python3 tools/validate_vtu.py --vtk out/<tag>.vtu`（格式守卫 ＋ VTK 读取器）
+  或自写 `vtk`/`meshio` 读取器。
+* binary 只有 ~7 位有效数字，会破坏"逐位一致"式回归断言；对 Ghia L2（3 位有效
+  数字判据）无影响。
+* `tools/validate_vtu.py` 现在两种布局都支持（appended raw / base64 的块
+  `offset`、块头、长度都按 VTK 约定校验；`--selftest` 10 个夹具）。
+* 遗留（与本次 ascii/binary 切换无关）：`--vtk` 模式还会检查四面体有无非正体积，
+  本算例与 `cases/heat_conduction` 的旧产物都会报"非正体积四面体"（每个单元
+  12 个 tet 里 4 个朝向相反）——这是**改动前就存在**的四面体化朝向问题，单独跟踪修复。
+

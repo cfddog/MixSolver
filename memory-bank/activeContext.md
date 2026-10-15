@@ -1,5 +1,41 @@
 # 当前上下文 (activeContext)
 
+> **2026-10-15 🆕 VTU 输出支持 appended raw binary（`out_format = vtu_binary`）＋ binary 写出缺陷修复 ＋ 守卫双布局**：
+> 需求（用户）：`external/sample_code/unMesh/mod_vtu.f90` 里 ascii/binary 两种形式
+> 「是否都实现了、怎么切换」，以 `cluster_cases/cavity_Re1000` 为例。**取证结论**：
+> ASCII ✅ 是唯一在用路径；binary **代码在但没有任何开关、而且一开就崩** ——
+> 移植时把样例的 `write(line,'(a,i0,a,i0,a)') …` + `write(u) trim(line)//char(10)`
+> 写成了对 `form="unformatted", access="stream"` 单元的**格式化 WRITE**
+> （`mod_vtu_writer.f90:336`），运行期直接 `Format present for UNFORMATTED data transfer`
+> abort（`.dbg/vtu_bin_test.f90` 复现）；且 `out_format` 当时只放行 `vtu`，
+> 5 处 `vtk_write` / `write_snapshot_mpi` 调用点都没传 `binary=`。
+> **实现**：① 修该缺陷（内部写 `piece_str(len=128)` ＋ 无格式写，照样例写法，缓冲区加宽到
+> 12 位点/单元数也不会截断）；② `mod_uns_control`：`out_format = vtu | vtu_ascii | vtu_binary`
+> （默认 `vtu` = inline ASCII）＋ `pure logical out_is_binary(ctrl)`；③ `vtk_write(..., binary=)`
+> 可选哑元 → `vtu_write(binary=)`，透传覆盖**串行 PISO/PIMPLE 快照、MPI 快照
+> （`write_snapshot_mpi` 新增可选 `binary`）、MPI 末态、耦合 `unMesh_coupled.vtu`、串行末态**；
+> ④ `tools/validate_vtu.py` 增加 `<AppendedData>` 支持（raw/base64：块 `offset` 必须等于
+> 累计字节位置且含 4 B 块头、块长与元素尺寸整除、不越界、末尾只允许空白），
+> `--selftest` 扩到 **10 个夹具**。
+> **验证**：`make mpi` / `make all` 0 错误；`python3 tools/validate_vtu.py --selftest` → 0；
+> **方腔 Re=1000 同一 control 分别以 `vtu` 与 `vtu_binary` 各跑一次**（np=1、`timeout 600`）：
+> 日志 `max|u| = 9.11512E-01`、`relative L2 error = 2.89706E-02` **完全一致**；
+> 末态 13.70 MB → 3.38 MB（~4×）；VTK 读取器对拍 pressure/velocity 相对差 ≤ 3.3e-8、
+> temperature 逐位相同、首末单元 connectivity 相同；两文件守卫 **0 errors / 0 warnings**。
+> ASCII 路径零回归：`cases/heat_conduction` 复跑 c1 8.809e-09 / c2 3.707e-08 /
+> c3 3.912e-01 / c4 6.138e-09 K 与基线**逐位一致**；结构侧位级回归
+> `regress/m6wing/run_regression.sh` **PASS**（8 产物全 IDENTICAL、`flow3d.dat`
+> md5 `dc134a2d…` 不变）。**文档**：`docs/93_changelog.tex` 新条、
+> `docs/91_appendix_params.tex` 的 `out_format` 行、`docs/程序使用手册.tex` 依赖节、
+> `cluster_cases/cavity_Re1000/{unMesh.control,README.md}`。
+> **遗留（改动前既有，另行跟踪，勿与本节点混淆）**：`validate_vtu.py --vtk` 会报
+> **非正体积四面体**（方腔 38400/76800、heat_conduction c1 404/960、c3 8496、c5 162）——
+> 每个求解单元的 12 个子四面体里恰有 4 个朝向相反（面片绕向与胞心不兼容），
+> 与 ascii/binary 切换无关；修复点应在 `mod_uns_output.f90` 的 fan 朝向假设。
+> **次要坑**：meshio 5.3.5 读不了这类 raw 文件（把 raw 重新 base64 再解，块长 mod 3
+> 混合时错位报 `Incorrect padding`；样例文件恰好躲过）——仓库无脚本依赖 meshio，
+> 校验请用 `vtk` 模块或本仓库守卫。
+
 > **2026-10-15 🆕 `.vtu` 导出修规范（Tecplot 360 能读了）＋ 仓库算例读取脚本改双格式兼容**：
 > 用户报 `unMesh.vtu` 在 **Tecplot 360** 里网格错乱（ParaView 一直正常）。根因两处叠加：
 > ① `<connectivity>` 每个四面体多写了一个 legacy VTK「CELLS 顶点数」token

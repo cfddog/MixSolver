@@ -32,6 +32,34 @@
 \bottomrule
 \endlastfoot
 2026-10-15 & -- &
+\textbf{VTU 输出新增 appended raw binary 布局（\texttt{out\_format = vtu\_binary}）}：
+样例 \texttt{external/sample\_code/unMesh/mod\_vtu.f90} 本就提供 ascii/binary 两条路径，
+移植时 binary 路径既没被求解器调用、也无法运行 —— \texttt{write\_binary} 对
+\texttt{form="unformatted"} 的流单元误用格式化 \texttt{WRITE}，一开就
+\texttt{Format present for UNFORMATTED data transfer} 崩溃。现在修好该缺陷并接成
+可切换布局：\texttt{vtu}$\,|\,$\texttt{vtu\_ascii}（默认，inline ASCII，Float64）与
+\texttt{vtu\_binary}（appended raw，Float32，\texttt{header\_type="UInt32"}，块
+\texttt{offset} 指向 4 字节块头）。切换链 \texttt{mod\_uns\_control::out\_is\_binary}
+$\to$ \texttt{vtk\_write(binary=)} $\to$ \texttt{vtu\_write(binary=)}，覆盖串行/MPI
+快照、MPI 末态、耦合 \texttt{unMesh\_coupled.vtu} 全部写点；守卫
+\texttt{validate\_vtu.py} 增加 appended（raw/base64）解析与 5 个新夹具。
+& \texttt{src/common/mod\_vtu\_writer.f90}、
+\texttt{src/unstructured/mod\_uns\_output.f90}、\texttt{mod\_uns\_control.f90}、
+\texttt{mod\_uns\_simple.f90}、\texttt{mod\_uns\_simple\_mpi.f90}、
+\texttt{mod\_uns\_gather.f90}、\texttt{mod\_uns\_driver\_mpi.f90}、
+\texttt{src/coupling/mod\_mix\_driver.f90}、\texttt{src/main\_dispatch.f90}、
+\texttt{tools/validate\_vtu.py}
+& ① \texttt{make mpi} / \texttt{make all} 均 0 错误；② \texttt{python3 tools/validate\_vtu.py
+--selftest} $\to$ 0（10 个夹具：原 5 个 ＋ raw 规范 / raw base64 / raw legacy token /
+raw offset 错 / raw 负载截断）；③ \texttt{cavity\_Re1000} 同一 control 分别以默认
+\texttt{vtu} 与 \texttt{vtu\_binary} 各跑一次（np$=$1，\texttt{timeout 600}）：日志
+\texttt{max|u|}$=$9.11512E-01、\texttt{relative L2}$=$2.89706E-02 完全一致，快照
+13.70 MB $\to$ 3.38 MB（$\sim$4$\times$），VTK 读取器对拍 pressure/velocity 相对差
+$\le3.3\times10^{-8}$、temperature 逐位相同、首末单元 connectivity 相同；
+④ 两种布局的 \texttt{.vtu} 守卫均 \textbf{0 errors / 0 warnings}；⑤ 结构侧位级回归
+\texttt{regress/m6wing/run\_regression.sh} PASS（8 产物全 IDENTICAL）。\\
+\midrule
+2026-10-15 & -- &
 \textbf{修 \texttt{.vtu} 导出不符合 VTK 规范（Tecplot 360 网格错乱）＋ 18 个读取脚本改双格式兼容}：
 根因两处叠加 —— \texttt{connectivity} 每个四面体多写一个 legacy VTK ``CELLS'' 顶点数 token
 （\texttt{"4 n0 n1 n2 cen"}，5 token/单元、\texttt{offsets} $=5,10,15,\dots$；ParaView 靠 offsets

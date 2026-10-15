@@ -1,10 +1,17 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-15（**`.vtu` 导出修规范（Tecplot 360 网格错乱）＋ 18 个读取脚本改
-> 规范/旧文件双格式兼容**：`connectivity` 不再多写 legacy 前导 token（4 token/四面体 ＋
-> 累积 `offsets`）、节点号不再双重减 1；新增 `tools/validate_vtu.py` + `make vtu_guard`
-> 格式守卫。验证：`cases/heat_conduction` 5 例重跑 + 对拍**全 PASS**（误差与改前逐位一致）、
-> 6 个 `.vtu` 守卫 0 errors/0 warnings、旧格式资产 `plug_darcy.vtu` 上
+> 最后更新：2026-10-15（**VTU 输出新增 appended raw binary（`out_format = vtu_binary`）**：
+> 修好移植时留下的 binary 写出缺陷（对 unformatted 流单元误用格式化 WRITE，一开即崩），
+> 把 ascii/binary 接成可切换布局并透传到全部 5 个写点；`tools/validate_vtu.py` 支持
+> appended raw/base64 解析（`--selftest` 10 个夹具）。验证：方腔 Re=1000 同 control 两种布局
+> 各跑一次（日志 `max|u|`/`relative L2` 完全一致，13.70 MB → 3.38 MB，VTK 读取器对拍差
+> ≤3.3e-8）、两文件守卫 0 errors/0 warnings、heat_conduction ASCII 路径逐位零回归、
+> m6wing 位级回归 PASS；**无解算数值回归**）
+>
+> 2026-10-15 节点：**`.vtu` 导出修规范（Tecplot 360 网格错乱）＋ 18 个读取脚本改
+> 规范/旧文件双格式兼容**（`connectivity` 不再多写 legacy 前导 token、节点号不再双重减 1；
+> 新增 `tools/validate_vtu.py` + `make vtu_guard`。验证：`cases/heat_conduction` 5 例重跑 +
+> 对拍**全 PASS**、6 个 `.vtu` 守卫 0 errors/0 warnings、旧格式资产 `plug_darcy.vtu` 上
 > `fit_pp.py`/`plot_plug.py` 结果与新文件完全一致；**无解算数值回归**）
 >
 > 2026-10-14 节点：**纯导热解析解验证算例族 `cases/heat_conduction`（5＋1 个算例）**：
@@ -21,6 +28,24 @@
 > 续算与连续 12000 步对到 4–5 位有效数字，natconv Ra=1e3 复跑零回归**）
 
 ## 已完成
+
+- [x] **VTU 输出支持 appended raw binary（2026-10-15，`out_format = vtu_binary`）**：
+  - **起因**：用户问 sample_code 的 ascii/binary 两种写法是否都实现、怎么切换（方腔
+    Re=1000）。取证发现 binary 路径**既没被求解器调用、又无法运行** —— 移植时把样例的
+    `write(line,'(…)')` + `write(u) trim(line)//char(10)` 写成对 `form="unformatted"`
+    流单元的格式化 WRITE，运行期 `Format present for UNFORMATTED data transfer` 崩溃。
+  - **修复/实现**：① 修该缺陷（`piece_str(len=128)` 内部写 ＋ 无格式写）；
+    ② `out_format = vtu | vtu_ascii | vtu_binary`（默认 ASCII）＋ `out_is_binary(ctrl)`；
+    ③ `vtk_write(..., binary=)` → `vtu_write(binary=)`，透传 5 个写点（串行/MPI 快照、
+    MPI 末态、耦合 `unMesh_coupled.vtu`、串行末态）；④ 守卫支持 appended raw/base64。
+  - **验证**：方腔 Re=1000 同 control 两种布局各跑一次（np=1、`timeout 600`）——
+    日志 `max|u|` 9.11512E-01、`relative L2` 2.89706E-02 **完全一致**，13.70 MB → 3.38 MB
+    （~4×），VTK 读取器对拍 pressure/velocity 相对差 ≤3.3e-8、temperature 逐位相同、
+    connectivity 相同；两文件守卫 **0 errors / 0 warnings**；`--selftest` 10 夹具全按预期；
+    ASCII 零回归（heat_conduction c1/c2/c3/c4 = 8.809e-09/3.707e-08/3.912e-01/6.138e-09 K）；
+    m6wing 位级回归 PASS。
+  - **遗留（改动前既有）**：`--vtk` 报非正体积四面体（方腔 38400/76800 等）——子四面体
+    朝向问题，另行跟踪；meshio 5.3.5 读不了 appraw（其自身重编码缺陷，仓库不依赖）。
 
 - [x] **`.vtu` 导出修规范（2026-10-15，Tecplot 360 网格错乱）＋ 读取脚本双格式兼容**：
   - **症状**：`unMesh.vtu` 在 Tecplot 360 里网格错乱/打不开，ParaView 一切正常。

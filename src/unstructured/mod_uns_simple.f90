@@ -528,7 +528,8 @@ contains
          ! ---- optional result snapshot (VTU) ---------------------------------
          if ( n_out > 0 .and. ( mod(it,n_out) == 0 .or. it == n_steps ) ) then
             call make_step_filename( vtu_prefix, it, step_ext, vtufile )
-            call vtk_write( m, conn, g, fld, trim(vtufile), ios )
+            call vtk_write( m, conn, g, fld, trim(vtufile), ios, &
+                            out_is_binary(ctrl) )
             if ( ios /= 0 ) then
                write(*,'(a,i0,a)') 'WARNING: result write failed at step ', &
                                   it, ' (continuing)'
@@ -778,7 +779,8 @@ contains
 
          if ( n_out > 0 .and. ( mod(it,n_out) == 0 .or. it == n_steps ) ) then
             call make_step_filename( vtu_prefix, it, step_ext, vtufile )
-            call vtk_write( m, conn, g, fld, trim(vtufile), ios )
+            call vtk_write( m, conn, g, fld, trim(vtufile), ios, &
+                            out_is_binary(ctrl) )
             if ( ios /= 0 ) then
                write(*,'(a,i0,a)') 'WARNING: result write failed at step ', &
                                   it, ' (continuing)'

@@ -551,7 +551,8 @@ contains
          if ( n_out > 0 .and. ( mod(it,n_out) == 0 .or. it == n_steps ) ) then
             call make_step_filename( vtu_prefix, it, step_ext, vtufile )
             call write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, &
-                                     trim(vtufile), fld_g, ios )
+                                     trim(vtufile), fld_g, ios, &
+                                     out_is_binary(ctrl) )
             if ( ios /= 0 .and. myrank == 0 ) then
                write(*,'(a,i0,a)') 'WARNING: snapshot write failed at step ', &
                                   it, ' (continuing)'
@@ -829,7 +830,8 @@ contains
          if ( n_out > 0 .and. ( mod(it,n_out) == 0 .or. it == n_steps ) ) then
             call make_step_filename( vtu_prefix, it, step_ext, vtufile )
             call write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, &
-                                     trim(vtufile), fld_g, ios )
+                                     trim(vtufile), fld_g, ios, &
+                                     out_is_binary(ctrl) )
             if ( ios /= 0 .and. myrank == 0 ) then
                write(*,'(a,i0,a)') 'WARNING: snapshot write failed at step ', &
                                   it, ' (continuing)'

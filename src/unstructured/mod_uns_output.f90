@@ -58,27 +58,33 @@ module mod_uns_output
 contains
 
    !----------------------------------------------------------------------------
-   ! Write the solution as a VTU file (VTK XML, inline ASCII data) with every
-   ! cell tetrahedralized.  The XML/byte layout is produced by mod_vtu_writer;
-   ! see the module header there for the format requirements (pure node-id
-   ! connectivity, cumulative offsets, per-cell types).
+   ! Write the solution as a VTU file (VTK XML) with every cell tetrahedralized.
+   ! The XML/byte layout is produced by mod_vtu_writer; see the module header
+   ! there for the format requirements (pure node-id connectivity, cumulative
+   ! offsets, per-cell types).
+   !   binary = .false. (default) -> inline ASCII, Float64 (out_format = vtu)
+   !   binary = .true.            -> appended raw binary, Float32
+   !                                 (out_format = vtu_binary; ~4x smaller)
    !----------------------------------------------------------------------------
-   subroutine vtk_write( m, conn, g, fld, filename, ier )
+   subroutine vtk_write( m, conn, g, fld, filename, ier, binary )
       type(mesh_t),    intent(in)  :: m
       type(conn_t),    intent(in)  :: conn
       type(geom_t),    intent(in)  :: g
       type(fields_t),  intent(in)  :: fld
       character(len=*), intent(in) :: filename
       integer,         intent(out) :: ier
+      logical, optional, intent(in):: binary
 
       integer  :: j, k, c, f, nn, nsub, ntets, cen_id, npts, ncd, it
       integer  :: tri(3)
-      logical  :: has_solid, has_ts
+      logical  :: has_solid, has_ts, bin
       real(dp), allocatable :: coords(:,:)
       integer,  allocatable :: cell_conn(:), cell_off(:), cell_type(:)
       type(vtu_data), allocatable :: cdata(:)
 
       ier = 0
+      bin = .false.
+      if ( present(binary) ) bin = binary
 
       ! total number of tetrahedra: each face contributes (nn-2) triangles
       ! NB: cf is 0-offset CSR -- entries of cell c are cf(cf_ptr(c)+1 : cf_ptr(c+1))
@@ -178,10 +184,15 @@ contains
       end do
       ! ---- write the file through the generic XML writer ----------------------
       call vtu_write( filename, coords, cell_conn, cell_off, cell_type, &
-                      cell_data = cdata, ier = ier )
+                      cell_data = cdata, binary = bin, ier = ier )
       if ( ier /= 0 ) return
 
-      write(*,'(a)') '  wrote VTU file : ' // trim(filename)
+      if ( bin ) then
+         write(*,'(a)') '  wrote VTU file : ' // trim(filename) // &
+                        '  (appended raw binary, Float32)'
+      else
+         write(*,'(a)') '  wrote VTU file : ' // trim(filename)
+      end if
    end subroutine vtk_write
 
    !----------------------------------------------------------------------------

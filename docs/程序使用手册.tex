@@ -136,9 +136,11 @@ $a_{ref}$、$p_{ref}$、$p_{scale}$。\textbf{混用两份参考状态是耦合�
   \item \textbf{gfortran}（源码按 \texttt{-std=f2008} 编译）与 \textbf{mpif90}
         （OpenMPI 或 MPICH 均可）。
   \item \texttt{lib/metis/libmetis.a}：MPI 版本的网格分区（在 rank 0 上串行调用）。
-  \item 结果输出**不依赖任何第三方库**：只写 ASCII VTU（\texttt{out\_format}
-        仅接受 \texttt{vtu}；早先的 Tecplot \texttt{.plt} 写出与
-        \texttt{lib/tecplot/libtecio.a} 依赖已移除）。
+  \item 结果输出**不依赖任何第三方库**：写 VTK XML（\texttt{out\_format} $=$
+        \texttt{vtu} 或 \texttt{vtu\_ascii} 为 inline ASCII（Float64，默认），
+        \texttt{vtu\_binary} 为 appended raw binary（Float32，文件约小 4$\times$，
+        两种布局都符合 VTK 规范、ParaView 与 Tecplot 都能打开；早先的 Tecplot
+        \texttt{.plt} 写出与 \texttt{lib/tecplot/libtecio.a} 依赖已移除）。
   \item \texttt{xelatex} ＋ \texttt{ctex}：仅用于编译本手册。
   \item \textbf{ParMETIS 默认不链接}：\texttt{lib/parmetis/} 里的预编译库对应
         MPICH ABI，与 OpenMPI 不兼容，重新编译前不要启用。
