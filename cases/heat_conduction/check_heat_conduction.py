@@ -7,13 +7,15 @@
 #
 # .vtu 读取约定（与 cases/porous_plug/plot_plug.py 一致）：
 #   * vtk_write 把每个六面体胞拆成 12 个四面体（"face fan + 胞心"）；
-#   * connectivity 每行按 **legacy VTK CELLS 风格**写成 "4 id0 id1 id2 cen"
-#     （首个 token 是顶点数），offsets 相应为 5,10,15,...；
+#   * connectivity 每行就是该四面体的节点号 "id0 id1 id2 cen"（VTK 规范写法，
+#     无前导顶点数 token），offsets 为累积值 4,8,12,...；2026-10-15 之前写的是
+#     legacy VTK CELLS 风格 "4 id0 id1 id2 cen"（offsets 5,10,15,...），
+#     本脚本两种都能读（见 load_vtu 的 token 兼容处理）；
 #   * points 末尾追加 m%ncells 个胞心坐标 g%xc，其 0-based id = nnodes+c-1，
 #     即每个四面体的**最大节点号**就是它所属原胞的胞心 id；
 #   * CellData 每个数组按原胞顺序写 nsub=12 个相同值（块状）。
-#   本脚本用 offsets 切块 + 去掉前导顶点数 token，再用
-#   "块内 nan 检查 / 胞心 id = 块编号" 双重自校验。
+#   本脚本用 offsets 切块读单元节点号，再用
+#   "块内恰好 4 个节点号 / 胞心 id = 块编号" 双重自校验。
 #
 # 用法：
 #   python3 check_heat_conduction.py               # 检查全部已运行算例
@@ -227,15 +229,18 @@ def load_vtu(fn):
     assert cdat is not None, 'no <CellData> in ' + fn
     cdat = cdat.group(1)
 
-    # 用 offsets 切块，去掉 legacy VTK "顶点数" 前导 token -> 单元节点号
+    # 用 offsets 切块 -> 单元节点号。兼容两种写法：
+    #   * 规范（2026-10-15 起）：块内就是 4 个节点号；
+    #   * 旧文件：块内 5 个 token "4 n0 n1 n2 cen"（首 token 是顶点数）。
     st = np.concatenate(([0], off[:-1]))
     ntets = len(off)
     cen_id = np.empty(ntets, dtype=int)
     for i in range(ntets):
         ids = conn[st[i]:off[i]]
-        nv = ids[0]
-        assert len(ids) == nv + 1, 'bad CELLS block at tet %d' % i
-        ids = ids[1:]
+        if ids[0] == 4 and len(ids) == 5:   # 旧文件：legacy "4 n0 n1 n2 cen"
+            ids = ids[1:]                   # （不能用 len(ids)==ids[0]+1 判：
+                                            #  新格式里首个节点号恰为 3 时会误判！）
+        assert len(ids) == 4, 'bad CELLS block at tet %d: %s' % (i, ids)
         cen_id[i] = ids.max()          # 胞心点 id = 该四面体最大节点号
     nnodes0 = int(cen_id.min())        # 0-based 首个胞心 id = 网格节点数
     ncell = len(pts) - nnodes0

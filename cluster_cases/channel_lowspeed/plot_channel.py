@@ -31,7 +31,9 @@ def read_vtu(fn):
     pts = np.array([float(x) for x in pts.group(1).split()]).reshape(-1, 3)
     ncell = int(re.search(r'NumberOfCells="(\d+)"', txt).group(1))
     con = re.search(r'Name="connectivity"[^>]*>(.*?)</DataArray>', txt, re.S)
-    con = np.array([int(x) for x in con.group(1).split()]).reshape(ncell, 5)
+    con = np.array([int(x) for x in con.group(1).split()]).reshape(ncell, -1)
+    if con.shape[1] == 5 and con[:, 0].max() == 4:   # 旧文件 legacy 前导 token
+        con = con[:, 1:]
 
     def vec(name):
         m = re.search(r'Name="%s"[^>]*>(.*?)</DataArray>' % name, txt, re.S)
@@ -42,7 +44,7 @@ def read_vtu(fn):
         return np.array([float(x) for x in m.group(1).split()]).reshape(-1, 1).ravel()
 
     vel, pr = vec('velocity'), scl('pressure')
-    cenid, inv = np.unique(con[:, 4], return_inverse=True)
+    cenid, inv = np.unique(con[:, -1], return_inverse=True)
     cen = pts[cenid]
     # replicated values are identical across the 12 tets; take first occurrence
     u = np.zeros(len(cenid)); v = np.zeros(len(cenid)); w = np.zeros(len(cenid))

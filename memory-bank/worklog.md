@@ -1,6 +1,74 @@
 # 工作日志 (worklog)
 
 
+## 2026-10-15 | 修 `.vtu` 导出不符合 VTK 规范（Tecplot 360 网格错乱）＋ 18 个读取脚本改双格式兼容
+
+- 问题（用户报）：`unMesh.vtu` 在 Tecplot 360 里网格错乱/打不开，ParaView 看着正常。根因两处叠加：
+  ① `<connectivity>` 每个四面体多写了一个 **legacy VTK "CELLS" 顶点数 token**
+  （`"4 n0 n1 n2 cen"`，5 token/单元、`offsets` = 5,10,15,...）——那是 VTK 的**旧**格式，
+  ParaView 靠 `offsets` 反推容错所以一直没暴露，Tecplot 严格解析把首 token 当节点号；
+  ② 单元节点号整体偏 1：写出器 `vtu_write` 内部已把 1-based 转 0-based，而调用方
+  `mod_uns_output` 又传了**已经 0-based** 的 face 节点号（双重减 1）。
+- 修复：`mod_uns_output.f90` 改传**原始 1-based** face 节点号与胞心 id（`m%nnodes + c`）；
+  `mod_vtu_writer.f90`（新文件，ASCII VTU 写出器）按规范写 **4 token/四面体** ＋ 累积
+  `offsets`，`<Points>/<Cells>/<types>` 长度自洽，`<PointData>/<CellData>` 写**无属性裸标签**
+  （仓库内 `cases/**/*.py` 用严正则 `r'<CellData>(.*?)</CellData>'` 取数据块，加属性会让它们全部失效）。
+- 新增格式守卫 `tools/validate_vtu.py` ＋ `make vtu_guard`：检查 offsets 与 types 的节点数是否
+  一致、节点号范围、各数组长度、`<Cells>` 是否混入 legacy 前导 token（命中直接判错），
+  `--vtk` 可选真读（与 ParaView 同源）；`--selftest` 用 4 个夹具（规范 / legacy / offsets 错 /
+  节点越界）验证守卫有效，退出码 0。
+- **兼容性回归（本次重点）**：18 个读 VTU 的算例脚本统一改成「规范 / 旧文件都能读」——
+  逐块形式 `if ids[0] == 4 and len(ids) == 5: ids = ids[1:]`，矩阵形式
+  `if con.shape[1] == 5 and con[:, 0].max() == 4: con = con[:, 1:]`，胞心取块内**最后一个** id；
+  `cases/porous_plug/*`、`cases/betchen/*` 等本来就写成这种兼容式（未改）。
+  **坑（已写进注释）**：不能用 `len(ids) == ids[0] + 1` 判旧格式 —— 新格式里某个四面体首个节点号
+  恰为 3 时会误判（本次实测 c1 的 tet 28 = `[3 126 167 248]` 被误剥成 3 个号，被脚本自带 assert 拦下）。
+- 验证（全部可复现；串行 ＋ `timeout`，遵守本机资源保护；运行现场在 `.dbg/`，不入库）：
+  ① `bash cases/heat_conduction/run_all.sh c1 c2 c3 c4 c5`（5 例全部 CONVERGED）
+  ＋ `python3 cases/heat_conduction/check_heat_conduction.py` → **全部 PASS，退出码 0**：
+  c1 8.809e-09 K、c2 3.707e-08 K、c3 3.912e-01 K（0.196 %）、c4 6.138e-09 K、
+  c5 5.208e-02 K —— 与改前逐位一致（脚本还自校验块切分/胞心 id/tet→cell 块状有序/逐胞复制）；
+  ② `python3 tools/validate_vtu.py <c1..c5 + plug 共 6 个 .vtu>` → **0 errors, 0 warnings**；
+  `make vtu_guard` → OK（含「带属性数据块」告警夹具）；
+  ③ **旧格式资产回归**：`python3 cases/porous_plug/fit_pp.py` 读新 `.vtu` 与读仓库内旧格式
+  `plug_darcy.vtu` 数字**完全一致**（fitted dp/dx = -184.600 vs 解析 -184.600，err -0.000 %，
+  u 最大偏差 0.0306 %，dp = 18.4600 Pa）；`cases/porous_plug/plot_plug.py` 在旧资产上照常出图；
+  ④ **双格式等价直测**：`.dbg/mklegacy.py` 把新 `.vtu` 转回旧布局后，
+  `check_heat_conduction.py c1` 结果与读新文件**逐位一致**（8.809e-09 K，PASS），
+  而 `validate_vtu.py` 对该旧布局文件按预期**报错退出**（legacy token 守卫有效）。
+- 另外 6 个脚本（`porous_graetz/plot_graetz.py`、`ltne_disp`/`ltne_graetz`、`porous_disp`、
+  `cluster_cases/bj_porous` 等）本来就写成兼容式（本次未改）——`.dbg/audit_readers.py` 全仓审计：
+  **29 个解析 connectivity 的脚本 100 % 带双布局判定**，另 2 个（`gen_meshes.py`/`gen_full.py`）
+  只写网格不读 VTU。
+- **结构侧位级回归（规则要求：动过解算器/输出源码后必跑）**：
+  `timeout 600 bash regress/m6wing/run_regression.sh`（串行 np1，现场 `/tmp/m6wing_regress`）
+  → **PASS**：8 个产物（`flow3d.dat`/`SA3d.dat`/`wall_dist.dat`/`partation-auto.dat`/
+  `part_grid.dat`/`Step_mess.dat`/`bc3d.inc`/`mesh-quality.dat`）全 **IDENTICAL**，
+  `flow3d.dat` md5 = `dc134a2d196422043ecad7c86ac8f898`（与 oracle 期望值一致，零变化）——
+  结构化路径不写 VTU，本次改动对它无影响，符合预期；同一构建下 `bin/mixnsolver` 增量重编译无报错。
+- **双布局等价性直测（`.dbg/legacy_compat_check.sh`，可复跑）**：
+  ① `.dbg/probe_layout.py` 显示新文件 `first-unit-ids=[41 164 165 246]`/`offset=4`（规范），
+  仓库内 `cases/porous_plug/plug_darcy.vtu` 为 `[4 41 164 165 246]`/`offset=5`（legacy）；
+  ② 把 c1 换成 legacy 布局 → `check_heat_conduction.py c1` **PASS，8.809e-09 K 与规范文件逐位一致**
+  （退出码 0），而 `validate_vtu.py` 对同一文件 **exit=1** 并给出「混入 legacy 前导 token」的定位消息；
+  ③ 还原规范布局后 md5 = 备份 `f3a0e07bb1f059387f2b5f0bfcf65652`、守卫 exit=0；
+  ④ `cases/porous_plug/fit_pp.py` 对**新规范 `.vtu`** 与**旧格式 `plug_darcy.vtu`** 输出**逐字段一致**
+  （唯一差异是首列文件名标签）：fitted dp/dx = -184.600、analytic -184.600、err -0.000 %、
+  u max dev 0.0306 %、dp = 18.4600 Pa。
+- 涉及文件：`src/unstructured/mod_uns_output.f90`、`src/common/mod_vtu_writer.f90`（新）、
+  `tools/validate_vtu.py`（新）、`Makefile`（`vtu_guard`）、
+  `cases/heat_conduction/{check_heat_conduction.py,README.md}`、
+  `cases/channel/plot_channel.py`、`cases/ltne/plot_ltne.py`、`cases/natconv/plot_fields.py`、
+  `cases/couple_channel/compare_iface.py`、
+  `cases/couple_porous/{compare_iface.py,uns_full/plane_profile.py,uns_full/check_bed_gradient.py}`、
+  `cluster_cases/{cavity_Re1000/check_cavity.py,cylinder_Re40/check_cylinder.py,
+  cylinder_Re200/check_cylinder_unsteady.py,channel_lowspeed/plot_channel.py}`、
+  `cases/porous_graetz/README.md`。
+- 手册：`docs/93_changelog.tex` 顶部新增本条；无新增控制参数，`程序使用手册.tex` 正文未改。
+
+---
+
+
 ## 2026-10-14 | 纯导热解析解验证算例族（cases/heat_conduction，5＋1 个算例）
 
 - 需求（承接阶段 16）：固体导热 / `CZ_SOLID` 路径此前只有 `cases/solid_conduction/` 的

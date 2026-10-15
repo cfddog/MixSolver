@@ -35,7 +35,10 @@ def load(path):
     con = raw('connectivity').astype(np.int64)
     pres = raw('pressure')
     vel = raw('velocity').reshape(-1, 3)
-    cen = con[4::5]                            # 5th node of every cell block
+    con = con.reshape(ncell, -1)
+    if con.shape[1] == 5 and con[:, 0].max() == 4:   # 旧文件：legacy VTK 前导
+        con = con[:, 1:]                             # 顶点数 token "4 n0 n1 n2 cen"
+    cen = con[:, -1]                           # last node of every block = centroid
     keep = np.flatnonzero(np.concatenate(([True], cen[1:] != cen[:-1])))
     cen = cen[keep]                            # 12 sub-tets -> one hex entry
     x = pts[cen, 0]                            # centroid point ids = global

@@ -2,14 +2,18 @@
 ! mod_output.f90 -- Result output and benchmark comparison (phase 4)
 !
 ! Contents:
-!   vtk_write     -- write the solution as an ASCII .vtu (VTK unstructured
-!                    grid, XML). Every cell is decomposed into tetrahedra by
-!                    fanning each (outward-oriented) cell face from its first
-!                    node and connecting the triangles to the cell centroid,
-!                    which is appended as an extra point. VTK_TETRA cells are
-!                    universally supported -- unlike VTK_POLYHEDRON, whose
-!                    legacy face-stream encoding modern ParaView (VTK 9 based)
-!                    silently drops, leaving an empty-looking dataset.
+!   vtk_write     -- write the solution as a VTU (VTK XML unstructured grid)
+!                    through mod_vtu_writer, which emits the layout the VTK
+!                    XML specification prescribes: pure node-id <connectivity>
+!                    (no legacy per-cell vertex-count token), cumulative
+!                    <offsets> and <types>.  Every cell is decomposed into
+!                    tetrahedra by fanning each (outward-oriented) cell face
+!                    from its first node and connecting the triangles to the
+!                    cell centroid, which is appended as an extra point.
+!                    VTK_TETRA cells are universally supported -- unlike
+!                    VTK_POLYHEDRON, whose legacy face-stream encoding modern
+!                    ParaView (VTK 9 based) silently drops, leaving an
+!                    empty-looking dataset.
 !   probe_velocity-- inverse-distance interpolation of the velocity field
 !                    from the K nearest cell centroids.
 !   ghia_compare  -- compare the u-velocity on the vertical centerline of a
@@ -24,9 +28,22 @@
 !     reversed for c1, with the cell centroid as apex.
 !   - VTK point ids are 0-based; mesh_t node ids are 1-based. The centroid
 !     of cell c is appended as point id (nnodes + c - 1), 0-based.
+!   - vtu_write takes the connectivity in the MESH numbering (1-based) and
+!     performs the 0-based conversion itself; vtk_write therefore passes the
+!     raw face node ids and the 1-based centroid point index (nnodes + c).
+!     Passing ids that were already converted subtracts one from every node
+!     id twice, which shifts the whole mesh (caught on 2026-10-15 by signed
+!     tet volumes: sum|vol| stopped matching the domain volume).
+!   - History: until 2026-10-15 the <connectivity> block carried the legacy
+!     VTK "CELLS" vertex-count token in front of every cell (4,a,b,c,apex).
+!     ParaView tolerated it (it recomputes the cell location from the cell
+!     type), but Tecplot 360 read that token as a node id and rendered a
+!     broken mesh.  Fixed by writing the spec-conformant layout -- see
+!     worklog 2026-10-15 and mod_vtu_writer.
 !===============================================================================
 module mod_uns_output
    use mod_precision, only: dp, ip, pi
+   use mod_vtu_writer, only: vtu_write, vtu_data, VTK_TETRA
    use mod_uns_mesh
    use mod_uns_connectivity
    use mod_uns_geometry
@@ -38,12 +55,13 @@ module mod_uns_output
    public :: vtk_write, probe_velocity, ghia_compare, &
              thermal_wall_report
 
-   integer, parameter :: VTK_TETRA = 10
-
 contains
 
    !----------------------------------------------------------------------------
-   ! Write ASCII .vtu (XML, inline ascii data), cells tetrahedralized.
+   ! Write the solution as a VTU file (VTK XML, inline ASCII data) with every
+   ! cell tetrahedralized.  The XML/byte layout is produced by mod_vtu_writer;
+   ! see the module header there for the format requirements (pure node-id
+   ! connectivity, cumulative offsets, per-cell types).
    !----------------------------------------------------------------------------
    subroutine vtk_write( m, conn, g, fld, filename, ier )
       type(mesh_t),    intent(in)  :: m
@@ -53,9 +71,12 @@ contains
       character(len=*), intent(in) :: filename
       integer,         intent(out) :: ier
 
-      integer  :: iu, ios, i, j, k, c, f, nn, nsub, ntets, cen_id
+      integer  :: j, k, c, f, nn, nsub, ntets, cen_id, npts, ncd, it
       integer  :: tri(3)
-      logical  :: has_solid
+      logical  :: has_solid, has_ts
+      real(dp), allocatable :: coords(:,:)
+      integer,  allocatable :: cell_conn(:), cell_off(:), cell_type(:)
+      type(vtu_data), allocatable :: cdata(:)
 
       ier = 0
 
@@ -69,40 +90,35 @@ contains
          end do
       end do
 
-      open( newunit=iu, file=filename, status='replace', action='write', &
-            iostat=ios )
-      if ( ios /= 0 ) then
-         write(*,'(a)') 'VTK ERROR: cannot open ' // trim(filename)
-         ier = 1
-         return
-      end if
-
-      write(iu,'(a)') '<?xml version="1.0"?>'
-      write(iu,'(a)') '<VTKFile type="UnstructuredGrid" version="0.1" '// &
-                      'byte_order="LittleEndian">'
-      write(iu,'(a)') '  <UnstructuredGrid>'
-      write(iu,'(a,i0,a,i0,a)') '    <Piece NumberOfPoints="', &
-         m%nnodes + m%ncells, '" NumberOfCells="', ntets, '">'
-
-      ! ---- points: mesh nodes, then one centroid point per cell ----------------
-      write(iu,'(a)') '      <Points>'
-      write(iu,'(a)') '        <DataArray type="Float64" Name="Coordinates" '// &
-                      'NumberOfComponents="3" format="ascii">'
-      do i = 1, m%nnodes
-         write(iu,'(3(es17.8,1x))') m%x(1,i), m%x(2,i), m%x(3,i)
-      end do
+      ! ---- which cell-data arrays are written (conditions unchanged) ---------
+      !      solid temperature: LTNE fluid-solid exchange active (h_sf*a_sf>0)
+      !      OR a solid conduction region (CZ_SOLID) present
+      has_solid = .false.
       do c = 1, m%ncells
-         write(iu,'(3(es17.8,1x))') g%xc(1,c), g%xc(2,c), g%xc(3,c)
+         if ( is_solid_cell( m, fld, c ) ) then
+            has_solid = .true.
+            exit
+         end if
       end do
-      write(iu,'(a)') '        </DataArray>'
-      write(iu,'(a)') '      </Points>'
+      has_ts = ( maxval( fld%h_sf * fld%a_sf ) > 0.0_dp .or. has_solid )
 
-      ! ---- cells: tetrahedra from face fan + cell centroid ---------------------
-      write(iu,'(a)') '      <Cells>'
-      write(iu,'(a)') '        <DataArray type="Int32" Name="connectivity" '// &
-                      'format="ascii">'
+      ! ---- points: mesh nodes, then one centroid point per cell --------------
+      npts = m%nnodes + m%ncells
+      allocate( coords(3, npts) )
+      coords(:, 1:m%nnodes)      = m%x(:, 1:m%nnodes)
+      coords(:, m%nnodes+1:npts) = g%xc(:, 1:m%ncells)
+
+      ! ---- cells: tetrahedra from face fan + cell centroid -------------------
+      !      cell_conn holds the nodes of every sub-tetrahedron with the SAME
+      !      1-based node numbering as mesh_t (vtu_write converts to the 0-based
+      !      ids required by VTK XML itself), <offsets> the cumulative node count
+      !      (4*it) and <types> the VTK cell code (10 = VTK_TETRA).  The legacy
+      !      VTK "CELLS" style (a leading vertex-count token per cell) is
+      !      deliberately NOT used.
+      allocate( cell_conn(4*ntets), cell_off(ntets), cell_type(ntets) )
+      it = 0
       do c = 1, m%ncells
-         cen_id = m%nnodes + c - 1            ! 0-based id of centroid point
+         cen_id = m%nnodes + c                ! 1-based id of centroid point
          do k = conn%cf_ptr(c)+1, conn%cf_ptr(c+1)
             f  = conn%cf(k)
             nn = m%f(f)%nn
@@ -119,112 +135,51 @@ contains
                   write(*,'(a,i0,a,i0)') 'VTK ERROR: face ', f, &
                      ' not adjacent to cell ', c
                   ier = 2
-                  close(iu)
                   return
                end if
-               write(iu,'(5(i0,1x))') 4, tri(1)-1, tri(2)-1, tri(3)-1, cen_id
+               it = it + 1
+               cell_conn(4*it-3 : 4*it) = [ tri(1), tri(2), tri(3), cen_id ]
+               cell_off(it)  = 4*it
+               cell_type(it) = VTK_TETRA
             end do
          end do
       end do
-      write(iu,'(a)') '        </DataArray>'
 
-      write(iu,'(a)') '        <DataArray type="Int32" Name="offsets" '// &
-                      'format="ascii">'
-      do c = 1, ntets
-         write(iu,'(i0,1x)') 5*c
+      ! ---- cell data: original cell values replicated on their sub-tets ------
+      !      pressure / velocity / temperature are always written; the solid
+      !      temperature (LTNE exchange active or a CZ_SOLID region present) and
+      !      the solid volumetric heat source (phase 16, solid region only) are
+      !      appended conditionally, exactly as before.
+      ncd = 3 + merge(1,0,has_ts) + merge(1,0,has_solid)
+      allocate( cdata(ncd) )
+      cdata(1)%name  = 'pressure';    cdata(1)%ncomp = 1
+      cdata(2)%name  = 'velocity';    cdata(2)%ncomp = 3
+      cdata(3)%name  = 'temperature'; cdata(3)%ncomp = 1
+      if ( has_ts )    cdata(4)%name   = 'temperature_solid'
+      if ( has_solid ) cdata(ncd)%name = 'heat_source_solid'
+      do j = 1, ncd
+         allocate( cdata(j)%val(ntets, cdata(j)%ncomp) )
       end do
-      write(iu,'(a)') '        </DataArray>'
 
-      write(iu,'(a)') '        <DataArray type="UInt8" Name="types" '// &
-                      'format="ascii">'
-      do c = 1, ntets
-         write(iu,'(i0,1x)') VTK_TETRA
-      end do
-      write(iu,'(a)') '        </DataArray>'
-      write(iu,'(a)') '      </Cells>'
-
-      ! ---- cell data (original cell values replicated on their sub-tets) ------
-      write(iu,'(a)') '      <CellData>'
-      write(iu,'(a)') '        <DataArray type="Float64" Name="pressure" '// &
-                      'format="ascii">'
+      it = 0
       do c = 1, m%ncells
          nsub = 0
          do k = conn%cf_ptr(c)+1, conn%cf_ptr(c+1)
             nsub = nsub + m%f(conn%cf(k))%nn - 2
          end do
          do j = 1, nsub
-            write(iu,'(es17.8,1x)') fld%p(c)
+            it = it + 1
+            cdata(1)%val(it,1)   = fld%p(c)
+            cdata(2)%val(it,1:3) = fld%u(:,c)
+            cdata(3)%val(it,1)   = fld%T(c)
+            if ( has_ts )    cdata(4)%val(it,1)   = fld%T_s(c)
+            if ( has_solid ) cdata(ncd)%val(it,1) = fld%q_src(c)
          end do
       end do
-      write(iu,'(a)') '        </DataArray>'
-      write(iu,'(a)') '        <DataArray type="Float64" Name="velocity" '// &
-                      'NumberOfComponents="3" format="ascii">'
-      do c = 1, m%ncells
-         nsub = 0
-         do k = conn%cf_ptr(c)+1, conn%cf_ptr(c+1)
-            nsub = nsub + m%f(conn%cf(k))%nn - 2
-         end do
-         do j = 1, nsub
-            write(iu,'(3(es17.8,1x))') fld%u(:,c)
-         end do
-      end do
-      write(iu,'(a)') '        </DataArray>'
-      write(iu,'(a)') '        <DataArray type="Float64" Name="temperature" '// &
-                      'format="ascii">'
-      do c = 1, m%ncells
-         nsub = 0
-         do k = conn%cf_ptr(c)+1, conn%cf_ptr(c+1)
-            nsub = nsub + m%f(conn%cf(k))%nn - 2
-         end do
-         do j = 1, nsub
-            write(iu,'(es17.8,1x)') fld%T(c)
-         end do
-      end do
-      write(iu,'(a)') '        </DataArray>'
-      ! solid temperature: written when the LTNE/porous fluid-solid exchange is
-      ! active (h_sf*a_sf>0) OR a solid conduction region (CZ_SOLID) is present.
-      has_solid = .false.
-      do c = 1, m%ncells
-         if ( is_solid_cell( m, fld, c ) ) then
-            has_solid = .true.; exit
-         end if
-      end do
-      if ( maxval( fld%h_sf * fld%a_sf ) > 0.0_dp .or. has_solid ) then
-         write(iu,'(a)') '        <DataArray type="Float64" '// &
-                         'Name="temperature_solid" format="ascii">'
-         do c = 1, m%ncells
-            nsub = 0
-            do k = conn%cf_ptr(c)+1, conn%cf_ptr(c+1)
-               nsub = nsub + m%f(conn%cf(k))%nn - 2
-            end do
-            do j = 1, nsub
-               write(iu,'(es17.8,1x)') fld%T_s(c)
-            end do
-         end do
-         write(iu,'(a)') '        </DataArray>'
-      end if
-      ! solid volumetric heat source (phase 16): only meaningful with a solid
-      ! region, where it is non-zero in the volume-heated cells.
-      if ( has_solid ) then
-         write(iu,'(a)') '        <DataArray type="Float64" '// &
-                         'Name="heat_source_solid" format="ascii">'
-         do c = 1, m%ncells
-            nsub = 0
-            do k = conn%cf_ptr(c)+1, conn%cf_ptr(c+1)
-               nsub = nsub + m%f(conn%cf(k))%nn - 2
-            end do
-            do j = 1, nsub
-               write(iu,'(es17.8,1x)') fld%q_src(c)
-            end do
-         end do
-         write(iu,'(a)') '        </DataArray>'
-      end if
-      write(iu,'(a)') '      </CellData>'
-
-      write(iu,'(a)') '    </Piece>'
-      write(iu,'(a)') '  </UnstructuredGrid>'
-      write(iu,'(a)') '</VTKFile>'
-      close(iu)
+      ! ---- write the file through the generic XML writer ----------------------
+      call vtu_write( filename, coords, cell_conn, cell_off, cell_type, &
+                      cell_data = cdata, ier = ier )
+      if ( ier /= 0 ) return
 
       write(*,'(a)') '  wrote VTU file : ' // trim(filename)
    end subroutine vtk_write

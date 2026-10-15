@@ -31,6 +31,30 @@
 \endhead
 \bottomrule
 \endlastfoot
+2026-10-15 & -- &
+\textbf{修 \texttt{.vtu} 导出不符合 VTK 规范（Tecplot 360 网格错乱）＋ 18 个读取脚本改双格式兼容}：
+根因两处叠加 —— \texttt{connectivity} 每个四面体多写一个 legacy VTK ``CELLS'' 顶点数 token
+（\texttt{"4 n0 n1 n2 cen"}，5 token/单元、\texttt{offsets} $=5,10,15,\dots$；ParaView 靠 offsets
+反推容错故未暴露，Tecplot 严格解析把首 token 当节点号），且节点号整体偏 1
+（写出器内部已 1-based$\to$0-based，调用方又传 0-based 号，双重减 1）。现按规范写
+\textbf{4 token/四面体} ＋ 累积 \texttt{offsets}，\texttt{PointData}/\texttt{CellData} 保持
+\textbf{无属性裸标签}（仓库内算例脚本用严正则取数据块）；新增格式守卫
+\texttt{validate\_vtu.py}（\texttt{make vtu\_guard}），18 个读取脚本改成规范/旧文件都能读。
+& \texttt{src/unstructured/mod\_uns\_output.f90}、
+\texttt{src/common/mod\_vtu\_writer.f90}（新）、\texttt{tools/validate\_vtu.py}（新）、
+\texttt{Makefile}、18 个算例读取脚本、\texttt{cases/porous\_graetz/README.md}
+& ① \texttt{bash cases/heat\_conduction/run\_all.sh c1 c2 c3 c4 c5} ＋
+\texttt{check\_heat\_conduction.py} $\to$ \textbf{全部 PASS}：c1 $8.809$e$-9$、c2 $3.707$e$-8$、
+c3 $3.912$e$-1$（$0.196\%$）、c4 $6.138$e$-9$、c5 $5.208$e$-2$ K，与改前逐位一致；
+② \texttt{python3 tools/validate\_vtu.py} 6 个 \texttt{.vtu} $\to$
+\textbf{0 errors / 0 warnings}；\texttt{make vtu\_guard} 自测 OK（规范/legacy token/offsets 错/
+节点越界/带属性 5 类夹具）；③ 旧格式资产回归：\texttt{fit\_pp.py} 读新文件与读
+\texttt{plug\_darcy.vtu} 数字完全一致（$\mathrm{d}p/\mathrm{d}x=-184.600$ vs 解析 $-184.600$，
+err $-0.000\%$，$u$ 最大偏差 $0.0306\%$）；④ 用 \texttt{mklegacy.py} 把新文件转回旧布局后
+对拍脚本仍 PASS（$8.809$e$-9$ K）而守卫按预期报错（exit $=1$，定位消息指出``混入 legacy 前导 token''）；
+⑤ 全仓审计（\texttt{audit\_readers.py}）29 个解析 \texttt{connectivity} 的脚本 100\% 带双布局判定；
+⑥ 位级回归 \texttt{timeout 600 bash regress/m6wing/run\_regression.sh}（np1）$\to$ \textbf{PASS}，
+8 个产物全 IDENTICAL、\texttt{flow3d.dat} md5 \texttt{dc134a2d\ldots} 不变（结构侧不写 VTU，零影响）。 \\
 2026-10-14 & -- &
 \textbf{新增 \texttt{cases/heat\_conduction} 纯导热解析解验证算例族（5 ＋ 1 个）}：
 把阶段 16 的固体导热路径（\texttt{CZ\_SOLID} ＋ \texttt{k\_s} ＋ 按体区施加的体积热源

@@ -79,7 +79,9 @@ mpirun -np 2 ../../bin/uns_solver_mpi graetz.cas graetz_disp.control
   u=0.895U，渐近 Nu 偏高 16%；改 K=1e-10（√K/dy=0.08、u1=0.988U）
   后偏差降到 1.38%。要继续降低需更小 K（Δp∝1/K）或更细近壁网格。
 - k_s 必须显式设为 k_f，否则 LTE 的 k_eff=ε·k_f 会改变解析 κ。
-- VTU 每格输出 12 个四面体，分析脚本已剥离 connectivity 首元素 4。
+- VTU 每格输出 12 个四面体；`connectivity` 自 2026-10-15 起按 VTK 规范写 4 个节点号/四面体
+  （`offsets` 累积 4,8,12,...），不再有 legacy 前导 token `4`。`plot_graetz.py` 两种布局都能读
+  （`if con.shape[1] == 5 and con[:, 0].max() == 4: con = con[:, 1:]`），旧资产无需重跑。
 
 ## 6. 文件清单
 

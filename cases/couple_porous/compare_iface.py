@@ -53,7 +53,9 @@ def read_vtu_hex(fn):
     con = np.array(
         re.search(r'Name="connectivity"[^>]*>(.*?)</DataArray>', txt,
                   re.S).group(1).split(), dtype=int).reshape(ncell, -1)
-    cc = pts[con[:, 1:]].mean(axis=1)
+    if con.shape[1] == 5 and con[:, 0].max() == 4:   # 旧文件：legacy VTK 前导
+        con = con[:, 1:]                             # 顶点数 token
+    cc = pts[con].mean(axis=1)       # 该 sub-tet 的 4 个点（n0 n1 n2 + 胞心）
 
     def scl(name):
         return np.array(

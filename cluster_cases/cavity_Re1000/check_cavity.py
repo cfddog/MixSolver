@@ -48,13 +48,16 @@ def read_vtu(fn):
 
     pts = arr('Coordinates', 3)
     n_cells = int(re.search(r'NumberOfCells="(\d+)"', txt).group(1))
-    con = arr('connectivity', 5, int)
-    if con.shape[0] != n_cells:
-        raise SystemExit('check_cavity: unexpected connectivity length')
+    con = arr('connectivity', 1, int)          # flat: node ids of every tet
+    con = con.reshape(n_cells, -1)
+    if con.shape[1] == 5 and con[:, 0].max() == 4:   # old files: legacy VTK
+        con = con[:, 1:]                             # leading vertex-count token
+    if con.shape[1] != 4:
+        raise SystemExit('check_cavity: unexpected connectivity layout')
     vel = arr('velocity', 3)
 
     # one value per solver cell (first sub-tet of each centroid group)
-    cen_id = con[:, 4]
+    cen_id = con[:, -1]
     first = np.concatenate(([True], cen_id[1:] != cen_id[:-1]))
     idx = np.nonzero(first)[0]
     base = cen_id.min()

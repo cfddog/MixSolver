@@ -144,9 +144,15 @@ def read_vtu_vel(fn):
         return a.reshape(-1, cols) if cols > 1 else a
 
     pts = arr('Coordinates', 3)
-    con = arr('connectivity', 5, int)
+    ncell = int(re.search(r'NumberOfCells="(\d+)"', txt).group(1))
+    con = arr('connectivity', 1, int)          # flat: node ids of every tet
+    con = con.reshape(ncell, -1)
+    if con.shape[1] == 5 and con[:, 0].max() == 4:   # old files: legacy VTK
+        con = con[:, 1:]                             # leading vertex-count token
+    if con.shape[1] != 4:
+        raise SystemExit('check_cylinder_unsteady: unexpected connectivity layout')
     vel = arr('velocity', 3)
-    cen_id = con[:, 4]
+    cen_id = con[:, -1]
     first = np.concatenate(([True], cen_id[1:] != cen_id[:-1]))
     idx = np.nonzero(first)[0]
     return pts[cen_id[idx], :], vel[idx, :]

@@ -300,7 +300,8 @@ bin/uns_nan_guard_mpi_test: $(UNGM_TEST_OBJ_M) | bin
 # Phony targets
 # -----------------------------------------------------------------------------
 .PHONY: all mpi common common_mpi clean help match_test units_test coupling_test \
-        iface_law_test uns_nan_guard_test uns_nan_guard_mpi_test mixnsolver mixnsolver_mpi
+        iface_law_test uns_nan_guard_test uns_nan_guard_mpi_test vtu_guard \
+        mixnsolver mixnsolver_mpi
 
 all:        bin/mixnsolver
 mpi:        bin/mixnsolver_mpi
@@ -316,6 +317,15 @@ iface_law_test: bin/iface_law_test
 uns_nan_guard_test: bin/uns_nan_guard_test
 uns_nan_guard_mpi_test: bin/uns_nan_guard_mpi_test
 
+# VTK XML (.vtu) format guard -- no build needed, pure Python self-test.
+# Guards the 2026-10-15 fix: <connectivity> must hold node ids only (no legacy
+# VTK "CELLS" vertex-count token) and <offsets> must be cumulative.  Run the
+# guard on a produced file with: python3 tools/validate_vtu.py <file.vtu>
+vtu_guard:
+	@command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 not found."; exit 1; }
+	@python3 tools/validate_vtu.py --selftest
+	@echo "[vtu_guard] tools/validate_vtu.py --selftest OK"
+
 clean:
 	rm -rf build bin
 
@@ -329,6 +339,7 @@ help:
 	@echo "                        dev unit/integration test binaries"
 	@echo "  make uns_nan_guard_test   non-finite guard unit test (bin/uns_nan_guard_test)"
 	@echo "  make uns_nan_guard_mpi_test  partitioned guard test (mpirun -np 2, exits 60)"
+	@echo "  make vtu_guard         .vtu format guard self-test (tools/validate_vtu.py)"
 	@echo "  make clean             remove build/ and bin/"
 	@echo "Options: DEBUG=1 (debug flags)"
 	@echo "Parallel: use 'make -j'; for the very first build after adding many new"

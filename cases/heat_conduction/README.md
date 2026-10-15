@@ -129,8 +129,9 @@ run.log, unMesh.vtu}` —— 全是可重算的产物，**不入库**（`.gitign
 
 * VTU 读取约定（与 `cases/porous_plug/plot_plug.py` 一致）：`vtk_write` 把每个六面体
   胞拆成 12 个四面体（face fan ＋ 胞心），points 末尾追加 `ncells` 个胞心；CellData
-  每个数组按原胞顺序写 12 份相同值。脚本用 `offsets` 切块 ＋ 去掉 legacy VTK 的
-  "顶点数"前导 token 还原单元节点号，并**自校验**三件事：每个块 `len(ids)==nv+1`、
+  每个数组按原胞顺序写 12 份相同值。脚本用 `offsets` 切块还原单元节点号
+  （`connectivity` 是 VTK 规范的 4 个节点号/四面体；旧文件里 legacy VTK 的
+  "顶点数"前导 token 也能识别），并**自校验**三件事：每个块恰好 4 个节点号、
   胞心 id = 块最大节点号、tet→cell 映射严格块状有序、CellData 逐胞复制一致
   （任一不满足即 assert 失败，避免"读错列"却给出看似合理数字）。
 * 取量是 **`temperature_solid`**（固体温度），不是 `temperature`（`T_lte`）。

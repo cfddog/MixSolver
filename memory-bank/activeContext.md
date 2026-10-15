@@ -1,5 +1,32 @@
 # 当前上下文 (activeContext)
 
+> **2026-10-15 🆕 `.vtu` 导出修规范（Tecplot 360 能读了）＋ 仓库算例读取脚本改双格式兼容**：
+> 用户报 `unMesh.vtu` 在 **Tecplot 360** 里网格错乱（ParaView 一直正常）。根因两处叠加：
+> ① `<connectivity>` 每个四面体多写了一个 legacy VTK「CELLS 顶点数」token
+> （`"4 n0 n1 n2 cen"`，5 token/单元、`offsets` = 5,10,15,...）——ParaView 靠 `offsets` 反推
+> 容错所以没暴露，Tecplot 严格解析把首 token（4）当节点号；② 节点号整体偏 1：写出器
+> `vtu_write` 内部已做 1-based→0-based，调用方 `mod_uns_output` 又传了**已经 0-based** 的
+> face 节点号（双重减 1）。**修复**：`mod_uns_output.f90` 改传原始 1-based 号与胞心 id
+> （`m%nnodes + c`）；`mod_vtu_writer.f90` 按规范写 **4 token/四面体** ＋ 累积 `offsets`，
+> `PointData/CellData` 保持**无属性裸标签**（仓库内脚本用严正则 `r'<CellData>(.*?)</CellData>'`
+> 取块，加 `Scalars=` 属性会全挂）。**守卫**：新增 `tools/validate_vtu.py` ＋ `make vtu_guard`
+> （offsets/types 节点数一致性、节点号范围、数组长度、legacy 前导 token 检出；`--vtk` 可选真读；
+> `--selftest` 5 类夹具）。**兼容**：18 个读 VTU 的算例脚本改为「规范/旧文件都能读」
+> （`ids[0] == 4 and len(ids) == 5` ⇒ 剥前导 token）。**坑**：不能用 `len(ids) == ids[0] + 1`
+> 判旧格式（新格式里首个节点号恰为 3 的四面体会被误剥，实测 c1 的 tet 28 = `[3 126 167 248]`）。
+> 全仓审计（`.dbg/audit_readers.py`）：29 个解析 `connectivity` 的脚本 **100 % 带双布局判定**。
+> **验证**：`run_all.sh c1..c5` 全 CONVERGED ＋
+> `check_heat_conduction.py` 全 PASS（c1 8.809e-09 / c2 3.707e-08 / c3 3.912e-01 /
+> c4 6.138e-09 / c5 5.208e-02 K，与改前逐位一致）；6 个 `.vtu` 守卫 **0 errors/0 warnings**；
+> 旧格式资产 `plug_darcy.vtu` 上 `fit_pp.py`/`plot_plug.py` 结果与新文件**完全一致**
+> （dp/dx 拟合 -184.600 = 解析 -184.600，err -0.000 %）；`.dbg/mklegacy.py` 反向转旧布局后
+> 对拍脚本仍 PASS 而守卫按预期报错（exit 1）；结构侧**位级回归**
+> `timeout 600 bash regress/m6wing/run_regression.sh`（np1）→ **PASS**（8 产物全 IDENTICAL、
+> `flow3d.dat` md5 `dc134a2d…` 不变，结构侧不写 VTU 故零影响）。**文档**：`docs/93_changelog.tex` 顶部新条 +
+> `memory-bank/worklog.md` 同条；无新控制参数（`程序使用手册.tex` 正文未改）。
+> **遗留**：`cases/**/images/*.png` 里少数图仍由旧格式 VTU 生成，重跑即可（不影响复现脚本）。
+
+
 > **2026-10-14 🆕 纯导热解析解验证算例族 `cases/heat_conduction`（5＋1 个算例，已验证）**：
 > 承接阶段 16 的固体导热 / `CZ_SOLID` 路径 —— 此前只有 `cases/solid_conduction/` 的定性
 > 冒烟，现补**定量、可复算**的解析解基线。5 个纯固体构型 ＋ 1 个径向加密版：

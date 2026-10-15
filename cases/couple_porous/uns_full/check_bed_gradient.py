@@ -37,10 +37,14 @@ def load(path):
         return np.fromstring(m.group(1), sep=' ')
 
     pts = arr('Coordinates').reshape(-1, 3)
+    ncell = int(re.search(r'NumberOfCells="(\d+)"', txt).group(1))
     conn = arr('connectivity').astype(np.int64)
     pres = arr('pressure')
-    # 5th node of every tet is its cell's centroid point id
-    cen = conn[4::5]
+    conn = conn.reshape(ncell, -1)
+    if conn.shape[1] == 5 and conn[:, 0].max() == 4:   # 旧文件：legacy VTK 前导
+        conn = conn[:, 1:]                             # 顶点数 token
+    # last node of every tet is its cell's centroid point id
+    cen = conn[:, -1]
     starts = np.flatnonzero(np.concatenate(([True], cen[1:] != cen[:-1])))
     cid0 = cen[starts] - NNODES
     order = np.argsort(cid0)

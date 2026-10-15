@@ -1,6 +1,13 @@
 # 进度总览 (progress)
 
-> 最后更新：2026-10-14（**纯导热解析解验证算例族 `cases/heat_conduction`（5＋1 个算例）**：
+> 最后更新：2026-10-15（**`.vtu` 导出修规范（Tecplot 360 网格错乱）＋ 18 个读取脚本改
+> 规范/旧文件双格式兼容**：`connectivity` 不再多写 legacy 前导 token（4 token/四面体 ＋
+> 累积 `offsets`）、节点号不再双重减 1；新增 `tools/validate_vtu.py` + `make vtu_guard`
+> 格式守卫。验证：`cases/heat_conduction` 5 例重跑 + 对拍**全 PASS**（误差与改前逐位一致）、
+> 6 个 `.vtu` 守卫 0 errors/0 warnings、旧格式资产 `plug_darcy.vtu` 上
+> `fit_pp.py`/`plot_plug.py` 结果与新文件完全一致；**无解算数值回归**）
+>
+> 2026-10-14 节点：**纯导热解析解验证算例族 `cases/heat_conduction`（5＋1 个算例）**：
 > 5 个纯固体构型对拍解析解**全 PASS** —— c1/c2/c4 精确到机器零（0.000e+00 K）、
 > c3 圆环对数解 3.912e-01 K（0.196 %，半格心壁面距离 1 阶）、c5 局部体热源分段解
 > 5.208e-02 K（与"拐点"截断闭式值 `q h²/(8k)=0.0520833 K` 对到 8 位有效数字）、
@@ -14,6 +21,30 @@
 > 续算与连续 12000 步对到 4–5 位有效数字，natconv Ra=1e3 复跑零回归**）
 
 ## 已完成
+
+- [x] **`.vtu` 导出修规范（2026-10-15，Tecplot 360 网格错乱）＋ 读取脚本双格式兼容**：
+  - **症状**：`unMesh.vtu` 在 Tecplot 360 里网格错乱/打不开，ParaView 一切正常。
+  - **根因**：① `connectivity` 每四面体多写 legacy VTK「CELLS 顶点数」token
+    （`"4 n0 n1 n2 cen"`，5 token/单元、`offsets` = 5,10,15,...）；ParaView 用 `offsets`
+    反推容错故未暴露，Tecplot 严格解析把首 token 当节点号。② 节点号双重减 1
+    （`vtu_write` 内部已 1-based→0-based，`mod_uns_output` 又传已 0-based 的号）。
+  - **修复**：`mod_uns_output.f90` 传原始 1-based 号与胞心 id；`mod_vtu_writer.f90` 写
+    4 token/四面体 ＋ 累积 `offsets`；`PointData/CellData` 保持无属性裸标签（18 个算例
+    脚本用严正则取块）。
+  - **守卫**：`tools/validate_vtu.py`（+ `make vtu_guard`）—— offsets/types 节点数一致性、
+    节点号范围、数组长度、legacy token 检出；`--vtk` 可选真读；`--selftest` 5 类夹具。
+  - **兼容**：18 个读 VTU 的算例脚本改为「规范/旧文件都能读」
+    （`ids[0] == 4 and len(ids) == 5` ⇒ 剥前导 token）；**不可**用 `len(ids) == ids[0] + 1`
+    （新格式首个节点号为 3 的四面体误判，实测 c1 tet 28 = `[3 126 167 248]`）。
+  - **验证**：`cases/heat_conduction` c1–c5 重跑 + 对拍全 PASS（8.809e-09 / 3.707e-08 /
+    3.912e-01 / 6.138e-09 / 5.208e-02 K，与改前逐位一致）；6 个 `.vtu` 守卫
+    **0 errors / 0 warnings**；旧格式资产 `plug_darcy.vtu` 的 `fit_pp.py` / `plot_plug.py`
+    结果与新文件完全一致（dp/dx −184.600 vs 解析 −184.600，err −0.000 %，
+    u 最大偏差 0.0306 %）；`mklegacy.py` 反向转旧布局后对拍脚本仍 PASS、守卫按预期报错。
+  - **位级回归**：`timeout 600 bash regress/m6wing/run_regression.sh`（np1）**PASS** —— 8 个产物
+    全 IDENTICAL、`flow3d.dat` md5 `dc134a2d…` 不变（结构侧不写 VTU，改动零影响）；
+    `.dbg/audit_readers.py` 全仓审计：29 个解析 connectivity 的脚本 **100 % 带双布局判定**。
+
 
 - [x] **纯导热解析解验证算例族 `cases/heat_conduction`（2026-10-14，5＋1 个算例）**：
   - **目的**：阶段 16 的固体导热 / `CZ_SOLID` 路径此前只有 `cases/solid_conduction/` 的
