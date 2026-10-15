@@ -379,7 +379,7 @@ contains
       use mod_uns_connectivity, only: conn_t
       use mod_uns_geometry, only: geom_t
       use mod_uns_control, only: ctrl_t, BC_INTERFACE, BC_POUTLET, BC_FARFIELD, &
-                                 out_is_binary
+                                 out_is_binary, out_native_cells
       use mod_uns_bc, only: bc_t, set_interface_vel, &
                             set_interface_T, bc_face_vel, set_interface_p, &
                             bc_face_T, &
@@ -1176,7 +1176,7 @@ contains
             use mod_uns_output, only: vtk_write
             integer :: iov
             call vtk_write( m, c, g, fld, 'unMesh_coupled.vtu', iov, &
-                            out_is_binary(ctrl) )
+                            out_is_binary(ctrl), out_native_cells(ctrl) )
             if ( iov == 0 ) write(*,'(a)') '[uns] wrote unMesh_coupled.vtu'
          end block
       end if

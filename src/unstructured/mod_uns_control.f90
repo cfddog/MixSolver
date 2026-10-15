@@ -26,7 +26,8 @@ module mod_uns_control
              BC_MASSINLET, &
              BC_OUTFLOW, BC_INTERFACE, &
              bc_type_name, resolve_cell_zones, cell_zone_t, &
-             CZ_AUTO, CZ_FLUID, CZ_POROUS, CZ_SOLID, out_is_binary
+             CZ_AUTO, CZ_FLUID, CZ_POROUS, CZ_SOLID, out_is_binary, &
+             out_native_cells
 
    integer, parameter :: BC_NONE     = 0
    integer, parameter :: BC_WALL     = 1
@@ -170,6 +171,20 @@ module mod_uns_control
                                         ! The Tecplot .plt writer and its
                                         ! TecIO/libtecio dependency were
                                         ! removed (phase 17)
+      character(len=16) :: out_cells = 'tet_fan'  ! cell layout of the VTU
+                                        ! result (stage 17):
+                                        !   'tet_fan' = every mesh cell is
+                                        !     decomposed into tetrahedra by
+                                        !     fanning its faces to the cell
+                                        !     centroid (DEFAULT, bit-identical
+                                        !     to the pre-stage-17 output)
+                                        !   'native'  = one VTK cell per mesh
+                                        !     cell with its real type (hex = 12,
+                                        !     wedge = 13), mesh 1:1, no
+                                        !     centroid points; requires every
+                                        !     cell to be a mapped 3-D type
+                                        !     (see mod_cell_types) -- use
+                                        !     out_native_cells(ctrl)
       ! --- transient PISO parameters (phase 8) ---
       ! transient = .false. selects steady SIMPLE (simple_run); when .true.,
       ! main dispatches to piso_run and the momentum assembly adds an implicit
@@ -368,6 +383,21 @@ contains
                write(*,'(a)') 'ERROR: out_format must be one of ' // &
                               'vtu | vtu_ascii | vtu_binary (the Tecplot ' // &
                               '.plt output was removed): ' // trim(val)
+               ier = 2; exit
+            end select
+
+         case ( 'out_cells', 'out_cell' )
+            ctrl%out_cells = trim(adjustl( lowercase(val) ))
+            ! Two cell layouts are accepted (see ctrl_t%out_cells /
+            ! out_native_cells):
+            !   tet_fan -> all-tetrahedron face fan (default, bit-unchanged)
+            !   native  -> real cell types 1:1 (4 = hex, 6 = wedge)
+            select case ( trim(ctrl%out_cells) )
+            case ( 'tet_fan', 'native' )
+               ! accepted
+            case default
+               write(*,'(a)') 'ERROR: out_cells must be tet_fan or native: ' // &
+                              trim(val)
                ier = 2; exit
             end select
 
@@ -1326,5 +1356,18 @@ contains
 
       out_is_binary = ( trim(ctrl%out_format) == 'vtu_binary' )
    end function out_is_binary
+
+   !----------------------------------------------------------------------------
+   ! True when the VTU writer must emit the mesh's REAL cell types 1:1
+   ! (`out_cells = native`, stage 17) instead of the default all-tetrahedron
+   ! fan (`out_cells = tet_fan`, bit-unchanged).  Orthogonal to out_format,
+   ! which only selects the data layout (inline ASCII vs appended binary);
+   ! see docs/plan.md stage 17.
+   !----------------------------------------------------------------------------
+   pure logical function out_native_cells( ctrl )
+      type(ctrl_t), intent(in) :: ctrl
+
+      out_native_cells = ( trim(ctrl%out_cells) == 'native' )
+   end function out_native_cells
 
 end module mod_uns_control

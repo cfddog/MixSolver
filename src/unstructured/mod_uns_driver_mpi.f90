@@ -44,7 +44,7 @@ module mod_uns_driver_mpi
                                tag_interface_cell_zones
    use mod_uns_control, only: ctrl_t, read_control, read_mesh_scale, &
                               resolve_cell_zones, BC_INTERFACE, &
-                              out_is_binary
+                              out_is_binary, out_native_cells
    use mod_uns_bc, only: bc_t, build_bc
    use mod_uns_fields, only: fields_t, init_fields, setup_porous_fields, is_solid_cell
    use mod_uns_partition, only: partition_mesh_distributed
@@ -366,7 +366,8 @@ contains
       ! per-step snapshots inside the solver; the final state is always written
       ! here, mirroring the serial driver.)
       call write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, trim(vtufile), &
-                               fld_g, ios, out_is_binary(ctrl) )
+                               fld_g, ios, out_is_binary(ctrl), &
+                               out_native_cells(ctrl) )
       if ( ios /= 0 .and. myrank == 0 ) write(*,'(a,i0)') &
          '[uns-mpi] WARNING: final output write failed, ier=', ios
 

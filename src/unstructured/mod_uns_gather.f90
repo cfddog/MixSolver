@@ -184,7 +184,7 @@ contains
    ! other ranks is fine -- they only participate in the gather).
    !----------------------------------------------------------------------------
    subroutine write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, &
-                                   filename, fld_g, ier, binary )
+                                   filename, fld_g, ier, binary, native )
       type(local_mesh_t), intent(in)    :: lm
       type(fields_t),     intent(in)    :: fld
       integer,            intent(in)    :: part(:)
@@ -195,18 +195,21 @@ contains
       type(fields_t),     intent(inout) :: fld_g
       integer,            intent(out)   :: ier
       logical, optional,  intent(in)    :: binary  ! appended raw binary
+      logical, optional,  intent(in)    :: native  ! real cell types (stage 17)
 
       integer :: ios
-      logical :: bin
+      logical :: bin, nat
 
       ier = 0
       bin = .false.
       if ( present(binary) ) bin = binary
+      nat = .false.
+      if ( present(native) ) nat = native
       call gather_fields_to_root( lm, fld, part, fld_g, ier )
       if ( ier /= 0 ) return
 
       if ( myrank == 0 ) then
-         call vtk_write( m_g, c_g, g_g, fld_g, trim(filename), ios, bin )
+         call vtk_write( m_g, c_g, g_g, fld_g, trim(filename), ios, bin, nat )
          if ( ios /= 0 ) then
             write(*,'(a,a,a,i0)') 'WARNING: result write failed for ', &
                trim(filename), ' (continuing), ier=', ios

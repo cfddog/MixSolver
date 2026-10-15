@@ -1,6 +1,62 @@
 # 工作日志 (worklog)
 
 
+## 2026-10-15 | 实现：阶段 17 第 1–4 条（VTU `out_cells = native` 原生单元类型输出）
+
+- **做了什么**（源码；默认路径逐位未动）：
+  - 新 `src/common/mod_cell_types.f90`：Fluent 码 → VTK 类型**唯一映射处**
+    （`4`→`VTK_HEXAHEDRON`12、`6`→`VTK_WEDGE`13；其余→0＝不支持）＋ `cell_type_supported`/
+    `cell_type_is_polyhedron`/`fluent_code_name`（报错文案）。模块头写明依据与「只映射 3D」的
+    用户决策。
+  - `mod_uns_control`：`ctrl_t%out_cells`（默认 `'tet_fan'`）、解析 `out_cells|out_cell`
+    （非法值 `ier=2` ＋ 明确文案）、`pure out_native_cells(ctrl)`；导出的 public 表同步。
+  - `mod_uns_output::vtk_write(..., native=)`：入口 `if (nat) → vtk_write_native(...); return`，
+    **fan 段一行未改**（不改缩进、不包裹），因此默认路径源码级也未动。新私有例程：
+    `vtk_write_native`（`npts = m%nnodes` 不加胞心点、每单元一个 cell、CellData 每单元一份、
+    与 fan 同一组变量/条件）、`native_cell_nodes`、`orient_face_outward`、
+    `hex_canonical_nodes`、`wedge_canonical_nodes`、`implied_faces_ok`、`native_cell_error`、
+    `native_type_error`、`cross3`、`tri_volume`。
+  - 算法：面环先用 `g%sf`（`compute_geometry` 已定向 c0→c1）＋ Newell 法向定**外法向**，
+    不依赖 fan 的「面序朝内」假设；hex 规范序＝底面外向环反序 + 顶面环旋转到「点对点堆叠」，
+    wedge 同理（依据 `external/sample_code/unMesh/main.f90:138-171` 的样例 ＋ `.dbg/chk_mixed.py`
+    的 VTK `GetFace` 体积 oracle）；旋转用**判定性验收** `implied_faces_ok`（编号隐含的 6/5 个面
+    必须与真实面集合逐个相同），再用散度定理体积 > 0，并与 `g%vol(c)` 对拍（相对 1e-8）。
+  - 错误策略：`1/2/3/5`、`0`、未知码 ⇒ 报错（打印单元号/码/含义/面数，提示退回 `tet_fan`）；
+    退化面（零面积或法向与外法向正交）、零/负体积 ⇒ 报错；`7`=polyhedron ⇒ **整文件**回落 fan
+    ＋ 一条告警（零样品 ⇒ 舍弃逐单元混写，理由记在 plan）。
+  - 5 个写出点全部透传：`mod_uns_simple`（PISO/PIMPLE 快照）、`mod_uns_simple_mpi`（2 处）＋
+    `mod_uns_gather::write_snapshot_mpi` 新增可选 `native` 哑元、`mod_uns_driver_mpi`（MPI 末态）、
+    `mod_mix_driver`（耦合 `unMesh_coupled.vtu`）、`main_dispatch`（串行末态）。
+- **验证（现场 `.dbg/stage17/`；串行 `mpirun -np 1`，单算例逐个跑，全部 `timeout 600`）**：
+  - **默认路径位级回归**：`git worktree add /tmp/pre17 HEAD` 重建**改动前**二进制，跑
+    `cluster_cases/cavity_Re1000` 原 control（`out_format = vtu_binary`、`outer_max = 1000`）→
+    `unMesh.vtu` md5 `62470c7770106d71d1c671d2aac92002`；**改动后**二进制同 control →
+    **同一 md5**（逐位一致）。顺带发现：case 目录里遗留的 `unMesh.vtu`（`9352c258…`）与当前
+    control/二进制**不一致**（来源不明的旧产物），`.dbg/cavity_bin` 的 `62470c77…` 才与基线相符。
+  - **hex × native**（方腔 `outer_max = 20`、ASCII）：6400 单元全 `12`、13122 点＝网格节点数
+    （无胞心点）、**体积全正**、**ΣV = 1.000000000000**（域体积）、CellData 与 fan 对应子 tet
+    **逐位一致**、13.70 MB → **2.14 MB**。
+  - **wedge × native**（`cluster_cases/cylinder_Re40` `outer_max = 3`）：3928 单元全 `13`、
+    4088 点、体积全正、ΣV 与 fan Σ|V| 差 1.3e-15、场逐位一致、5.52 MB → **0.96 MB**。
+  - **binary × native**：6400 × `12`、体积全正、ΣV 相对偏差 3.1e-5（Float32 坐标舍入，
+    `vtu_binary` 既有代价）、场与 ASCII 版差 ≤2.9e-8。
+  - 守卫：`make vtu_guard` OK、`validate_vtu.py --selftest` OK、4 个产物 `validate_vtu.py`
+    rc=0；独立脚本 `.dbg/stage17/cmp_native.py`、`.dbg/stage17/chk_bin_native.py` 全 PASS
+    （判据：类型码/点数＝网格节点数/逐单元正体积（VTK `GetFace` oracle）/ΣV 对拍/CellData 逐位）。
+  - 控制变量校验：`out_cells = nope` ⇒ `ERROR: out_cells must be tet_fan or native: nope` ＋
+    `FATAL: control read failed, ier=2`，无 `.vtu` 产生。
+  - 再次实测到**既有**的 fan 朝向缺陷：方腔 fan 76800 子 tet 中 **38400 个符号为负**
+    （逐单元 6 正 6 负、符号和 ≈ 0、Σ|V| = 1.0）——正是 native 路不能用 fan 朝向假设的原因；
+    默认路径**未动**（保留该既有行为，位级回归优先）。
+- **未测（诚实登记）**：`7`=polyhedron 回落分支、`1/2/3/5` 报错分支（仓库零样品，仅代码审查）；
+  耦合模式（coupled）与 MPI 多 rank 的 native 产物未跑（透传点已接好，但只验证了 `-np 1`）。
+- **待办（阶段 17 第 5–8 条）**：`tools/validate_vtu.py --vtk` 按类型分派（现在假定全 TETRA）、
+  11 个读 `<connectivity>` 不看 `<offsets>` 的算例脚本、手册输出章/参数表/`93_changelog.tex`。
+- 细节与验证表已写入 `docs/plan.md` 阶段 17（任务 1–4 标 ✅ ＋ 末「实现与验证记录」）、
+  `memory-bank/progress.md` §待办、`activeContext.md` 顶部块。
+
+---
+
 ## 2026-10-15 | 决策落定：Fluent 元素码语义（用户确认）⇒ 阶段 17 映射表只含 3D 单元
 
 - **用户判定（原话要点）**：`1` = 点、`3` = 线段、`5` = 三角形（`2` 语义不确定）；这些都是

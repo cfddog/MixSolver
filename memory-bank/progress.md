@@ -770,6 +770,18 @@
   （现在假定全 TETRA）；11 个读 `<connectivity>` 却不看 `<offsets>`、隐含 4 节点等长单元
   的算例脚本需改（清单见 `docs/plan.md` 阶段 17 第 6 条）。
 
+- [x] **✅ 第 1–4 条已实现（2026-10-15）**：新 `src/common/mod_cell_types.f90`（`4`→hex/12、
+  `6`→wedge/13，其余→不支持）＋ `mod_uns_control` 的 `out_cells = tet_fan | native`
+  （默认 `tet_fan`）与 `out_native_cells()` ＋ `mod_uns_output::vtk_write(..., native=)`
+  早退到新私有例程 `vtk_write_native`（**默认 fan 路径源码/产物都逐位未动**）＋ 面拓扑重建
+  规范 VTK 节点序（外法向定向 → hex/wedge 编号 → 隐含面集判定 → 正体积 ＋ 与 `g%vol` 对拍）。
+  5 个写出点全部透传（含 `write_snapshot_mpi` 新增可选 `native`）。
+  **验证**：改动前/后二进制跑同一方腔 control → `unMesh.vtu` md5 **均 `62470c77…`（逐位一致）**；
+  native 方腔 6400 hex → 全正体积、ΣV = 1.000000000000、场与 fan 逐位一致、13.70→2.14 MB；
+  native cylinder 3928 wedge → 全正、ΣV 与 fan Σ|V| 差 1.3e-15、5.52→0.96 MB；
+  4 种 `out_format×out_cells` 组合都 rc=0；守卫与 `--selftest` OK；`out_cells = nope` 被拒。
+  细则/未测项见 `docs/plan.md` 阶段 17 末「实现与验证记录」。**第 5–8 条仍待办**。
+
 ### 输入格式：CGNS（2026-10-10 登记，用户「写入待办，不作为编译通过必须项」；2026-10-10 补充编译决策规则）
 
 - [ ] **编译时决策规则（用户硬性要求）**：后续编译过程中，**若系统已安装且 CGNS 库能工作（链接/头文件探测通过），则采用 CGNS 路径**；**若系统未安装 CGNS 或探测失败，则自动回退采用 `*.cas` 或 `*.neu`（阶段12）文件**，编译照常通过、不报错。CGNS 不是编译通过的必须项。

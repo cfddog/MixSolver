@@ -552,7 +552,8 @@ contains
             call make_step_filename( vtu_prefix, it, step_ext, vtufile )
             call write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, &
                                      trim(vtufile), fld_g, ios, &
-                                     out_is_binary(ctrl) )
+                                     out_is_binary(ctrl), &
+                                     out_native_cells(ctrl) )
             if ( ios /= 0 .and. myrank == 0 ) then
                write(*,'(a,i0,a)') 'WARNING: snapshot write failed at step ', &
                                   it, ' (continuing)'
@@ -831,7 +832,8 @@ contains
             call make_step_filename( vtu_prefix, it, step_ext, vtufile )
             call write_snapshot_mpi( lm, fld, part, m_g, c_g, g_g, &
                                      trim(vtufile), fld_g, ios, &
-                                     out_is_binary(ctrl) )
+                                     out_is_binary(ctrl), &
+                                     out_native_cells(ctrl) )
             if ( ios /= 0 .and. myrank == 0 ) then
                write(*,'(a,i0,a)') 'WARNING: snapshot write failed at step ', &
                                   it, ' (continuing)'

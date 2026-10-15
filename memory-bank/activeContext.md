@@ -29,6 +29,28 @@
 > 拟定控制变量：`out_cells = tet_fan | native`（默认 `tet_fan`）＋ `out_native_cells(ctrl)`，
 > 与 `out_format`（数据布局）正交，4 种组合都要能跑。
 
+> **2026-10-15 🆕 实现：阶段 17 第 1–4 条完成（native 1:1 输出可用，默认路径逐位未动）**：
+> ① 新 `src/common/mod_cell_types.f90`：`fluent_to_vtk`（`4`→`VTK_HEXAHEDRON`12、
+> `6`→`VTK_WEDGE`13、其余→0＝不支持）、`cell_type_supported`、`cell_type_is_polyhedron`、
+> `fluent_code_name`；② `mod_uns_control` 新增 `out_cells = tet_fan | native`（默认 `tet_fan`）
+> ＋ `pure out_native_cells(ctrl)`，非法值 `ier=2` 报错；③ `mod_uns_output::vtk_write(..., native=)`
+> 入口早退到新私有例程 `vtk_write_native`（**默认 fan 段源码与产物都逐位未动**），实现
+> `orient_face_outward`（用 `g%sf` 定外法向 ＋ Newell 法向，**不依赖** fan 的「面序朝内」假设）、
+> `hex_canonical_nodes`/`wedge_canonical_nodes`（规范序＝「上下两环同向、点对点堆叠」）、
+> `implied_faces_ok`（编号隐含面集必须与真实面逐个相同）、散度定理体积 > 0 ＋ 与 `g%vol` 对拍；
+> 退化面/零体积 ⇒ 报错拒绝，其余码（1/2/3/5/0/未知）⇒ 报错并提示退回 `out_cells = tet_fan`，
+> `7`=polyhedron ⇒ **整文件**回落 fan ＋ 告警（零样品，舍弃逐单元混写）；④ 5 个写出点全部透传
+> （`mod_uns_simple` ×2、`mod_uns_simple_mpi` ×2 经 `write_snapshot_mpi` 新增可选 `native`、
+> `mod_uns_driver_mpi`、`mod_mix_driver`、`main_dispatch`）。
+> **验证（现场 `.dbg/stage17/`，串行、逐个跑、`timeout 600`）**：改动前源码（`git worktree`
+> 重编译）与改动后二进制跑同一方腔 control → `unMesh.vtu` md5 **均 `62470c7770106d71d1c671d2aac92002`**；
+> native 方腔 6400 hex：全 `12`、13122 点（＝网格节点）、体积全正、**ΣV = 1.000000000000**、
+> 场与 fan 逐位一致、**13.70 MB → 2.14 MB**；native cylinder 3928 wedge：全 `13`、ΣV 与
+> fan Σ|V| 差 1.3e-15、**5.52 MB → 0.96 MB**；`vtu_binary × native` 亦通（场差 ≤2.9e-8）。
+> 守卫 + `--selftest` OK，`out_cells = nope` 被拒。**未测**：`7`/`1/2/3/5` 分支（仓库零样品）。
+> **待办（第 5–8 条）**：`validate_vtu.py --vtk` 按类型分派、11 个隐含等长单元的算例脚本、
+> 手册/参数表/changelog。
+
 > **2026-10-15 🆕 VTU 输出支持 appended raw binary（`out_format = vtu_binary`）＋ binary 写出缺陷修复 ＋ 守卫双布局**：
 > 需求（用户）：`external/sample_code/unMesh/mod_vtu.f90` 里 ascii/binary 两种形式
 > 「是否都实现了、怎么切换」，以 `cluster_cases/cavity_Re1000` 为例。**取证结论**：

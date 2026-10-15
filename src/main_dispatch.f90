@@ -580,7 +580,7 @@ contains
       use mod_uns_mesh, only: mesh_t
       use mod_uns_connectivity, only: conn_t
       use mod_uns_geometry, only: geom_t
-      use mod_uns_control, only: ctrl_t, out_is_binary
+      use mod_uns_control, only: ctrl_t, out_is_binary, out_native_cells
       use mod_uns_bc, only: bc_t
       use mod_uns_fields, only: fields_t
       use mod_uns_output, only: vtk_write, ghia_compare, thermal_wall_report
@@ -651,7 +651,7 @@ contains
          outext  = '.vtu'
          vtufile = trim(outstem)//trim(outext)
          call vtk_write( m, c, g, fld, trim(vtufile), ier, &
-                         out_is_binary(ctrl) )
+                         out_is_binary(ctrl), out_native_cells(ctrl) )
          if ( ier /= 0 ) then
             write(*,'(a,i0)') '[mixnsolver/uns] FATAL: result output failed ier=', ier
             call MPI_Abort( comm, ier, ier2 )

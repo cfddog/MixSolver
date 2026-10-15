@@ -647,12 +647,19 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
 
 **任务**：
 
-1. [待办] **控制变量**：`out_cells = tet_fan | native`（**默认 `tet_fan`** = 现有路径，
+1. [✅ 2026-10-15 已实现] **控制变量**：`out_cells = tet_fan | native`（**默认 `tet_fan`** = 现有路径，
    位级不变）＋ `pure logical out_native_cells(ctrl)`（与现有 `out_is_binary(ctrl)` 同构），
    透传到与 `binary=` 同一组的全部 5 个写出点（串行快照、MPI 快照、MPI 末态、耦合
    `unMesh_coupled.vtu`、串行末态）。与 `out_format`（`vtu | vtu_ascii | vtu_binary`，
    **数据布局**）正交：4 种组合都要能跑。
-2. [待办] **Fluent 元素类型 → VTK 单元类型映射表**（放 `src/common/mod_cell_types.f90`，
+   - 实现：`mod_uns_control.f90`（`ctrl_t%out_cells`、解析 `out_cells|out_cell`、非法值
+     `ier=2` 报错、`out_native_cells`）；透传点：`mod_uns_simple.f90`（PISO/PIMPLE 快照）、
+     `mod_uns_simple_mpi.f90`（2 处）+ `mod_uns_gather.f90::write_snapshot_mpi` 新增可选
+     `native` 哑元、`mod_uns_driver_mpi.f90`（MPI 末态）、`mod_mix_driver.f90`（耦合
+     `unMesh_coupled.vtu`）、`main_dispatch.f90`（串行末态）。
+   - 4 种组合已实测（见本节末「实现与验证记录」）：`vtu_binary×tet_fan`、`vtu(ascii)×tet_fan`、
+     `vtu(ascii)×native`、`vtu_binary×native` 全部 rc=0 且守卫 rc=0。
+2. [✅ 2026-10-15 已实现] **Fluent 元素类型 → VTK 单元类型映射表**（放 `src/common/mod_cell_types.f90`，
    建议签名 `integer function fluent_to_vtk(code)`（`0` = 不支持）＋
    `pure logical cell_is_3d(code)`，只在 native 路调用；默认 fan 路**不碰** `ctype`）：
    - **映射表（已定，只含 3D）**：`4` → `VTK_HEXAHEDRON`(12)、`6` → `VTK_WEDGE`(13)。
@@ -672,7 +679,10 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
      `out_cells = tet_fan`。依据：用户判定（2026-10-15）——0D/1D/2D 单元本程序不涉及，
      退化即「不允许」。**不做静默回落**。
    - VTK 码备用表（供未来扩展）：tet=10、pyramid=14、tri=5、quad=9。
-3. [待办] **VTK 规范节点序重建（唯一算法风险点）**：`.cas` 只给面拓扑
+   - **实现**：`src/common/mod_cell_types.f90` ＝ `fluent_to_vtk`（4→12、6→13、其余→0）、
+     `cell_type_supported`、`cell_type_is_polyhedron`、`fluent_code_name`（报错文案用）；
+     没有实现 `cell_is_3d`（用 `cell_type_supported` 表达同一语义）。native 之外无人调用。
+3. [✅ 2026-10-15 已实现] **VTK 规范节点序重建（唯一算法风险点）**：`.cas` 只给面拓扑
    （`mesh_t%f(:)%nodes` ＋ `c0/c1`），hex/wedge/pyramid 在 VTK 里的规范节点序与 Fluent
    的面序不同，必须由单元的**面拓扑 ＋ 几何**重建并做**朝向校验**。注意现状 fan 的
    「`.cas` 面序对 c0 朝内」假设**并不处处成立**：`tools/validate_vtu.py --vtk` 一直在报
@@ -685,10 +695,28 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
    ④ （用户硬性要求）**零体积 / 退化 = 不允许**：定向失败或 `|V| ≤ tol`（建议
    `tol = 1e-12 · h³`，`h` 取单元尺度）一律 `ier /= 0` 报错，**既不写出退化单元、也不静默
    回落 fan**；错误信息须带单元号与体积值，便于定位坏网格。
-4. [待办] **调用层新增 native 分支**：把 `mod_uns_output.f90` 的 fan 段改为
+   - **实现**（全在 `mod_uns_output.f90` 的私有例程里）：`orient_face_outward`（用 `g%sf`
+     定外法向 ＋ Newell 法向判符号，**不依赖** fan 的「朝内」假设；`|s|=0` 或法向与外法向
+     正交 ⇒ 退化，reason=3）→ `hex_canonical_nodes` / `wedge_canonical_nodes`（按
+     `external/sample_code/unMesh/main.f90:138-171` 的规范序拼「上下两环同向」编号）→
+     `implied_faces_ok`（**判定性验收**：编号隐含的 6/5 个面必须与真实面集合逐个相同，
+     这一步同时排除了"把对角点当竖直棱"的错误旋转）→ `native_cell_nodes` 另算散度定理体积
+     （必须 > 0）→ 调用方再与 `g%vol(c)` 对拍（相对容差 `1e-8`）。
+   - 实测（见本节末记录）：方腔 6400 hex 体积全正、ΣV = **1.000000000000**（域体积）；
+     cylinder 3928 wedge 全正、ΣV 与 fan Σ|V| 差 1.3e-15。**fan 的 38400/76800 非正 tet
+     在方腔上再次实测到**（逐单元 6 个符号相反，符号和 ≈ 0，Σ|V| 仍 = 1.0）——正因如此
+     native 路绝不能沿用 fan 的朝向假设。
+4. [✅ 2026-10-15 已实现] **调用层新增 native 分支**：把 `mod_uns_output.f90` 的 fan 段改为
    `if (native) ... else 现有 fan ... end if`：native 段 `npts = m%nnodes`（不追加胞心）、
    `cell_conn/cell_off/cell_type` 按真实单元写、`CellData` **每单元一份**（不再按子 tet
    复制）；默认段代码**一行不动**（保证 heat_conduction/m6wing 位级回归）。
+   - 实现取舍：fan 段**没有**被重新缩进包裹，而是 `vtk_write(..., native=)` 在入口处
+     `if (nat) then ... return` 早退到新的私有例程 `vtk_write_native`，使默认路径的代码
+     在源码层面也是逐字节未动（位级回归另有独立证据，见本节末）。
+   - **与上文偏差（已实现版）**：polyhedron(`7`) 的回落是**整文件级**（先扫 `ctype`，
+     命中 `7` 就整文件走 fan ＋ 一条告警），不是原文设想的逐单元混写。理由：仓库内
+     **零 polyhedron 样品**，逐单元混写无法测试（不可验证的代码＝风险），且要复制一份
+     fan 三角化逻辑；整文件回落在零样品前提下结论等价，代价与语义都更容易解释。
 5. [待办] **守卫改造**：`tools/validate_vtu.py:461-484` 的 `--vtk` 分支现在假定全
    `VTK_TETRA`（非 TETRA 即报错、只按 4 点算体积）⇒ 改为**按类型分派**节点数与体积公式
    （tet/hex/wedge/pyramid/quad/tri），并把混合类型夹具加进 `--selftest`。
@@ -712,6 +740,32 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
 8. [待办] **文档**：手册输出章（两种单元布局的取舍、文件尺寸、`polyhedron` 回退说明）、
    附录 A 参数表（`out_cells` 行）、`docs/control.ec.template`、`93_changelog.tex`；
    默认不写 `out_cells` ⇒ 老算例零改动。
+
+**✅ 本节点实现与验证记录（2026-10-15，现场 `.dbg/stage17/`；串行 `mpirun -np 1`，单算例
+逐个跑，每个都加 `timeout 600`）**：
+
+| 运行 | 控制 / 二进制 | 结果 |
+|---|---|---|
+| 位级回归 A | `cluster_cases/cavity_Re1000` 原 control（`out_format = vtu_binary`、`outer_max = 1000`），**改动前源码**（`git worktree add /tmp/pre17 HEAD` 重新编译） | `unMesh.vtu` md5 `62470c7770106d71d1c671d2aac92002` |
+| 位级回归 B | 同一 control，**改动后**二进制 | md5 `62470c7770106d71d1c671d2aac92002` ⇒ **逐位一致** |
+| hex × native | 方腔，`outer_max = 20`、`out_format = vtu`、`out_cells = native` | 6400 单元全 `12`(hex) / 13122 点（＝网格节点数，无胞心点）/ 体积全正 / ΣV = 1.000000000000 / 场与 fan **逐位一致** / 13.70 MB → **2.14 MB** |
+| wedge × native | `cluster_cases/cylinder_Re40`，`outer_max = 3`、`out_cells = native` | 3928 单元全 `13`(wedge) / 4088 点 / 体积全正 / ΣV 与 fan Σ\|V\| 差 1.3e-15 / 场一致 / 5.52 MB → **0.96 MB** |
+| binary × native | 方腔 `out_format = vtu_binary` ＋ native | 6400 × `12`，体积全正，ΣV 相对偏差 3.1e-5（Float32 **坐标**舍入，`vtu_binary` 已声明的既有代价），场与 ASCII 版差 ≤ 2.9e-8 |
+
+- 守卫：`make vtu_guard` OK、`python3 tools/validate_vtu.py --selftest` OK、4 个产物
+  `validate_vtu.py` rc=0；独立 VTK 读取器脚本 `.dbg/stage17/cmp_native.py` 与
+  `.dbg/stage17/chk_bin_native.py` 全部 **PASS**（判据：类型码、点数＝网格节点数、
+  逐单元正体积（用 VTK `GetFace` 的外向面算散度定理体积，与 `.dbg/chk_mixed.py` 同一 oracle）、
+  ΣV 与 fan Σ|V| 一致、CellData 逐位一致）。
+- 控制变量校验：`out_cells = nope` ⇒ `ERROR: out_cells must be tet_fan or native: nope` ＋
+  `[uns-mpi] FATAL: control read failed, ier=2`，**不产生任何 .vtu**。
+- 顺带处理的既有隐患（不改默认行为）：`mesh_t%ctype` 未分配（非 `.cas` 网格）时 native 路
+  给出明确报错而不是越界访问。
+- **未测（诚实登记）**：`7`=polyhedron 的整文件回退分支、`1/2/3/5` 的报错分支 —— 仓库里
+  这两类码**零样品**，只做了代码审查；真出现时先抓一份样品再定。
+- 遗留（属第 5–8 条，未做）：`tools/validate_vtu.py --vtk` 仍假定全 TETRA（native 文件请用
+  默认模式守卫或 VTK 读取器）；11 个读 `<connectivity>` 不看 `<offsets>` 的算例脚本在
+  native 产物上会解析错位；手册/参数表/`93_changelog.tex` 未写。
 
 **结论/取舍**：native 让 VTU 与网格 1:1、文件显著变小、后处理更直观；代价是必须做对
 节点序重建，「polyhedron 网格只能用 fan」这一限制保留。
