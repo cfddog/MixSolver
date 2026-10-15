@@ -767,6 +767,18 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
   默认模式守卫或 VTK 读取器）；11 个读 `<connectivity>` 不看 `<offsets>` 的算例脚本在
   native 产物上会解析错位；手册/参数表/`93_changelog.tex` 未写。
 
+- **构建健壮性（顺带修掉，属本项目"编译必须通过"硬规则）**：`mod_cell_types` 依赖
+  `mod_vtu_writer`，而 `src/common/*.f90` 的 wildcard 顺序把 `mod_cell_types` 排在
+  `mod_vtu_writer` **之前**（实测 readdir 顺序：… mod_cell_types, mod_vtu_writer …），
+  裸树（无 `.d` 文件）上首次编译会 `Fatal Error: Cannot open module file
+  'mod_vtu_writer.mod'`（已单独复现）。修法：把 `src/common/mod_vtu_writer.f90` 加进
+  `Makefile` 的 `BOOTSTRAP_ORDER`（它只依赖 `mod_precision`）。验证：`make clean` →
+  `make -j1 mpi` rc=0 → `make -j1 all` rc=0；且重建后重跑缩减方腔，fan/native 产物 md5
+  与重建前**完全一致**（`b2be09ad…` / `fff9ffed…`）。
+- **产物体积对照**（同一方腔、同一 iteration）：纯 fan ASCII 13.70 MB → native ASCII
+  **2.14 MB**（6.4×）；纯 fan binary 3.38 MB → native binary **0.52 MB**（6.5×）；
+  cylinder wedge：5.52 MB → **0.96 MB**（5.8×）。
+
 **结论/取舍**：native 让 VTU 与网格 1:1、文件显著变小、后处理更直观；代价是必须做对
 节点序重建，「polyhedron 网格只能用 fan」这一限制保留。
 

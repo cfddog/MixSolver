@@ -134,10 +134,15 @@ MAIN_DISPATCH_F := $(wildcard src/main_dispatch.f90)
 # solver's internal module ordering has explicit edges in the
 # "PRISTINE-BUILD EDGES" section below.  From the second build on the
 # auto-generated .d files take over.
+# mod_vtu_writer is listed here (stage 17) because mod_cell_types `use`s it and
+# the raw wildcard order can put mod_cell_types first (observed readdir order),
+# which would break a pristine build ("Cannot open module file
+# 'mod_vtu_writer.mod'").  It only depends on mod_precision.
 BOOTSTRAP_ORDER := $(wildcard src/common/mod_precision.f90) \
                    $(wildcard src/common/mod_constants.f90) \
                    $(wildcard src/common/mod_reference_state.f90) \
-                   $(wildcard src/common/mod_interface.f90)
+                   $(wildcard src/common/mod_interface.f90) \
+                   $(wildcard src/common/mod_vtu_writer.f90)
 sort_boot = $(BOOTSTRAP_ORDER) $(filter-out $(BOOTSTRAP_ORDER),$1)
 
 # Unstructured serial sources drop *_mpi.f90 and MPI-dependent modules.

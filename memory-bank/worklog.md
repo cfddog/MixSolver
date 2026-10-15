@@ -48,6 +48,14 @@
   - 再次实测到**既有**的 fan 朝向缺陷：方腔 fan 76800 子 tet 中 **38400 个符号为负**
     （逐单元 6 正 6 负、符号和 ≈ 0、Σ|V| = 1.0）——正是 native 路不能用 fan 朝向假设的原因；
     默认路径**未动**（保留该既有行为，位级回归优先）。
+- **构建健壮性（顺带修掉）**：`mod_cell_types` 依赖 `mod_vtu_writer`，但 `src/common/*.f90`
+  的 wildcard 顺序把 `mod_cell_types` 排在前面（实测 readdir 顺序），裸树首次编译会
+  `Fatal Error: Cannot open module file 'mod_vtu_writer.mod'`（已单独复现）；已把
+  `src/common/mod_vtu_writer.f90` 加进 `Makefile` 的 `BOOTSTRAP_ORDER`。验证：`make clean`
+  → `make -j1 mpi` rc=0 → `make -j1 all` rc=0；重建后重跑缩减方腔，fan/native md5 与重建前
+  **完全一致**（`b2be09ad…` / `fff9ffed…`）。
+- **产物体积**：方腔 fan ASCII 13.70 MB → native **2.14 MB**；fan binary 3.38 MB →
+  native binary **0.52 MB**；cylinder wedge 5.52 MB → **0.96 MB**。
 - **未测（诚实登记）**：`7`=polyhedron 回落分支、`1/2/3/5` 报错分支（仓库零样品，仅代码审查）；
   耦合模式（coupled）与 MPI 多 rank 的 native 产物未跑（透传点已接好，但只验证了 `-np 1`）。
 - **待办（阶段 17 第 5–8 条）**：`tools/validate_vtu.py --vtk` 按类型分派（现在假定全 TETRA）、
