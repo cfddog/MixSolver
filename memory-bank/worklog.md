@@ -40,7 +40,9 @@
   connectivity 相同；
   ④ ASCII 路径零回归：`bash cases/heat_conduction/run_all.sh c1` ＋
   `check_heat_conduction.py` → 全部 PASS，c1 8.809e-09 / c2 3.707e-08 / c3 3.912e-01 /
-  c4 6.138e-09 K **与入库基线逐位一致**；
+  c4 6.138e-09 K **与入库基线逐位一致**；且 c1 新产物
+  `md5 = f3a0e07bb1f059387f2b5f0bfcf65652` 与上一节点（2026-10-15 修规范）记录的文件
+  **完全相同** —— 默认 ASCII 路径**位级不变**；
   ⑤ 结构侧位级回归（规则要求）`timeout 600 bash regress/m6wing/run_regression.sh` → **PASS**：
   8 个产物全 IDENTICAL、`flow3d.dat` md5 `dc134a2d196422043ecad7c86ac8f898` 不变。
 - **遗留（改动前既有，另行跟踪，勿与本节点混淆）**：`validate_vtu.py --vtk` 报

@@ -42,7 +42,8 @@
     日志 `max|u|` 9.11512E-01、`relative L2` 2.89706E-02 **完全一致**，13.70 MB → 3.38 MB
     （~4×），VTK 读取器对拍 pressure/velocity 相对差 ≤3.3e-8、temperature 逐位相同、
     connectivity 相同；两文件守卫 **0 errors / 0 warnings**；`--selftest` 10 夹具全按预期；
-    ASCII 零回归（heat_conduction c1/c2/c3/c4 = 8.809e-09/3.707e-08/3.912e-01/6.138e-09 K）；
+    ASCII 零回归（heat_conduction c1/c2/c3/c4 = 8.809e-09/3.707e-08/3.912e-01/6.138e-09 K，
+    且 c1 产物 `md5 f3a0e07b…` 与上一节点记录**完全相同** = 位级不变）；
     m6wing 位级回归 PASS。
   - **遗留（改动前既有）**：`--vtk` 报非正体积四面体（方腔 38400/76800 等）——子四面体
     朝向问题，另行跟踪；meshio 5.3.5 读不了 appraw（其自身重编码缺陷，仓库不依赖）。
