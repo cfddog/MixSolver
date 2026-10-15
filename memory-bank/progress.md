@@ -750,13 +750,17 @@
   - 网格侧信息**已有但无消费者**：`mesh_t%ctype(:)`（`mod_uns_mesh.f90:43`，per-cell
     Fluent element type），由 `mod_uns_cas_reader.f90:310-406` 读入（含 `ctype=0`
     混合 zone 的逐单元 payload 与 `7`=polyhedron 的 face-count 分支）。
-  - **Fluent 码实测**（仓库输入件）：`4` = hex（`natconv/cavity*.cas`、
-    `porous_graetz/graetz.cas`、`heat_conduction/c{1,5}`，共 44 处 `(12 (2 1 <n> 1 4)`）、
-    `6` = wedge（`cylinder_cas/cylinder.cas` 3928 个 payload、`ltne/LNTE1D.cas` 12160 个
-    payload，逐单元全为 6）、`0` = 混合 zone、`7` = polyhedron。
-    **`2` = tet / `5` = pyramid / `1` = tri / `3` = quad 仓库里没有样品，需用户确认后
-    才写死映射表**（按 Fluent 约定应为 TRI=1, TET=2, QUAD=3, HEX=4, PYR=5, WEDGE=6,
-    POLY=7）。
+  - **Fluent 码实测**（44 个跟踪 `.cas`）：header 第 5 字段只出现 `4`（55 处 zone 记录：
+    `natconv/cavity*.cas`、`porous_graetz/graetz.cas`、`heat_conduction/c{1,5}`、`cluster_cases/*`…）
+    与 `0`（5 处混合 zone）；混合 zone payload 只出现 `6`（33164 个，wedge：cylinder 3928 /
+    LNTE1D 12160 / grid_BC 9220…）。**`1/2/3/5/7` 一次都没出现**（`7`=polyhedron 只来自 reader
+    注释 `mod_uns_cas_reader.f90:312,394`，**不是样品**）。
+  - ✅ **决策（2026-10-15，用户确认 ⇒ 阻塞解除）**：`1`=点、`3`=线段、`5`=三角形（`2` 语义
+    不确定）—— 都是 0D/1D/2D 单元，**本程序基于三维开发、不涉及**；面/体退化（体积为零）
+    **不考虑，直接判为「不允许」**。⇒ 映射表**只含 3D 单元**（`4`→`VTK_HEXAHEDRON`(12)、
+    `6`→`VTK_WEDGE`(13)）；`7`→回落 fan ＋ 告警；**其余任何码在 native 路一律报错**
+    （打印 `码/zone id/单元号/面数/节点数`，提示可退回 `out_cells = tet_fan`），**不静默回落**；
+    native 路**零体积/定向失败单元直接拒绝**。`0` 只是 zone 级「混合」标记，**不是单元码**。
 - [ ] **主要风险**：`.cas` 只给面拓扑，VTK 规范节点序必须重建 —— 现状 fan 的「c0 面序
   朝内」假设**不处处成立**（`validate_vtu.py --vtk` 一直报非正体积四面体，记录值
   方腔 38400/76800、heat_conduction c1 404/960、c3 8496、c5 162）⇒ native 路必须做

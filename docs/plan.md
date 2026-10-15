@@ -606,7 +606,23 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
 2. [待办] **修正可压缩（结构）侧 SST 湍流模型**（`Iflag_turbulence_model=3`，见阶段 13
    第 1 条）。细则（首查嫌疑、最小复现、验收）见同一 §待办条目 ②。
 
-### 阶段 17：VTU 混合单元类型输出（2026-10-15 登记，用户「写入待办，后续解决」）
+### 阶段 17：VTU 混合单元类型输出（2026-10-15 登记 ＋ 同日元素码决策落定）
+
+**✅ 决策（2026-10-15，用户确认 Fluent 元素码语义，阻塞项解除）**：
+- 用户判定：`1` = 点、`3` = 线段、`5` = 三角形（`2` 语义不确定）。**这些都是 0D/1D/2D
+  单元，本程序基于三维开发、不涉及**；面/体退化（体积为零）**不考虑，直接判为「不允许」**。
+- ⇒ **映射表只写 3D 单元**：`4` = hex → `VTK_HEXAHEDRON`(12)、`6` = wedge → `VTK_WEDGE`(13)
+  （两者仓库实测）；`7` = polyhedron（VTK 无可用编码）⇒ 回落 fan ＋ 告警。
+- ⇒ **其余任何码（含 `1/2/3/5` 与未知码）在 native 路一律判为非法**：`ier /= 0` 返回并打印
+  `码 + zone id + 单元号 + 面数/节点数`（便于事后抓样品），错误信息提示可退回默认
+  `out_cells = tet_fan`。**不静默回落**（退化/异常网格必须让人看见）。
+- ⇒ **体积硬门槛**：native 路任何单元定向失败或 `|V| ≤ tol` 即报错拒绝，**不写出退化单元**。
+- 备注：`2` 若日后真的出现，很可能是 tet（Fluent cell 码表 2=tet）—— 抓一份样品确认后，
+  只是映射表加一行的事；当前按"不支持"处理。
+- 备注（更正登记原文）：`7` = polyhedron **不是样品实测**，只来自 reader 自己的注释
+  （`mod_uns_cas_reader.f90:312,394` 的 `if (ct == 7)`）。全仓实测（44 个跟踪 `.cas`）：
+  header 第 5 字段只有 `4`(55 处 zone 记录) 与 `0`(5 处混合 zone)，混合 zone payload
+  只有 `6`(33164 个)；**`1/2/3/5/7` 一次都没出现**。
 
 **目标**：VTU 导出**可选**按网格真实单元类型 **1:1 原生写出**（tet/hex/wedge/pyramid
 用 VTK 规范编码，不再插胞心点、不再四面体化）；**现状「全四面体 fan」保留为默认**
@@ -636,20 +652,26 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
    透传到与 `binary=` 同一组的全部 5 个写出点（串行快照、MPI 快照、MPI 末态、耦合
    `unMesh_coupled.vtu`、串行末态）。与 `out_format`（`vtu | vtu_ascii | vtu_binary`，
    **数据布局**）正交：4 种组合都要能跑。
-2. [待办] **Fluent 元素类型 → VTK 单元类型映射表**（建议放 `mod_vtu_writer` 或新的
-   `src/common/mod_cell_types.f90`，含节点数校验）：
-   - **已实测确认**（仓库输入件）：`4` = hex（`cases/natconv/cavity*.cas`、
-     `porous_graetz/graetz.cas`、`heat_conduction/c{1,5}`，共 44 处
-     `(12 (2 1 <n> 1 4)` 记录）、`6` = wedge（`cases/cylinder_cas/cylinder.cas`
-     3928 个 payload、`cases/ltne/LNTE1D.cas` 12160 个 payload，逐单元全为 6）、
-     `0` = 混合 zone（单元码在 payload 里）、`7` = polyhedron（reader 已有分支）。
-   - **待用户确认**：`2` = tetrahedral？`5` = pyramidal？`1` = triangular / `3` =
-     quadrilateral（2D）？（按 Fluent 元素类型约定应为 TRI=1, TET=2, QUAD=3, HEX=4,
-     PYR=5, WEDGE=6, POLY=7；仓库输入件里没有这些码 ⇒ 确认后才写死。）
-   - VTK 码：tet=10、hex=12、wedge=13、pyramid=14、tri=5、quad=9。
-   - `7` = polyhedron **不支持**（`VTK_POLYHEDRON`=42 的 legacy 编码在现代 ParaView 里
-     失效，写出器也未实现）⇒ 该单元**回落现有 fan**（同文件混写没问题，`offsets`/`types`
-     本来就是逐单元的）＋ 一次性告警。
+2. [待办] **Fluent 元素类型 → VTK 单元类型映射表**（放 `src/common/mod_cell_types.f90`，
+   建议签名 `integer function fluent_to_vtk(code)`（`0` = 不支持）＋
+   `pure logical cell_is_3d(code)`，只在 native 路调用；默认 fan 路**不碰** `ctype`）：
+   - **映射表（已定，只含 3D）**：`4` → `VTK_HEXAHEDRON`(12)、`6` → `VTK_WEDGE`(13)。
+     实测依据：hex —— 55 处 zone 记录 `(12 (zid 1 <n> 1 4))`（`cases/natconv/cavity*.cas`、
+     `porous_graetz/graetz.cas`、`heat_conduction/c{1,5}`、`cluster_cases/*` …）＋第一方旁证
+     `cases/porous_plug/gen_plug.py:74`、`cases/heat_conduction/gen_annulus.py:99` 自写该记录
+     且注释 "Hex cells"；wedge —— 混合 zone payload 共 33164 个 `6`
+     （`cases/cylinder_cas/cylinder.cas` 3928、`cases/ltne/LNTE1D.cas` 12160、
+     `grid_BC/unMesh.cas` 9220 …）。
+   - **`0` 不是单元码**：它只表示 zone 级「混合」（真码在其 payload 里，`sec_cells` 已解析），
+     映射函数遇到 `0` 必须报错（调用方应先取 payload 里的逐单元码）。
+   - **`7` = polyhedron ⇒ 回落 fan ＋ 一次性告警**（`VTK_POLYHEDRON`=42 的 legacy
+     face-stream 编码在现代 ParaView/Tecplot 里失效，写出器也未实现）；同文件混写没问题，
+     `offsets`/`types` 本来就逐单元。
+   - **其余码（`1`=点 / `3`=线段 / `5`=三角形 / `2`=不确定 / 未知码）⇒ native 路非法**：
+     `ier /= 0` 返回并打印 `码 + zone id + 单元号 + 面数/节点数`，提示可退回
+     `out_cells = tet_fan`。依据：用户判定（2026-10-15）——0D/1D/2D 单元本程序不涉及，
+     退化即「不允许」。**不做静默回落**。
+   - VTK 码备用表（供未来扩展）：tet=10、pyramid=14、tri=5、quad=9。
 3. [待办] **VTK 规范节点序重建（唯一算法风险点）**：`.cas` 只给面拓扑
    （`mesh_t%f(:)%nodes` ＋ `c0/c1`），hex/wedge/pyramid 在 VTK 里的规范节点序与 Fluent
    的面序不同，必须由单元的**面拓扑 ＋ 几何**重建并做**朝向校验**。注意现状 fan 的
@@ -660,6 +682,9 @@ HAVE_MPI 守护）；耦合只用 MPI 构建。
    外右旋序）；② 由各面按类型拼出规范序；③ **有符号体积 > 0** 校验，失败即报错返回
    `ier`（不静默写坏文件）。验收 oracle：`external/sample_code/unMesh/main.f90:138-171`
    的混合样例（`offset=[8,14,18,23]`、`types=[12,13,10,14]`）＋ 现场 `.dbg/` 组脚本。
+   ④ （用户硬性要求）**零体积 / 退化 = 不允许**：定向失败或 `|V| ≤ tol`（建议
+   `tol = 1e-12 · h³`，`h` 取单元尺度）一律 `ier /= 0` 报错，**既不写出退化单元、也不静默
+   回落 fan**；错误信息须带单元号与体积值，便于定位坏网格。
 4. [待办] **调用层新增 native 分支**：把 `mod_uns_output.f90` 的 fan 段改为
    `if (native) ... else 现有 fan ... end if`：native 段 `npts = m%nnodes`（不追加胞心）、
    `cell_conn/cell_off/cell_type` 按真实单元写、`CellData` **每单元一份**（不再按子 tet
