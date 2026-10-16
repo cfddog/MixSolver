@@ -1,0 +1,57 @@
+# unMesh.control -- coupling_C_S unstructured side: PURE SOLID slab (CHT)
+# Mesh unMesh.cas (Pointwise export, units = mm -> mesh_scale), same surface
+# discretisation as the structured peer:
+#   cell zone : 2 = solid slab (3200 hex), x in [0,1000], y in [-100,0],
+#               z in [0,100] mm
+#   face zones: 3 = interior (6280)
+#               4 = wall (y=-100 mm, 80 faces)  -> isothermal base, tbc 300 K
+#                   (the delivered cas tagged it 'mass-flow-inlet'; the
+#                    coupling_C_S copy was edited to a wall, see README)
+#               5 = wall (x=0 and x=1000, 80 faces, adiabatic)
+#               6 = symmetry (z=0 and z=100, 6400 faces)
+#               7 = interface (y=0, 80 faces)   -> coupling exchange layer
+# Physics: steady heat conduction only (phase 16 CZ_SOLID: u=v=w forced to 0
+# and only the energy equation is solved).  The interface (zone 7) needs no
+# bc/tbc line: the coupling layer imposes the fluid's wall heat flux q_f
+# [W/m^2] there each iteration (phase 17).
+# Material: stainless steel, k_s = 16.2 W/m/K, rho_s*cp_s = 4.0e6 J/m^3/K
+# -> thermal diffusivity alpha = 4.05e-6 m^2/s (see estimate_cht_steady.py).
+# -------------------------------------------------------------------------
+
+# --- mesh units: CAS file is in mm -> scale to m ---
+mesh_scale = 1.0e-3
+
+# --- physical properties (no fluid phase here; kept for the control-file
+#     defaults of the exchange layer, values = the struct reference state) ---
+rho = 0.44124
+mu  = 7.506e-4
+
+# --- numerical parameters (SIMPLE) ---
+alpha_u = 0.7
+alpha_p = 0.3
+outer_max = 200
+outer_tol = 1.0e-6
+lin_tol   = 1.0e-8
+lin_max   = 200
+conv_blend   = 0.0
+nonorth_corr = 1.0
+ppe_precond  = ic0
+# inlet_ramp=1 in coupled cases: driver-level mass correction must not fight
+# a desynchronised ramp (lessons learned).
+inlet_ramp = 1
+
+# --- initial temperature field (the slab starts at the base temperature) ---
+init_t = 300.0
+
+# --- cell (volume) zone: pure stationary solid with its conduction data ---
+cell_zone = 2 solid k_s=16.2 cp_s=500.0 rho_s=8000.0 q_src=0.0
+
+# --- boundary conditions: solid walls only, no flow ---
+bc = 4 wall
+bc = 5 wall
+bc = 6 symmetry
+# zone 7 "interface" needs no bc: handled by the coupling exchange layer
+
+# --- thermal boundary conditions: the base (zone 4) is held at 300 K; the
+#     side walls (zone 5) and the symmetry planes stay adiabatic ---
+tbc = 4 1 300.0

@@ -11,7 +11,19 @@
 > **教训：提交前必须先看清 `git status` 全量输出（终端吞输出时改用
 > `git status --porcelain > /tmp/s.txt` 再读文件）**。
 
-> 最后更新：2026-10-15（**VTU 输出新增 appended raw binary（`out_format = vtu_binary`）**：
+> 最后更新：2026-10-16（**首个可压缩流体–固体共轭传热（CHT）算例 `cases/coupling_C_S/`**：
+> 用户交付的 Ma=3 平板 + 100 mm 不锈钢板（mm 网格，界面 y=0、80 面、0.1 m²）用
+> `IFACE_COMP_FLUID_SOLID`（配方 `T:dirichlet q:flux`）端到端打通。新加两个工具：
+> 界面配对守卫 `check_iface_alignment.py`（生产耦合按**索引**配对 ⇒ 逐面实测质心偏差
+> **0.000e+00 m**、面积 0.1 m²、PASS）与解析锚 `estimate_cht_steady.py`
+> （T_w≈1717 K、q≈2.3e5 W/m²、G=h·R_s≈3.9）。三段冒烟（各 20–40 迭代、串行、
+> `timeout 600`）实测：**w=0.03 与 w=0.005 的残差序列差 <5%** ⇒ 残差是**物理暂态**
+> （冷平板 soak + 1 µm 首格流体热淬火），不是松弛不稳；量化出该算例需要
+> **O(1e5) 伪时间步 ≈ O(100) 耦合迭代**才能接近解析稳态；并发现
+> **CHT 界面状态不在存档里 ⇒ 目前不能分段重启**（重启会把平板热态抹回 300 K）。
+> **无源码改动**）
+>
+> 2026-10-15 节点（**VTU 输出新增 appended raw binary（`out_format = vtu_binary`）**：
 > 修好移植时留下的 binary 写出缺陷（对 unformatted 流单元误用格式化 WRITE，一开即崩），
 > 把 ascii/binary 接成可切换布局并透传到全部 5 个写点；`tools/validate_vtu.py` 支持
 > appended raw/base64 解析（`--selftest` 10 个夹具）。验证：方腔 Re=1000 同 control 两种布局

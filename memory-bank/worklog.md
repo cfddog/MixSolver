@@ -1,6 +1,69 @@
 # 工作日志 (worklog)
 
 
+## 2026-10-16 | 实现：首个可压缩流体–固体 CHT 算例 coupling_C_S（阶段 17 端到端打通）
+
+- **交付（无源码改动：纯算例 + 两个校验工具）**：新 `cases/coupling_C_S/`（10 文件，全部入库）：
+  4 个交付输入件 + 3 个新控制文件（`control.ec`/`mix.control`/`unMesh.control`）
+  + `README.md` + `check_iface_alignment.py` + `estimate_cht_steady.py`。
+  - 网格/单位：struct `Mesh3d.x`（81×101×2；x 0–1000、y 0–500、z 0–100 mm；首层 1 µm）＝流体；
+    uns `unMesh.cas`（3200 六面体；y −100–0 mm；首层 1 µm）＝纯固体
+    （`cell_zone = 2 solid k_s=16.2 cp_s=500 rho_s=8000`，phase-16 CZ_SOLID）。
+    两套 mm 网格共享 y=0 面（80 面、0.1 m²），沿用 `couple_porous` 的 `L_ref=1e-3` 约定，
+    **网格不缩放**。
+  - `mix.control`：`rho_ref=0.44124`、`T_ref=800`、`u_ref=1700.95`（=Ma·a_ref，Ma=3）、
+    `n_couple=20`、`n_struct_steps=1000`、`n_uns_steps=50`、`save_interval=10`（≤n_couple）、
+    `iface_t_relax=0.005`。
+  - 交付件修正（按交付 readme 第 (3) 条"质量入口→固体温度壁面"）：`unMesh.cas` **只改 3 处记录**
+    （行 12957 zone 名、12958 Fluent 类型码 0x14=20→3、13040 `(45 ...)` 名），CRLF 保留，
+    唯一长度差 +25 B（`cmp`：一处 25 B 长度差 + 两处等长替换）；md5 记入 README §4。
+- **新守卫 `check_iface_alignment.py`（为什么必须查）**：生产耦合路径按**索引**配对
+  （`mod_mix_driver.f90`：struct 第 c 面 ↔ uns 交换数组第 c 行；几何匹配 `match_interfaces`
+  只走测试路径），而两侧面序由各自代码独立建立（struct：`mod_struct_grid.f90:1046-1069`
+  的 a 外/b 内 ⇒ j 面按 i 递增；uns：`mod_uns_bc.f90:311-318` 按 cas 面序）。脚本从两个网格
+  **独立重建**两种面序逐面比对 ⇒ 实测**逐面质心偏差 0.000e+00 m**、两侧面积均
+  `0.1000000000 m²`、法向点积 +1.0 ⇒ **面序 1:1 吻合**。自带守卫（遇错主动报错）：
+  code-8 块唯一且是 j 面、Mesh3d.x 三块跨度必须 1000/500/100 mm、cas 的 (13) 十六进制区间
+  必须与 (0 "Zone ...") 十进制注释逐条吻合、zone 4 必须叫 `wall`、zone 7 必须叫
+  `interface`、两侧各 80 面。
+- **冒烟运行（3 段，串行单作业、每段 `timeout 600`；20 迭代 ≈ 6.5 min ≈ 20 s/迭代）**：
+  1. run 1 `iface_t_relax=0.03`（cht_solid 经验值）：`|r|max` = 11.07 / 114.60 / 123.33 /
+     223.41 / 144.31 / 295.80 K（迭代 3–8，逐迭代 ×1.93）→ 迭代 20 = 576.6 K；
+     iter20：struct 界面 T=434.0 K、p=1.036e5 Pa、q̄=−1.15e8 W/m²；uns Twall=762.8–855.2 K、
+     `q_iface_in`=−1.15e7 W、`q_base_in`=−8.2e3 W。无 NaN/无 abort。
+  2. run 2 `iface_t_relax=0.005`：`|r|` = 11.07 / 114.88 / 126.66 / 232.27 / 158.91 / 311.07 K
+     → 迭代 20 = 647.2 K、Twall=818.8–872.0 K、q̄=−8.37e7 W/m²。
+     **与 run 1 差 <5%（尽管 w 差 6 倍）** ⇒ 判读：残差由**物理暂态**主导（冷平板被
+     1e8 W/m² 级界面热流推动的 soak ＋ 1 µm 首格流体的热淬火），**不是松弛不稳定**
+     ⇒ 本算例 w ∈ [0.005,0.03] 不可辨识、单靠调 w 无法收敛。（"G≈97"只是把物理漂移
+     误读成回路增益；已在本条更正。）
+  3. 重启段（`couple_restart=1`、`n_couple=40`，从 run 2 的 iter20 存档续跑）：两侧确实
+     重启（`restart from coupling iter 20` ×2、`Field dump read from: unMesh_restart.dat`），
+     **但 CHT 界面状态（q_f/壁温/T_app）不在存档里**：重启后第一个交换 q=0 ⇒ uns 稳态导热
+     立刻把平板拉回"底面 300 K + 界面零通量"的均匀 300 K（第一块 `dT_max=6.12E+02` 证明
+     读回的场本来是热的），iter25 `|r|`=22.6 K、iter40 = 426.8 K（同一段物理暂态重演）
+     ⇒ **CHT 目前不能分段重启**（已登记待办）。
+- **机理（量化后写入 README §8）**：壁面通量按 `q=k_f(T1−T_wall)/d_1`、`d_1`=1 µm ⇒
+  `h_eff=k_f/d_1=1.077e6` W/m²K ＝真实层流 h≈635 W/m²K 的 **1700 倍**；冷启动
+  （流体 800 K / 固体 300 K `init_t`）下 iter2 就出现 q̄=4.31e8 W/m²（物理稳态 2.296e5 的
+  1876 倍、Σ(qA)=4.3e13 W）⇒ 平板按稳态导热响应需 ~6e5 K 表面温升 ⇒ 两侧互相追逐、
+  通量 ±1e8 W/m² 翻转。流体首格实测 800 K→600 K(~1e3 步)→~400 K(~5e3 步) ⇒ 时间常数
+  ~7e3 步 ⇒ 落到物理量级需 **O(1e5) 步 ≈ O(100) 耦合迭代**；本轮 3 段各 20 迭代注定只走
+  暂态前段——不是缺陷，是该网格/Re/初值的物理代价。
+- **新工具 `estimate_cht_steady.py`**：解析锚 T_aw=2078.6 K（r=Pr^1/3）、
+  R_s=6.1728e-3 m²K/W；h_avg=635.1 → **T_w=1717.1 K、q=2.296e5 W/m²、Q=2.296e4 W、G=3.92**；
+  h_loc=317.5 → G=1.96；k_f/d_1 → G=6649.5（增益上下界）。含自检（u_ref vs Ma·a_ref 差
+  0.005%、p_inf=101329 Pa vs 1 atm）与 `--measure-resid R0 R1 --relax w`（由两次残差反推 G）。
+- **手册**：无源码/控制变量新增（复用 `iface_t_relax` 等既有键）⇒ `docs/程序使用手册.tex`
+  无需改动；方法学全部落在 `cases/coupling_C_S/README.md`（并在
+  `cases/coupling_test/readme.md` 末尾加了指针）。
+- **下一步（写进 README §10 与 progress 待办）**：① 拿到与解析锚可比的稳态
+  （O(100) 迭代；或 `n_struct_steps` 提到 5e3–1e4 使 G→~4、w 可放到 0.1–0.2）；
+  ② 界面处理改进（uns 侧对 q 亚松弛 / Aitken 下限 0.02 → ~1e-3）；③ 界面状态纳入存档
+  以支持 CHT 分段重启；④ 顶部 j=101 若出现反射改 farfield(4)。
+- **资源合规**：三轮运行串行、单作业、各 ≤10 min，现场 `.dbg/coupling_C_S/`（产物不入库）✓。
+
+
 ## 2026-10-15 | 实现：阶段 17 第 1–4 条（VTU `out_cells = native` 原生单元类型输出）
 
 - **做了什么**（源码；默认路径逐位未动）：

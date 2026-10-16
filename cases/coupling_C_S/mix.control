@@ -1,0 +1,83 @@
+# mix.control -- coupling-driver parameters for coupling_C_S
+#
+# First compressible-fluid <-> rigid-solid conjugate heat transfer case
+# (interface type IFACE_COMP_FLUID_SOLID, phase 17):
+#   struct side (bin/mixnsolver rank 0): OpenCFD-EC compressible laminar
+#       Riemann solver, Ma = 3 flat plate, y in [0,500] mm;
+#   uns side (rank 1): pure stationary solid (CZ_SOLID) slab,
+#       y in [-100,0] mm, stainless steel, base at 300 K;
+#   the two domains share the y=0 face (80 quads, 0.1 m^2).
+# Both meshes are in mm, both carry the same surface discretisation, so
+# L_ref = 1 mm = 1e-3 m (mm convention of cases/couple_porous) and no mesh
+# rescaling is needed.
+#
+# Interface physics (Dirichlet-Neumann):
+#   fluid -> solid : the struct resolves the isothermal no-slip wall flux
+#                    q_f [W/m^2] and the solid receives it as a Neumann
+#                    surface condition;
+#   solid -> fluid : the solid surface temperature is pinned on the struct
+#                    side as the isothermal wall value.
+# The loop gain is G = h_f*R_s (wall conductance x solid resistance).  For
+# this case h_f ~ 600 W/m^2/K, R_s = 0.1 m / 16.2 W/m/K = 6.17e-3 m^2K/W,
+# so the *physical* bound is G ~ 4 (w = 1/(1+G) ~ 0.2 would then be stable).
+# The gain actually measured in the partitioned iteration is far larger
+# (G ~ 97) because the 1 um first fluid cell is not in thermal equilibrium
+# with the wall, which makes the relaxation factor the critical parameter
+# of this case: see iface_t_relax below and the case README.
+
+mode   = coupled
+
+# --- reference state (SI): air at 1 atm, 800 K, Ma = 3 ---
+# p_inf = rho_ref*R*T_ref = 0.44124*287.058*800 = 101331 Pa
+rho_ref = 0.44124
+T_ref   = 800.0
+L_ref   = 0.001          # one grid unit = 1 mm
+u_ref   = 1700.95        # Ma*a_ref = 3*sqrt(1.4*287.058*800)
+
+# --- coupling loop ---
+# readme: advance the compressible side 1000 LU-SGS steps (CFL=0.5) between
+# two solid solves; 20 coupling iterations is the smoke-test length.
+n_couple        = 20
+n_struct_steps  = 1000   # struct pseudo-time substeps per coupling iteration
+n_uns_steps     = 50     # SIMPLE outer steps per coupling iteration
+
+# --- interface BC under-relaxation + ramp ---
+iface_relax = 1.0
+iface_ramp  = 5
+
+# --- phase-17 CHT interface-temperature relaxation ---
+# 0    = adaptive Aitken Delta^2 (auto-tunes 1/(1+G)); NOTE its safeguard
+#        floor is 0.02, which is > 1/G here (see below) -> not stable on
+#        this mesh, so it is not used.
+# 0<w<=1 = fixed factor.  The Dirichlet-Neumann loop
+#        T_w -> q_f = k_f*(T1 - T_w)/d_1 -> T_s = T_s0 + R_s*q_f -> T_w'
+#        converges iff |1 - w*(1+G)| < 1, i.e. w < 2/(1+G), G = h_eff*R_s.
+# MEASURED on the first smoke run (2026-10-16, w = 0.03): the residual
+# |r| = |T_recv - T_app| grew by x1.93 per coupling iteration over
+# iterations 3..8 (11.1 K -> 296 K), i.e. 1 - w*(1+G) = -1.93 => G = 97,
+# so w = 0.03 is unstable here (it needs w < 2/98 = 0.020).  G = 97 lies
+# between the physical bound h_BL*R_s ~ 3.9 (fully converged boundary
+# layer, h ~ 635 W/m^2/K) and the frozen-first-cell bound
+# (k_f/d_1)*R_s ~ 6650 (d_1 = 1 um, k_f = 1.08 W/m/K): 1000 LU-SGS
+# substeps do not fully re-equilibrate the 1 um first cell, so the
+# measured gain sits in between.  cht_solid used w = 0.03 because there
+# G ~ 35 with a 5 um first cell.
+# => w = 0.005 = 0.5/(1+G): the residual halves every coupling iteration
+#    (stable with a 2x margin against G doubling), which is what the
+#    smoke run of run 2 demonstrates.  For a fully converged CHT result
+#    either keep relaxing for many more coupling iterations or increase
+#    n_struct_steps so the fluid's wall response is physical (G -> 4 and
+#    w -> 0.15 becomes stable) -- see the README.
+iface_t_relax = 0.005
+
+# interface velocity / pressure handling: the solid is stationary, so the
+# exchanged velocity is ~0 (the struct interface is a no-slip wall anyway);
+# 'balance' keeps the legacy mass-flux bookkeeping harmless.  The solid PPE
+# is closed (all faces wall/symmetry), so the pressure level is anchored to
+# the struct's interface mean absolute pressure.
+iface_velocity = balance
+iface_p_anchor = 1
+
+# --- periodic save / joint restart (rule: save_interval <= n_couple) ---
+save_interval  = 10
+couple_restart = 0
