@@ -20,7 +20,10 @@ flat-plate anchor that the coupled run must approach:
 
 Optionally recover the *measured* loop gain from two consecutive interface
 residuals of a run (the '[struct rank 0] diag iter ... CHT relax: w, |r|max'
-lines): r_{k+1}/r_k = 1 - w*(1+G).
+lines): r_{k+1}/r_k = 1 - w*(1+G).  A *negative* recovered gain means the
+residual growth cannot be explained by the relaxation feedback at all, i.e.
+the drift is physical -- then changing w is pointless.  (Measured on
+coupling_C_S: G_meas = -21.5 from iterations 4 -> 5 with w = 0.005.)
 
 USAGE
 -----
@@ -157,9 +160,17 @@ def main() -> int:
             print("--- measured loop gain ---")
             print(f"  |r| {r0:g} -> {r1:g} K, ratio = {ratio:.4f}, w = {w:g}")
             print(f"  G_meas = (1 - ratio)/w - 1 = {g_meas:.3f}")
-            if g_meas > 0:
+            if g_meas > 0.0:
                 print(f"  suggested w = 0.7/(1 + G) = {0.7 / (1.0 + g_meas):.4e} "
                       f"(0.7 = 30% stability margin)")
+            else:
+                print("  G_meas <= 0: the residual growth is NOT explained by the")
+                print("  T-relaxation feedback (a loop gain G > -1 would give")
+                print("  |r| ratio < 1 + w*(1+G) ~ 1+w).  The drift is therefore")
+                print("  the physical transient, not a relaxation instability --")
+                print("  changing w will not fix it (see cases/coupling_C_S/README.md")
+                print("  section 7.4/8: a cold slab soaking up a ~1e8 W/m^2")
+                print("  transient interface flux).")
 
     if args.json:
         print(json.dumps(dict(a_ref=a_ref, p_inf=p_inf, mu=mu, nu=nu, cp=cp,
